@@ -5,3 +5,4 @@ minio==7.2.0
 dbt-core==1.7.0
 dbt-postgres==1.7.0
 sqlalchemy==1.4.51
+kafka-python==2.0.2
