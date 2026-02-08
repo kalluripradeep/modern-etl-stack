@@ -151,7 +151,9 @@ services:
 
   # Airflow Webserver
   airflow-webserver:
-    image: apache/airflow:2.8.0-python3.11
+    build:
+      context: .
+      dockerfile: docker/airflow/Dockerfile
     container_name: airflow-webserver
     depends_on:
       airflow-init:
@@ -177,7 +179,9 @@ services:
 
   # Airflow Scheduler
   airflow-scheduler:
-    image: apache/airflow:2.8.0-python3.11
+    build:
+      context: .
+      dockerfile: docker/airflow/Dockerfile
     container_name: airflow-scheduler
     depends_on:
       airflow-init:
