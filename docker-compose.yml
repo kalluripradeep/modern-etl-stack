@@ -149,7 +149,6 @@ services:
     networks:
       - etl-network
 
-  # Airflow Webserver
   airflow-webserver:
     build:
       context: .
@@ -168,6 +167,7 @@ services:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
+      - ./dbt:/opt/airflow/dbt                    
     command: webserver
     networks:
       - etl-network
@@ -177,7 +177,6 @@ services:
       timeout: 10s
       retries: 5
 
-  # Airflow Scheduler
   airflow-scheduler:
     build:
       context: .
@@ -194,6 +193,7 @@ services:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
+      - ./dbt:/opt/airflow/dbt                    
     command: scheduler
     networks:
       - etl-network

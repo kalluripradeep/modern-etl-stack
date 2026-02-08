@@ -1,6 +1,6 @@
 """
-Simple ETL Pipeline: PostgreSQL → MinIO
-Extracts orders from PostgreSQL and saves as Parquet files in MinIO
+Simple ETL Pipeline: PostgreSQL → MinIO → dbt
+Extracts orders from PostgreSQL, saves to MinIO and PostgreSQL, then runs dbt transformations
 """
 
 from airflow import DAG
@@ -10,8 +10,8 @@ import pandas as pd
 import psycopg2
 from io import BytesIO
 from minio import Minio
+from sqlalchemy import create_engine, text
 
-# Default arguments for the DAG
 default_args = {
     'owner': 'pradeep',
     'depends_on_past': False,
@@ -22,7 +22,6 @@ default_args = {
     'retry_delay': timedelta(minutes=5),
 }
 
-# Create the DAG
 dag = DAG(
     'extract_orders_to_minio',
     default_args=default_args,
@@ -65,8 +64,24 @@ def extract_from_postgres():
     df.to_parquet('/tmp/orders.parquet', index=False)
     return len(df)
 
-def load_to_minio():
-    """Load Parquet file to MinIO"""
+def validate_data():
+    """Simple data quality check"""
+    print("🔍 Validating data...")
+    
+    df = pd.read_parquet('/tmp/orders.parquet')
+    
+    assert len(df) > 0, "No data extracted!"
+    assert df['order_id'].notna().all(), "Found null order IDs!"
+    assert (df['total_amount'] >= 0).all(), "Found negative amounts!"
+    
+    print(f"✅ Data quality checks passed!")
+    print(f"   - Total orders: {len(df)}")
+    print(f"   - Total revenue: ${df['total_amount'].sum():.2f}")
+
+def load_to_minio_and_postgres():
+    """Load Parquet file to MinIO AND PostgreSQL destination"""
+    from sqlalchemy import create_engine, text
+    
     print("📦 Connecting to MinIO...")
     
     client = Minio(
@@ -85,31 +100,59 @@ def load_to_minio():
     object_name = f'orders/orders_{datetime.now().strftime("%Y%m%d")}.parquet'
     
     print(f"⬆️  Uploading to s3://{bucket_name}/{object_name}")
-    
     client.fput_object(
         bucket_name,
         object_name,
         file_path,
         content_type='application/octet-stream'
     )
+    print(f"✅ Uploaded to MinIO!")
     
-    print(f"✅ Successfully uploaded to MinIO!")
+    print("📊 Loading data into PostgreSQL destination...")
+    df = pd.read_parquet(file_path)
+    
+    engine = create_engine('postgresql://destuser:destpass@postgres-dest:5432/destdb')
+    
+    with engine.begin() as conn:
+        conn.execute(text("CREATE SCHEMA IF NOT EXISTS public"))
+        conn.execute(text("DROP TABLE IF EXISTS public.orders CASCADE"))
+    
+    df.to_sql(
+        'orders',
+        engine,
+        schema='public',
+        if_exists='replace',
+        index=False,
+        method='multi'
+    )
+    
+    print(f"✅ Loaded {len(df)} rows into PostgreSQL!")
+    print(f"📍 MinIO: s3://{bucket_name}/{object_name}")
+    print(f"📍 PostgreSQL: destdb.public.orders")
 
-def validate_data():
-    """Simple data quality check"""
-    print("🔍 Validating data...")
+def run_dbt_models():
+    """Run dbt transformations"""
+    import subprocess
     
-    df = pd.read_parquet('/tmp/orders.parquet')
+    print("🔄 Running dbt transformations...")
     
-    assert len(df) > 0, "No data extracted!"
-    assert df['order_id'].notna().all(), "Found null order IDs!"
-    assert (df['total_amount'] >= 0).all(), "Found negative amounts!"
+    dbt_dir = '/opt/airflow/dbt'
     
-    print(f"✅ Data quality checks passed!")
-    print(f"   - Total orders: {len(df)}")
-    print(f"   - Total revenue: ${df['total_amount'].sum():.2f}")
+    result = subprocess.run(
+        ['dbt', 'run', '--profiles-dir', dbt_dir, '--project-dir', dbt_dir],
+        capture_output=True,
+        text=True
+    )
+    
+    print(result.stdout)
+    
+    if result.returncode == 0:
+        print("✅ dbt models ran successfully!")
+    else:
+        print("❌ dbt run failed!")
+        print(result.stderr)
+        raise Exception("dbt run failed")
 
-# Define tasks
 task_extract = PythonOperator(
     task_id='extract_from_postgres',
     python_callable=extract_from_postgres,
@@ -123,10 +166,15 @@ task_validate = PythonOperator(
 )
 
 task_load = PythonOperator(
-    task_id='load_to_minio',
-    python_callable=load_to_minio,
+    task_id='load_to_minio_and_postgres',
+    python_callable=load_to_minio_and_postgres,
     dag=dag,
 )
 
-# Define task dependencies
-task_extract >> task_validate >> task_load
+task_dbt = PythonOperator(
+    task_id='run_dbt_transformations',
+    python_callable=run_dbt_models,
+    dag=dag,
+)
+
+task_extract >> task_validate >> task_load >> task_dbt

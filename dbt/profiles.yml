@@ -1,0 +1,12 @@
+modern_etl:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: postgres-dest
+      port: 5432
+      user: destuser
+      password: destpass
+      dbname: destdb
+      schema: analytics
+      threads: 4

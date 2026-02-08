@@ -1,0 +1,30 @@
+version: 2
+
+sources:
+  - name: raw
+    description: Raw data from source systems
+    database: destdb
+    schema: public
+    tables:
+      - name: orders
+        description: Raw orders from PostgreSQL source
+        columns:
+          - name: order_id
+            description: Primary key
+            tests:
+              - unique
+              - not_null
+          - name: customer_id
+            description: Foreign key to customers
+            tests:
+              - not_null
+          - name: total_amount
+            description: Order total amount
+            tests:
+              - not_null
+          - name: status
+            description: Order status
+            tests:
+              - not_null
+              - accepted_values:
+                  values: ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
