@@ -128,6 +128,41 @@ services:
     networks:
       - etl-network
 
+# Apache Spark Master
+  spark-master:
+    image: apache/spark:3.5.0
+    container_name: spark-master
+    environment:
+      - SPARK_MODE=master
+      - SPARK_MASTER_HOST=spark-master
+      - SPARK_MASTER_PORT=7077
+    ports:
+      - "8081:8080"  # Spark Master UI
+      - "7077:7077"  # Spark Master port
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    volumes:
+      - ./spark/jobs:/opt/spark-jobs
+      - ./spark/data:/opt/spark-data
+    networks:
+      - etl-network
+
+  # Apache Spark Worker
+  spark-worker:
+    image: apache/spark:3.5.0
+    container_name: spark-worker
+    environment:
+      - SPARK_MASTER=spark://spark-master:7077
+      - SPARK_WORKER_CORES=2
+      - SPARK_WORKER_MEMORY=2G
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    depends_on:
+      - spark-master
+    volumes:
+      - ./spark/jobs:/opt/spark-jobs
+      - ./spark/data:/opt/spark-data
+    networks:
+      - etl-network
+
   # Airflow Database
   airflow-db:
     image: postgres:15

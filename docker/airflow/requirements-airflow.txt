@@ -6,3 +6,5 @@ dbt-core==1.7.0
 dbt-postgres==1.7.0
 sqlalchemy==1.4.51
 kafka-python==2.0.2
+apache-airflow-providers-apache-spark==4.5.0
+pyspark==3.5.0
