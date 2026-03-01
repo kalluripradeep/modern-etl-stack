@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+*.egg-info/
+
+# Airflow - IMPORTANT!
+airflow/logs/
+airflow/*.pid
+airflow/*.log
+airflow/airflow.db
+airflow/webserver_config.py
+
+# Data
+*.csv
+*.parquet
+*.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Docker
+.env
+
+# Logs
+*.log
+logs/

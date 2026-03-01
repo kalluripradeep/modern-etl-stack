@@ -1,0 +1,7 @@
+# Local development dependencies (not used inside Docker)
+# Install with: pip install -r requirements.txt
+
+faker==22.0.0
+psycopg2-binary==2.9.9
+pandas==2.1.4
+pyarrow==14.0.1

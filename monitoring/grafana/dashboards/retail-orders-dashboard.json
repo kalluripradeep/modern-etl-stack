@@ -1,0 +1,186 @@
+{
+  "dashboard": {
+    "title": "Retail Orders Analytics - Real-Time",
+    "tags": ["retail", "orders", "analytics"],
+    "timezone": "browser",
+    "refresh": "30s",
+    "time": {
+      "from": "now-7d",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Total Orders (Last 7 Days)",
+        "type": "stat",
+        "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+        "targets": [
+          {
+            "datasource": "PostgreSQL Warehouse",
+            "rawSql": "SELECT COUNT(*) as total_orders FROM analytics.silver_orders WHERE order_date >= NOW() - INTERVAL '7 days'",
+            "format": "table"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "green"},
+                {"value": 100, "color": "yellow"},
+                {"value": 500, "color": "red"}
+              ]
+            },
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Total Revenue (Last 7 Days)",
+        "type": "stat",
+        "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4},
+        "targets": [
+          {
+            "datasource": "PostgreSQL Warehouse",
+            "rawSql": "SELECT COALESCE(SUM(total_amount), 0) as total_revenue FROM analytics.silver_orders WHERE order_date >= NOW() - INTERVAL '7 days'",
+            "format": "table"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "blue"}
+              ]
+            },
+            "unit": "currencyGBP"
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "Average Order Value",
+        "type": "stat",
+        "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4},
+        "targets": [
+          {
+            "datasource": "PostgreSQL Warehouse",
+            "rawSql": "SELECT COALESCE(AVG(total_amount), 0) as avg_order_value FROM analytics.silver_orders WHERE order_date >= NOW() - INTERVAL '7 days'",
+            "format": "table"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "palette-classic"},
+            "unit": "currencyGBP"
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "Orders by Status",
+        "type": "piechart",
+        "gridPos": {"x": 18, "y": 0, "w": 6, "h": 8},
+        "targets": [
+          {
+            "datasource": "PostgreSQL Warehouse",
+            "rawSql": "SELECT status, COUNT(*) as count FROM analytics.silver_orders WHERE order_date >= NOW() - INTERVAL '7 days' GROUP BY status",
+            "format": "table"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Daily Revenue Trend",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 4, "w": 18, "h": 8},
+        "targets": [
+          {
+            "datasource": "PostgreSQL Warehouse",
+            "rawSql": "SELECT order_date as time, SUM(total_amount) as revenue FROM analytics.silver_orders WHERE order_date >= NOW() - INTERVAL '30 days' GROUP BY order_date ORDER BY order_date",
+            "format": "time_series"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 10
+            },
+            "unit": "currencyGBP"
+          }
+        }
+      },
+      {
+        "id": 6,
+        "title": "Orders per Day",
+        "type": "bargauge",
+        "gridPos": {"x": 0, "y": 12, "w": 12, "h": 6},
+        "targets": [
+          {
+            "datasource": "PostgreSQL Warehouse",
+            "rawSql": "SELECT order_date as time, COUNT(*) as orders FROM analytics.silver_orders WHERE order_date >= NOW() - INTERVAL '7 days' GROUP BY order_date ORDER BY order_date",
+            "format": "time_series"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "continuous-GrYlRd"},
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "Recent Orders (Latest 10)",
+        "type": "table",
+        "gridPos": {"x": 12, "y": 12, "w": 12, "h": 6},
+        "targets": [
+          {
+            "datasource": "PostgreSQL Warehouse",
+            "rawSql": "SELECT order_id, customer_id, order_date, total_amount, status FROM analytics.silver_orders ORDER BY created_at DESC LIMIT 10",
+            "format": "table"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Revenue by Status",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 18, "w": 12, "h": 6},
+        "targets": [
+          {
+            "datasource": "PostgreSQL Warehouse",
+            "rawSql": "SELECT status, SUM(total_amount) as revenue FROM analytics.silver_orders WHERE order_date >= NOW() - INTERVAL '7 days' GROUP BY status",
+            "format": "table"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "palette-classic"},
+            "unit": "currencyGBP"
+          }
+        }
+      },
+      {
+        "id": 9,
+        "title": "Top Customers (by Revenue)",
+        "type": "table",
+        "gridPos": {"x": 12, "y": 18, "w": 12, "h": 6},
+        "targets": [
+          {
+            "datasource": "PostgreSQL Warehouse",
+            "rawSql": "SELECT customer_id, COUNT(*) as order_count, SUM(total_amount) as total_revenue FROM analytics.silver_orders WHERE order_date >= NOW() - INTERVAL '30 days' GROUP BY customer_id ORDER BY total_revenue DESC LIMIT 10",
+            "format": "table"
+          }
+        ]
+      }
+    ]
+  },
+  "overwrite": true
+}

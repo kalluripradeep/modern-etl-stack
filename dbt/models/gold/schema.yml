@@ -1,0 +1,28 @@
+version: 2
+
+models:
+  - name: gold_daily_revenue
+    description: Daily revenue aggregated by order status — business-ready metrics.
+    columns:
+      - name: order_date
+        description: Date of aggregation (day granularity)
+        tests:
+          - not_null
+      - name: status
+        description: Order status
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
+      - name: order_count
+        description: Number of orders for this date and status
+        tests:
+          - not_null
+      - name: total_revenue
+        description: Sum of order amounts for this date and status
+        tests:
+          - not_null
+      - name: avg_order_value
+        description: Average order value for this date and status
+        tests:
+          - not_null

@@ -1,0 +1,29 @@
+version: 2
+
+models:
+  - name: silver_orders
+    description: Cleaned and validated orders — nulls, invalid amounts, and missing statuses removed.
+    columns:
+      - name: order_id
+        description: Primary key
+        tests:
+          - unique
+          - not_null
+      - name: customer_id
+        description: Foreign key to customers
+        tests:
+          - not_null
+      - name: total_amount
+        description: Order total — always positive after cleaning
+        tests:
+          - not_null
+      - name: status
+        description: Order status
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
+      - name: order_date
+        description: Date the order was placed
+        tests:
+          - not_null

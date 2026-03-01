@@ -1,0 +1,12 @@
+modern_etl:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: postgres-dest
+      port: 5432
+      user: "{{ env_var('DEST_DB_USER', 'destuser') }}"
+      password: "{{ env_var('DEST_DB_PASSWORD', 'destpass') }}"
+      dbname: "{{ env_var('DEST_DB_NAME', 'destdb') }}"
+      schema: analytics
+      threads: 4
