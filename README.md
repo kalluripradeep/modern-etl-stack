@@ -57,7 +57,7 @@ Monitoring: Prometheus + Grafana + Node Exporter
 
 ```bash
 # 1. Clone and configure
-git clone <repo-url>
+git clone https://github.com/kalluripradeep/modern-etl-stack.git
 cd modern-etl-stack
 cp .env.example .env          # edit .env if you want custom passwords
 
