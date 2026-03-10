@@ -53,6 +53,25 @@ Monitoring: Prometheus + Grafana + Node Exporter
 - `make` (optional but recommended)
 - ~6 GB free RAM (all containers)
 
+### Linux: Docker group permissions
+
+If you get a `permission denied` error running Docker commands, add your user to the docker group:
+```bash
+sudo groupadd docker
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+### Linux: Airflow directory permissions
+
+If Airflow containers fail to start due to permission errors on `logs/`, `dags/`, or `plugins/`, run:
+```bash
+sudo chown -R 50000:0 logs dags plugins
+sudo chmod -R 775 logs dags plugins
+```
+
+The UID `50000` is the default Airflow user inside the container.
+
 ## Quick Start
 
 ```bash
