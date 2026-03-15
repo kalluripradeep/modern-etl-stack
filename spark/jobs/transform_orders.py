@@ -1,35 +1,54 @@
 """
 Spark Job: Transform Orders from Bronze to Silver
-Simple version using CSV for demo
+Reads from MinIO (S3A) bronze bucket, writes to MinIO silver bucket
 """
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, current_timestamp, to_date
+from pyspark.sql.functions import col, current_timestamp
 from pyspark.sql.types import DecimalType
+import os
 import sys
 
+
 def create_spark_session():
-    """Create Spark session"""
+    """Create Spark session — all config injected via env vars for K8s compatibility"""
+    spark_master   = os.environ.get('SPARK_MASTER_URL', 'spark://spark-master:7077')
+    minio_endpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')
+    minio_user     = os.environ.get('MINIO_ROOT_USER', 'minioadmin')
+    minio_password = os.environ.get('MINIO_ROOT_PASSWORD', 'minioadmin')
+    executor_mem   = os.environ.get('SPARK_EXECUTOR_MEMORY', '1g')
+
     return SparkSession.builder \
         .appName("Orders-Bronze-to-Silver") \
-        .master("spark://spark-master:7077") \
-        .config("spark.executor.memory", "1g") \
+        .master(spark_master) \
+        .config("spark.executor.memory", executor_mem) \
+        .config("spark.sql.adaptive.enabled", "true") \
+        .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
+        .config("spark.hadoop.fs.s3a.endpoint", minio_endpoint) \
+        .config("spark.hadoop.fs.s3a.access.key", minio_user) \
+        .config("spark.hadoop.fs.s3a.secret.key", minio_password) \
+        .config("spark.hadoop.fs.s3a.path.style.access", "true") \
+        .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
         .getOrCreate()
 
-def read_from_local(spark, date):
-    """Read Bronze layer from local file"""
-    print(f"📦 Reading Bronze layer for date: {date}")
-    
-    # For demo, we'll read from the temp location
-    df = spark.read.parquet(f"/opt/spark-data/orders_{date}.parquet")
-    
-    print(f"✅ Loaded {df.count()} records from Bronze")
+
+def read_from_minio(spark, date):
+    """Read Bronze layer from MinIO — partitioned by date"""
+    bronze_bucket = os.environ.get('BRONZE_BUCKET', 'bronze')
+    # date format: YYYYMMDD → convert to YYYY/MM/DD partition path
+    year, month, day = date[:4], date[4:6], date[6:]
+    path = f"s3a://{bronze_bucket}/orders/{year}/{month}/{day}/"
+
+    print(f"Reading Bronze layer from: {path}")
+    df = spark.read.parquet(path)
+    print(f"Loaded {df.count()} records from Bronze")
     return df
+
 
 def transform_to_silver(df):
     """Apply Silver layer transformations"""
-    print("🔄 Applying Silver layer transformations...")
-    
+    print("Applying Silver layer transformations...")
+
     silver_df = df \
         .filter(col("order_id").isNotNull()) \
         .filter(col("customer_id").isNotNull()) \
@@ -45,69 +64,55 @@ def transform_to_silver(df):
             "status",
             "created_at",
             "updated_at",
-            "processed_at"
+            "processed_at",
         )
-    
-    print(f"✅ Transformed to {silver_df.count()} valid records")
+
+    print(f"Transformed to {silver_df.count()} valid records")
     return silver_df
 
-def write_to_local(df, output_path):
-    """Write Silver layer to local file"""
-    print(f"💾 Writing to: {output_path}")
-    
+
+def write_to_minio(df, date):
+    """Write Silver layer to MinIO — partitioned by date"""
+    silver_bucket = os.environ.get('SILVER_BUCKET', 'silver')
+    year, month, day = date[:4], date[4:6], date[6:]
+    path = f"s3a://{silver_bucket}/orders/{year}/{month}/{day}/"
+
+    print(f"Writing Silver layer to: {path}")
     df.write \
         .mode("overwrite") \
-        .parquet(output_path)
-    
-    print(f"✅ Successfully wrote Silver layer")
+        .parquet(path)
+    print(f"Successfully wrote Silver layer to {path}")
+
 
 def main():
-    """Main Spark job execution"""
     if len(sys.argv) < 2:
-        date = "20260209"  # Default date
-        print(f"⚠️ No date provided, using default: {date}")
+        date = "20260209"
+        print(f"No date provided, using default: {date}")
     else:
         date = sys.argv[1]
-    
-    print("=" * 60)
-    print("🚀 Starting Spark Job: Bronze → Silver Transformation")
-    print(f"📅 Processing date: {date}")
-    print("=" * 60)
-    
-    # Create Spark session
+
+    print(f"Starting Spark Job: Bronze to Silver — date: {date}")
+
     spark = create_spark_session()
-    
+
     try:
-        # Read Bronze data
-        bronze_df = read_from_local(spark, date)
-        
-        # Show sample
-        print("\n📊 Sample Bronze data:")
+        bronze_df = read_from_minio(spark, date)
         bronze_df.show(5)
-        
-        # Transform to Silver
+
         silver_df = transform_to_silver(bronze_df)
-        
-        # Show sample
-        print("\n📊 Sample Silver data:")
         silver_df.show(5)
-        
-        # Write to local
-        output_path = f"/opt/spark-data/silver_orders_{date}.parquet"
-        write_to_local(silver_df, output_path)
-        
-        print("=" * 60)
-        print("✅ Spark Job Completed Successfully!")
-        print(f"📍 Output: {output_path}")
-        print("=" * 60)
-        
+
+        write_to_minio(silver_df, date)
+        print("Spark Job Completed Successfully!")
+
     except Exception as e:
-        print(f"❌ Spark Job Failed: {str(e)}")
+        print(f"Spark Job Failed: {str(e)}")
         import traceback
         traceback.print_exc()
         raise
     finally:
         spark.stop()
+
 
 if __name__ == "__main__":
     main()

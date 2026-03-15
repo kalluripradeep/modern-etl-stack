@@ -5,7 +5,8 @@
 
 set -euo pipefail
 
-CONNECT_URL="${KAFKA_CONNECT_URL:-http://localhost:8083}"
+# Default to Docker Compose name; in K8s set KAFKA_CONNECT_URL=http://kafka-connect.etl.svc.cluster.local:8083
+CONNECT_URL="${KAFKA_CONNECT_URL:-http://kafka-connect:8083}"
 
 SOURCE_DB_HOST="${SOURCE_DB_HOST:-postgres-source}"
 SOURCE_DB_PORT="${SOURCE_DB_PORT:-5432}"

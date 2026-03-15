@@ -3,8 +3,10 @@ modern_etl:
   outputs:
     dev:
       type: postgres
-      host: postgres-dest
-      port: 5432
+      # DEST_DB_HOST defaults to Docker name; override to K8s DNS in production:
+      # e.g. postgres-dest.etl.svc.cluster.local
+      host: "{{ env_var('DEST_DB_HOST', 'postgres-dest') }}"
+      port: "{{ env_var('DEST_DB_PORT', '5432') | int }}"
       user: "{{ env_var('DEST_DB_USER', 'destuser') }}"
       password: "{{ env_var('DEST_DB_PASSWORD', 'destpass') }}"
       dbname: "{{ env_var('DEST_DB_NAME', 'destdb') }}"
