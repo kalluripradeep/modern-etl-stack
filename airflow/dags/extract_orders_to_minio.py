@@ -137,6 +137,14 @@ def load_to_minio_and_postgres():
     pg_conn.commit()
 
     date_prefix = datetime.now().strftime("%Y/%m/%d")
+
+    # Delete all existing objects at this date prefix — ensures stale files don't linger
+    prefix = f'orders/{date_prefix}/'
+    existing_objects = client.list_objects(bucket_name, prefix=prefix, recursive=True)
+    for obj in existing_objects:
+        client.remove_object(bucket_name, obj.object_name)
+        print(f"Deleted stale object: {obj.object_name}")
+
     chunk_files = sorted(glob_module.glob(f'{CHUNK_DIR}/part-*.parquet'))
     total_loaded = 0
 
