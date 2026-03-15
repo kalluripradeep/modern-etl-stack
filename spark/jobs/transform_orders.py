@@ -29,7 +29,6 @@ def create_spark_session():
         .config("spark.hadoop.fs.s3a.secret.key", minio_password) \
         .config("spark.hadoop.fs.s3a.path.style.access", "true") \
         .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
-        .config("spark.sql.legacy.parquet.nanosAsLong", "true") \
         .getOrCreate()
 
 
