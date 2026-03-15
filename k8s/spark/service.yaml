@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: spark-master
+  namespace: etl
+spec:
+  selector:
+    app: spark-master
+  ports:
+  - name: spark
+    port: 7077
+    targetPort: 7077
+  - name: ui
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spark-master-ui
+  namespace: etl
+spec:
+  type: NodePort
+  selector:
+    app: spark-master
+  ports:
+  - name: ui
+    port: 8080
+    targetPort: 8080
+    nodePort: 30808

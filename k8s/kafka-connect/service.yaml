@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-connect
+  namespace: etl
+spec:
+  selector:
+    app: kafka-connect
+  ports:
+  - port: 8083
+    targetPort: 8083
