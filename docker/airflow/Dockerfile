@@ -4,12 +4,13 @@ USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openjdk-17-jdk-headless \
     && apt-get clean && rm -rf /var/lib/apt/lists/* \
-    && JAVA_REAL=$(readlink -f /usr/bin/java) \
-    && JAVA_HOME_ACTUAL=$(dirname $(dirname $JAVA_REAL)) \
-    && ln -sfn $JAVA_HOME_ACTUAL /usr/local/java-home
-
-ENV JAVA_HOME=/usr/local/java-home
-ENV PATH="${JAVA_HOME}/bin:${PATH}"
+    && JAVA_BIN=$(find /usr/lib/jvm -maxdepth 5 -name "java" -executable -type f | head -1) \
+    && echo "java found at: $JAVA_BIN" \
+    && ln -sf "$JAVA_BIN" /usr/local/bin/java \
+    && JAVA_HOME_DIR=$(dirname $(dirname $JAVA_BIN)) \
+    && echo "export JAVA_HOME=$JAVA_HOME_DIR" > /etc/profile.d/java.sh \
+    && echo "export PATH=$JAVA_HOME_DIR/bin:\$PATH" >> /etc/profile.d/java.sh \
+    && java -version
 
 USER airflow
 # Copy from docker/airflow directory (relative to build context which is project root)
