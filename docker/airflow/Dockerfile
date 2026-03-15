@@ -11,3 +11,11 @@ USER airflow
 # Copy from docker/airflow directory (relative to build context which is project root)
 COPY docker/airflow/requirements-airflow.txt /requirements-airflow.txt
 RUN pip install --no-cache-dir -r /requirements-airflow.txt
+
+# Bake spark jobs into image so they're always available
+# (volume mount ./spark/jobs:/opt/spark-jobs can still override at runtime)
+USER root
+RUN mkdir -p /opt/spark-jobs
+COPY spark/jobs/ /opt/spark-jobs/
+RUN chown -R airflow:root /opt/spark-jobs
+USER airflow
