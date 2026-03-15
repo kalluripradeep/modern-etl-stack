@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-connect
+  namespace: etl
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka-connect
+  template:
+    metadata:
+      labels:
+        app: kafka-connect
+    spec:
+      # Wait for Kafka to be ready before starting
+      initContainers:
+      - name: wait-for-kafka
+        image: busybox
+        command:
+        - sh
+        - -c
+        - |
+          until nc -z kafka.etl.svc.cluster.local 9092; do
+            echo "Waiting for Kafka..."
+            sleep 5
+          done
+      containers:
+      - name: kafka-connect
+        image: quay.io/debezium/connect:2.5   # includes PostgreSQL CDC connector
+        ports:
+        - containerPort: 8083
+        env:
+        - name: BOOTSTRAP_SERVERS
+          value: "kafka.etl.svc.cluster.local:9092"
+        - name: GROUP_ID
+          value: "debezium-connect-cluster"
+        - name: CONFIG_STORAGE_TOPIC
+          value: "debezium-configs"
+        - name: OFFSET_STORAGE_TOPIC
+          value: "debezium-offsets"
+        - name: STATUS_STORAGE_TOPIC
+          value: "debezium-status"
+        - name: CONFIG_STORAGE_REPLICATION_FACTOR
+          value: "1"
+        - name: OFFSET_STORAGE_REPLICATION_FACTOR
+          value: "1"
+        - name: STATUS_STORAGE_REPLICATION_FACTOR
+          value: "1"
+        - name: KEY_CONVERTER
+          value: "org.apache.kafka.connect.json.JsonConverter"
+        - name: VALUE_CONVERTER
+          value: "org.apache.kafka.connect.json.JsonConverter"
+        - name: HEAP_OPTS
+          value: "-Xmx1G -Xms512M"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1"
+        readinessProbe:
+          httpGet:
+            path: /connectors
+            port: 8083
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 6
+        livenessProbe:
+          httpGet:
+            path: /connectors
+            port: 8083
+          initialDelaySeconds: 60
+          periodSeconds: 15

@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-dest
+  namespace: etl
+spec:
+  serviceName: postgres-dest
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-dest
+  template:
+    metadata:
+      labels:
+        app: postgres-dest
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: etl-secrets
+              key: DEST_DB_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: etl-secrets
+              key: DEST_DB_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: etl-secrets
+              key: DEST_DB_NAME
+        # Tuned for bulk loads (COPY) and dbt transformations
+        args:
+        - postgres
+        - -c
+        - shared_buffers=256MB
+        - -c
+        - work_mem=64MB
+        - -c
+        - maintenance_work_mem=256MB
+        - -c
+        - checkpoint_completion_target=0.9
+        - -c
+        - max_wal_size=1GB
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1"
+        volumeMounts:
+        - name: postgres-dest-data
+          mountPath: /var/lib/postgresql/data
+        readinessProbe:
+          exec:
+            command: ["pg_isready", "-U", "destuser"]
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          exec:
+            command: ["pg_isready", "-U", "destuser"]
+          initialDelaySeconds: 30
+          periodSeconds: 10
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-dest-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: standard   # change to gp3 on AWS, pd-ssd on GCP
+      resources:
+        requests:
+          storage: 50Gi            # increase to 500Gi+ for 500M rows in production
