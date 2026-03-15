@@ -309,6 +309,8 @@ services:
       DEST_DB_NAME: ${DEST_DB_NAME:-destdb}
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      SPARK_HOME: /home/airflow/.local/lib/python3.11/site-packages/pyspark
+      AIRFLOW_CONN_SPARK_DEFAULT: spark://spark-master:7077
     ports:
       - "8080:8080"
     volumes:
@@ -316,6 +318,7 @@ services:
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
       - ./dbt:/opt/airflow/dbt
+      - ./spark/jobs:/opt/spark-jobs
     command: webserver
     networks:
       - etl-network
@@ -345,11 +348,14 @@ services:
       DEST_DB_NAME: ${DEST_DB_NAME:-destdb}
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      SPARK_HOME: /home/airflow/.local/lib/python3.11/site-packages/pyspark
+      AIRFLOW_CONN_SPARK_DEFAULT: spark://spark-master:7077
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
       - ./dbt:/opt/airflow/dbt
+      - ./spark/jobs:/opt/spark-jobs
     command: scheduler
     networks:
       - etl-network
