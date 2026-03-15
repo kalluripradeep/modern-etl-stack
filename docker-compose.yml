@@ -318,7 +318,6 @@ services:
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
       - ./dbt:/opt/airflow/dbt
-      - ./spark/jobs:/opt/spark-jobs
     command: webserver
     networks:
       - etl-network
@@ -355,7 +354,6 @@ services:
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
       - ./dbt:/opt/airflow/dbt
-      - ./spark/jobs:/opt/spark-jobs
     command: scheduler
     networks:
       - etl-network
