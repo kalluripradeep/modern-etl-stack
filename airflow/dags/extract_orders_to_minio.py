@@ -69,7 +69,7 @@ def extract_from_postgres():
     # chunksize= streams CHUNK_SIZE rows at a time — never loads full table into RAM
     for chunk in pd.read_sql(query, conn, chunksize=CHUNK_SIZE):
         out_path = f'{CHUNK_DIR}/part-{chunk_num:05d}.parquet'
-        chunk.to_parquet(out_path, index=False, compression='snappy')
+        chunk.to_parquet(out_path, index=False, compression='snappy', coerce_timestamps='us', allow_truncated_timestamps=True)
         total_rows += len(chunk)
         chunk_num += 1
         print(f"Chunk {chunk_num}: {total_rows:,} rows written")
