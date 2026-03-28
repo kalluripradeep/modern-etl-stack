@@ -1,0 +1,21 @@
+ETL Stack deployed successfully!
+
+Get the node IP:
+  export NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}')
+  # Minikube: minikube ip
+
+Service URLs:
+  Airflow UI:    http://$NODE_IP:30880   ({{ .Values.secrets.grafana.adminUser }} / <your password>)
+  Grafana:       http://$NODE_IP:{{ .Values.grafana.nodePort }}   ({{ .Values.secrets.grafana.adminUser }} / <your password>)
+  MinIO Console: http://$NODE_IP:{{ .Values.minio.consoleNodePort }}   ({{ .Values.secrets.minio.rootUser }} / <your password>)
+  Spark UI:      http://$NODE_IP:{{ .Values.spark.uiNodePort }}
+
+After deploy — create MinIO buckets:
+  MINIO_POD=$(kubectl get pod -n {{ .Release.Namespace }} -l app=minio -o jsonpath='{.items[0].metadata.name}')
+  kubectl exec -n {{ .Release.Namespace }} $MINIO_POD -- sh -c \
+    "mc alias set local http://localhost:9000 {{ .Values.secrets.minio.rootUser }} {{ .Values.secrets.minio.rootPassword }} && \
+     mc mb --ignore-existing local/{{ .Values.etl.bronzeBucket }} && \
+     mc mb --ignore-existing local/{{ .Values.etl.silverBucket }}"
+
+Register Debezium CDC connector:
+  bash scripts/register_debezium_connector.sh

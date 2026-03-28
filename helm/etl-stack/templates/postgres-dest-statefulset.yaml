@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-dest
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "etl-stack.labels" . | nindent 4 }}
+    app: postgres-dest
+spec:
+  serviceName: postgres-dest
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-dest
+  template:
+    metadata:
+      labels:
+        app: postgres-dest
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.postgresDest.image }}
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: etl-secrets
+                  key: DEST_DB_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: etl-secrets
+                  key: DEST_DB_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: etl-secrets
+                  key: DEST_DB_NAME
+          args:
+            - postgres
+            - -c
+            - shared_buffers=256MB
+            - -c
+            - work_mem=64MB
+            - -c
+            - maintenance_work_mem=256MB
+            - -c
+            - checkpoint_completion_target=0.9
+            - -c
+            - max_wal_size=1GB
+          resources:
+            {{- toYaml .Values.postgresDest.resources | nindent 12 }}
+          volumeMounts:
+            - name: postgres-dest-data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.secrets.destDb.user | quote }}]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.secrets.destDb.user | quote }}]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-dest-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ .Values.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.postgresDest.storage }}
