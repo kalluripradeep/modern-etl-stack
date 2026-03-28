@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-connect
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "etl-stack.labels" . | nindent 4 }}
+    app: kafka-connect
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka-connect
+  template:
+    metadata:
+      labels:
+        app: kafka-connect
+    spec:
+      initContainers:
+        - name: wait-for-kafka
+          image: busybox
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z kafka.{{ .Release.Namespace }}.svc.cluster.local 9092; do
+                echo "Waiting for Kafka..."
+                sleep 5
+              done
+      containers:
+        - name: kafka-connect
+          image: {{ .Values.kafkaConnect.image }}
+          ports:
+            - containerPort: 8083
+          env:
+            - name: BOOTSTRAP_SERVERS
+              value: "kafka.{{ .Release.Namespace }}.svc.cluster.local:9092"
+            - name: GROUP_ID
+              value: "debezium-connect-cluster"
+            - name: CONFIG_STORAGE_TOPIC
+              value: "debezium-configs"
+            - name: OFFSET_STORAGE_TOPIC
+              value: "debezium-offsets"
+            - name: STATUS_STORAGE_TOPIC
+              value: "debezium-status"
+            - name: CONFIG_STORAGE_REPLICATION_FACTOR
+              value: "1"
+            - name: OFFSET_STORAGE_REPLICATION_FACTOR
+              value: "1"
+            - name: STATUS_STORAGE_REPLICATION_FACTOR
+              value: "1"
+            - name: KEY_CONVERTER
+              value: "org.apache.kafka.connect.json.JsonConverter"
+            - name: VALUE_CONVERTER
+              value: "org.apache.kafka.connect.json.JsonConverter"
+            - name: HEAP_OPTS
+              value: {{ .Values.kafkaConnect.heapOpts | quote }}
+          resources:
+            {{- toYaml .Values.kafkaConnect.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /connectors
+              port: 8083
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /connectors
+              port: 8083
+            initialDelaySeconds: 60
+            periodSeconds: 15

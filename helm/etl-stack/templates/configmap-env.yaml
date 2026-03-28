@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: etl-env
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "etl-stack.labels" . | nindent 4 }}
+data:
+  SOURCE_DB_HOST: "postgres-source.{{ .Release.Namespace }}.svc.cluster.local"
+  SOURCE_DB_PORT: "5432"
+  DEST_DB_HOST: "postgres-dest.{{ .Release.Namespace }}.svc.cluster.local"
+  DEST_DB_PORT: "5432"
+  MINIO_ENDPOINT: "http://minio.{{ .Release.Namespace }}.svc.cluster.local:9000"
+  KAFKA_BOOTSTRAP: "kafka.{{ .Release.Namespace }}.svc.cluster.local:9092"
+  SPARK_MASTER_URL: "spark://spark-master.{{ .Release.Namespace }}.svc.cluster.local:7077"
+  KAFKA_CONNECT_URL: "http://kafka-connect.{{ .Release.Namespace }}.svc.cluster.local:8083"
+  BRONZE_BUCKET: {{ .Values.etl.bronzeBucket | quote }}
+  SILVER_BUCKET: {{ .Values.etl.silverBucket | quote }}
+  ETL_CHUNK_SIZE: {{ .Values.etl.chunkSize | quote }}
+  CDC_MAX_MESSAGES: {{ .Values.etl.cdcMaxMessages | quote }}
+  CDC_COMMIT_EVERY: {{ .Values.etl.cdcCommitEvery | quote }}
+  SPARK_EXECUTOR_MEMORY: {{ .Values.etl.sparkExecutorMemory | quote }}
+  SPARK_EXECUTOR_CORES: {{ .Values.etl.sparkExecutorCores | quote }}

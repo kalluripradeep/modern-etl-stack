@@ -1,0 +1,232 @@
+# ─── Secrets ──────────────────────────────────────────────────────────────────
+# Change all passwords before deploying to production.
+secrets:
+  sourceDb:
+    user: sourceuser
+    password: sourcepass
+    name: sourcedb
+  destDb:
+    user: destuser
+    password: destpass
+    name: destdb
+  minio:
+    rootUser: minioadmin
+    rootPassword: minioadmin123
+  grafana:
+    adminUser: admin
+    adminPassword: admin123
+
+# ─── Storage class ────────────────────────────────────────────────────────────
+# Use "standard" for Minikube, "gp2" for EKS, "standard" for GKE, etc.
+storageClass: standard
+
+# ─── PostgreSQL Source ────────────────────────────────────────────────────────
+postgresSource:
+  image: postgres:15
+  storage: 10Gi
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 250m
+    limits:
+      memory: 1Gi
+      cpu: 500m
+
+# ─── PostgreSQL Destination ───────────────────────────────────────────────────
+postgresDest:
+  image: postgres:15
+  storage: 50Gi
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 250m
+    limits:
+      memory: 2Gi
+      cpu: "1"
+
+# ─── Zookeeper ────────────────────────────────────────────────────────────────
+zookeeper:
+  image: confluentinc/cp-zookeeper:7.5.0
+  storage: 5Gi
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
+# ─── Kafka ────────────────────────────────────────────────────────────────────
+kafka:
+  image: confluentinc/cp-kafka:7.5.0
+  storage: 20Gi
+  logRetentionHours: "168"
+  heapOpts: "-Xmx1G -Xms512M"
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 250m
+    limits:
+      memory: 2Gi
+      cpu: "1"
+
+# ─── MinIO ────────────────────────────────────────────────────────────────────
+minio:
+  image: quay.io/minio/minio:latest
+  storage: 100Gi
+  consoleNodePort: 30901
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 250m
+    limits:
+      memory: 1Gi
+      cpu: "1"
+
+# ─── Kafka Connect (Debezium) ─────────────────────────────────────────────────
+kafkaConnect:
+  image: quay.io/debezium/connect:2.5
+  heapOpts: "-Xmx1G -Xms512M"
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 250m
+    limits:
+      memory: 2Gi
+      cpu: "1"
+
+# ─── Spark ────────────────────────────────────────────────────────────────────
+spark:
+  image: bitnami/spark:3.5
+  workerReplicas: 2
+  workerMemory: 2G
+  workerCores: "2"
+  uiNodePort: 30808
+  master:
+    resources:
+      requests:
+        memory: 512Mi
+        cpu: 250m
+      limits:
+        memory: 1Gi
+        cpu: 500m
+  worker:
+    resources:
+      requests:
+        memory: 2Gi
+        cpu: 500m
+      limits:
+        memory: 4Gi
+        cpu: "2"
+
+# ─── Prometheus ───────────────────────────────────────────────────────────────
+prometheus:
+  image: prom/prometheus:v2.48.0
+  retentionDays: 7d
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
+# ─── Node Exporter ────────────────────────────────────────────────────────────
+nodeExporter:
+  image: prom/node-exporter:v1.7.0
+  resources:
+    requests:
+      memory: 64Mi
+      cpu: 50m
+    limits:
+      memory: 128Mi
+      cpu: 100m
+
+# ─── Grafana ──────────────────────────────────────────────────────────────────
+grafana:
+  image: grafana/grafana:10.2.0
+  nodePort: 30300
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 100m
+    limits:
+      memory: 256Mi
+      cpu: 500m
+
+# ─── ETL runtime config ───────────────────────────────────────────────────────
+etl:
+  bronzeBucket: bronze
+  silverBucket: silver
+  chunkSize: "10000"
+  cdcMaxMessages: "100"
+  cdcCommitEvery: "100"
+  sparkExecutorMemory: 2g
+  sparkExecutorCores: "2"
+
+# ─── Airflow (subchart) ───────────────────────────────────────────────────────
+# Full values reference: https://airflow.apache.org/docs/helm-chart/stable/parameters-ref.html
+airflow:
+  enabled: true
+
+  executor: KubernetesExecutor
+
+  images:
+    airflow:
+      # Set to your custom image after running: docker build -f docker/airflow/Dockerfile .
+      # Example: repository: docker.io/myuser/airflow-etl
+      repository: apache/airflow
+      tag: 2.8.0-python3.11
+      pullPolicy: IfNotPresent
+
+  serviceAccount:
+    create: true
+    name: airflow
+
+  dags:
+    gitSync:
+      enabled: true
+      repo: https://github.com/kalluripradeep/modern-etl-stack.git
+      branch: main
+      subPath: airflow/dags
+      period: 60s
+
+  # Pulls all env vars from the ConfigMap and Secret created by this chart
+  extraEnvFrom: |-
+    - configMapRef:
+        name: etl-env
+    - secretRef:
+        name: etl-secrets
+
+  extraEnv: |-
+    - name: AIRFLOW_CONN_SPARK_DEFAULT
+      value: "spark://spark-master.{{ .Release.Namespace }}.svc.cluster.local:7077"
+
+  postgresql:
+    enabled: true
+
+  redis:
+    enabled: false
+
+  scheduler:
+    resources:
+      requests:
+        memory: 512Mi
+        cpu: 250m
+      limits:
+        memory: 1Gi
+        cpu: 500m
+
+  webserver:
+    resources:
+      requests:
+        memory: 512Mi
+        cpu: 250m
+      limits:
+        memory: 1Gi
+        cpu: 500m
+    service:
+      type: NodePort
+      nodePort: 30880
+
+  webserverSecretKey: "etl-secret-key-change-in-production"

@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "etl-stack.labels" . | nindent 4 }}
+    app: spark-worker
+spec:
+  replicas: {{ .Values.spark.workerReplicas }}
+  selector:
+    matchLabels:
+      app: spark-worker
+  template:
+    metadata:
+      labels:
+        app: spark-worker
+    spec:
+      containers:
+        - name: spark-worker
+          image: {{ .Values.spark.image }}
+          env:
+            - name: SPARK_MODE
+              value: worker
+            - name: SPARK_MASTER_URL
+              value: "spark://spark-master.{{ .Release.Namespace }}.svc.cluster.local:7077"
+            - name: SPARK_WORKER_MEMORY
+              value: {{ .Values.spark.workerMemory | quote }}
+            - name: SPARK_WORKER_CORES
+              value: {{ .Values.spark.workerCores | quote }}
+            - name: SPARK_RPC_AUTHENTICATION_ENABLED
+              value: "no"
+            - name: SPARK_RPC_ENCRYPTION_ENABLED
+              value: "no"
+            - name: SPARK_EXTRA_CLASSPATH
+              value: "/opt/bitnami/spark/jars/hadoop-aws-*.jar:/opt/bitnami/spark/jars/aws-java-sdk-bundle-*.jar"
+          envFrom:
+            - configMapRef:
+                name: etl-env
+            - secretRef:
+                name: etl-secrets
+          ports:
+            - containerPort: 8081
+          resources:
+            {{- toYaml .Values.spark.worker.resources | nindent 12 }}
