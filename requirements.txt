@@ -1,7 +1,17 @@
-# Local development dependencies (not used inside Docker)
-# Install with: pip install -r requirements.txt
+# Standardized dependencies for Modern ETL Stack
+# Matches docker/airflow/requirements-airflow.txt
 
-faker==22.0.0
-psycopg2-binary==2.9.9
 pandas==2.1.4
+psycopg2-binary==2.9.9
 pyarrow==14.0.1
+minio==7.2.0
+dbt-core==1.7.0
+dbt-postgres==1.7.0
+sqlalchemy==1.4.51
+kafka-python==2.0.2
+apache-airflow-providers-apache-spark==4.5.0
+pyspark==3.5.0
+apache-airflow-providers-postgres==5.9.0
+apache-airflow-providers-amazon==8.13.0
+astronomer-cosmos==1.3.1
+faker==22.0.0
