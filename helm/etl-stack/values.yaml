@@ -171,6 +171,13 @@ airflow:
 
   executor: KubernetesExecutor
 
+  # ─── Enterprise Architecture Compatibility ───
+  # [IMPORTANT] To use the new Spark/Iceberg/Cosmos DAGs, you MUST:
+  # 1. Build and push the custom image from 'docker/airflow/Dockerfile'.
+  # 2. Update 'airflow.images.airflow.repository' below to point to your new image.
+  # 3. Ensure your 'gitSync.branch' is set to 'feature/enterprise-architecture' until merged to main.
+  # 4. Note: DAGs are now environment-aware and will pull Spark/MinIO hosts from 'etl-env' ConfigMap.
+
   images:
     airflow:
       # Set to your custom image after running: docker build -f docker/airflow/Dockerfile .
