@@ -1,6 +1,6 @@
 """
-Spark Job: Transform Orders from Bronze to Silver
-Reads from MinIO (S3A) bronze bucket, writes to MinIO silver bucket
+Spark Job: Transform Orders from Bronze to Silver (Elite Scalability)
+Uses Iceberg MERGE INTO for high-performance incremental upserts.
 """
 
 from pyspark.sql import SparkSession
@@ -14,7 +14,7 @@ def create_spark_session():
     """Create Spark session — relying on external --conf from SparkSubmit for flexibility"""
     master_url = os.environ.get('SPARK_MASTER_URL', 'spark://spark-master:7077')
     return SparkSession.builder \
-        .appName("Orders-Bronze-to-Silver") \
+        .appName("Orders-Bronze-to-Silver-Incremental") \
         .master(master_url) \
         .getOrCreate()
 
@@ -58,50 +58,55 @@ def transform_to_silver(df):
     return silver_df
 
 
-def write_to_minio(df, date, spark):
-    """Write Silver layer to MinIO using Apache Iceberg format"""
-    print("Writing Silver layer Iceberg table...")
+def upsert_to_iceberg(spark, df):
+    """Upsert Silver layer to MinIO using Apache Iceberg MERGE INTO"""
     catalog_name = "silver"
     table_name = f"{catalog_name}.orders"
 
-    # Use Spark 3 writeTo API — it behaves much better with Iceberg catalogs
-    print(f"Using writeTo API for {table_name}")
-    df.writeTo(table_name) \
-        .tableProperty("write.format.default", "parquet") \
-        .partitionedBy("status") \
-        .createOrReplace()
+    # 1. Create table if not exists (first run)
+    if not spark.catalog.tableExists(table_name):
+        print(f"Creating new Iceberg table: {table_name}")
+        df.writeTo(table_name) \
+            .tableProperty("write.format.default", "parquet") \
+            .partitionedBy("status") \
+            .create()
+        return
 
-    print("Successfully wrote Silver layer Iceberg table")
+    # 2. Perform Incremental MERGE (Production Scalability)
+    print(f"Performing MERGE INTO for {table_name}")
+    df.createOrReplaceTempView("source_updates")
+
+    merge_sql = f"""
+        MERGE INTO {table_name} AS target
+        USING source_updates AS source
+        ON target.order_id = source.order_id
+        WHEN MATCHED THEN
+            UPDATE SET 
+                target.total_amount = source.total_amount,
+                target.status = source.status,
+                target.updated_at = source.updated_at,
+                target.processed_at = source.processed_at
+        WHEN NOT MATCHED THEN
+            INSERT *
+    """
+    spark.sql(merge_sql)
+    print(f"Successfully merged updates into {table_name}")
 
 
 def main():
     if len(sys.argv) < 2:
-        date = "20260209"
-        print(f"No date provided, using default: {date}")
+        date = datetime.now().strftime("%Y%m%d")
+        print(f"No date provided, using today: {date}")
     else:
         date = sys.argv[1]
-
-    print(f"Starting Spark Job: Bronze to Silver — date: {date}")
 
     spark = create_spark_session()
 
     try:
-        # Debug: Print configuration
-        print("Spark Configurations:")
-        for k, v in spark.sparkContext.getConf().getAll():
-            if "catalog" in k or "s3a" in k:
-                print(f"  {k}: {v}")
-
         bronze_df = read_from_minio(spark, date)
-        # Show count to verify data is actually read
-        print(f"Bronze record count: {bronze_df.count()}")
-        bronze_df.show(5)
-
         silver_df = transform_to_silver(bronze_df)
-        silver_df.show(5)
-
-        write_to_minio(silver_df, date, spark)
-        print("Spark Job Completed Successfully!")
+        upsert_to_iceberg(spark, silver_df)
+        print("Incremental Spark Job Completed Successfully!")
 
     except Exception as e:
         print(f"Spark Job Failed: {str(e)}")
@@ -113,4 +118,5 @@ def main():
 
 
 if __name__ == "__main__":
+    from datetime import datetime
     main()
