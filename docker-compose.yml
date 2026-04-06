@@ -136,7 +136,9 @@ services:
 
   # Kafka Connect (Debezium)
   kafka-connect:
-    image: debezium/connect:2.5
+    build:
+      context: .
+      dockerfile: docker/kafka-connect/Dockerfile
     container_name: kafka-connect
     depends_on:
       kafka:
@@ -322,6 +324,7 @@ services:
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
       - ./dbt:/opt/airflow/dbt
+      - ./spark/jobs:/opt/spark-jobs
     command: webserver
     networks:
       - etl-network

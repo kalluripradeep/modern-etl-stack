@@ -51,5 +51,30 @@ curl -X POST "${CONNECT_URL}/connectors" \
   }"
 
 echo ""
-echo "Connector registered. Check status with:"
+echo "Registering Postgres JDBC Sink connector..."
+
+curl -X POST "${CONNECT_URL}/connectors" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"name\": \"orders-jdbc-sink\",
+    \"config\": {
+      \"connector.class\": \"io.confluent.connect.jdbc.JdbcSinkConnector\",
+      \"tasks.max\": \"1\",
+      \"topics\": \"cdc.public.orders\",
+      \"connection.url\": \"jdbc:postgresql://${DEST_DB_HOST:-postgres-dest}:${DEST_DB_PORT:-5432}/${DEST_DB_NAME:-destdb}\",
+      \"connection.user\": \"${DEST_DB_USER:-destuser}\",
+      \"connection.password\": \"${DEST_DB_PASSWORD:-destpass}\",
+      \"insert.mode\": \"upsert\",
+      \"delete.enabled\": \"true\",
+      \"pk.mode\": \"record_key\",
+      \"pk.fields\": \"order_id\",
+      \"auto.create\": \"false\",
+      \"auto.evolve\": \"false\",
+      \"table.name.format\": \"public.orders\"
+    }
+  }"
+
+echo ""
+echo "Connectors registered. Check status with:"
 echo "  curl ${CONNECT_URL}/connectors/orders-cdc-connector/status | jq ."
+echo "  curl ${CONNECT_URL}/connectors/orders-jdbc-sink/status | jq ."
