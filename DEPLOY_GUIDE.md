@@ -92,7 +92,28 @@ git clone https://github.com/kalluripradeep/modern-etl-stack.git
 cd modern-etl-stack
 ```
 
-### Step 2 — Run the deploy script
+### Step 2 — Configure Storage Class
+Before deploying, you must ensure your stateful pods know what hard drive type to request, or else your pods will be stuck in a `Pending` state.
+
+Find your cluster's storage class:
+```bash
+kubectl get storageclass
+```
+
+Then open these files and replace `standard` with the name you found:
+- `k8s/postgres-source/statefulset.yaml`
+- `k8s/postgres-dest/statefulset.yaml`
+- `k8s/kafka/statefulset.yaml`
+- `k8s/zookeeper/statefulset.yaml`
+- `k8s/minio/statefulset.yaml`
+
+*Common values:*
+- AWS → `gp3`
+- GCP → `standard` or `pd-ssd`
+- Azure → `default`
+- Minikube/Kind → `standard`
+
+### Step 3 — Run the deploy script
 ```bash
 bash k8s/deploy.sh
 ```
@@ -115,7 +136,7 @@ The script will then automatically:
 
 This takes about **5-10 minutes** on first run.
 
-### Step 3 — Wait for all pods to be Running
+### Step 4 — Wait for all pods to be Running
 ```bash
 kubectl get pods -n etl -w
 ```
@@ -139,7 +160,7 @@ prometheus-xxx                  1/1     Running
 grafana-xxx                     1/1     Running
 ```
 
-### Step 4 — Run the test with real transactional data
+### Step 5 — Run the test with real transactional data
 ```bash
 bash scripts/test_e2e.sh
 ```
@@ -167,7 +188,7 @@ Expected output at the end:
   All checks passed — pipeline is healthy!
 ```
 
-### Step 5 — Open the dashboards
+### Step 6 — Open the dashboards
 
 First get your node IP:
 ```bash
@@ -190,29 +211,6 @@ Replace `NODE_IP` with the IP address you got from the command above.
 ---
 
 ## Troubleshooting
-
-### A pod is stuck in Pending
-This usually means the storage class `standard` does not exist on your cluster.
-
-Find your cluster's storage class:
-```bash
-kubectl get storageclass
-```
-
-Then open these files and replace `standard` with the name you found:
-- `k8s/postgres-source/statefulset.yaml`
-- `k8s/postgres-dest/statefulset.yaml`
-- `k8s/kafka/statefulset.yaml`
-- `k8s/zookeeper/statefulset.yaml`
-- `k8s/minio/statefulset.yaml`
-
-Common values:
-- AWS → `gp3`
-- GCP → `standard` or `pd-ssd`
-- Azure → `default`
-- Minikube/Kind → `standard`
-
-Then re-run `bash k8s/deploy.sh`.
 
 ### docker push fails
 ```bash

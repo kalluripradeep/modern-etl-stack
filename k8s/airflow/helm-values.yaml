@@ -153,7 +153,11 @@ webserver:
       cpu: "500m"
   service:
     type: NodePort
-    nodePort: 30880   # access Airflow UI at http://NODE_IP:30880
+    ports:
+      - name: airflow-ui
+        port: 8080
+        targetPort: 8080
+        nodePort: 30880   # access Airflow UI at http://NODE_IP:30880
 
 # Default admin user (change password in production)
 webserverSecretKey: "etl-secret-key-change-in-production"

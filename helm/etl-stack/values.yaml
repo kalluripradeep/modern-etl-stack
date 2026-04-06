@@ -227,6 +227,10 @@ airflow:
         cpu: 500m
     service:
       type: NodePort
-      nodePort: 30880
+      ports:
+        - name: airflow-ui
+          port: 8080
+          targetPort: 8080
+          nodePort: 30880
 
   webserverSecretKey: "etl-secret-key-change-in-production"
