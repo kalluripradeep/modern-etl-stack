@@ -136,7 +136,9 @@ services:
 
   # Kafka Connect (Debezium)
   kafka-connect:
-    image: debezium/connect:2.5
+    build:
+      context: .
+      dockerfile: docker/kafka-connect/Dockerfile
     container_name: kafka-connect
     depends_on:
       kafka:

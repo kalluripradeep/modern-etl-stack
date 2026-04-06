@@ -72,16 +72,13 @@ def transform_to_silver(df):
 
 
 def write_to_minio(df, date):
-    """Write Silver layer to MinIO — partitioned by date"""
-    silver_bucket = os.environ.get('SILVER_BUCKET', 'silver')
-    year, month, day = date[:4], date[4:6], date[6:]
-    path = f"s3a://{silver_bucket}/orders/{year}/{month}/{day}/"
-
-    print(f"Writing Silver layer to: {path}")
+    """Write Silver layer to MinIO using Apache Iceberg format"""
+    print("Writing Silver layer Iceberg table...")
     df.write \
-        .mode("overwrite") \
-        .parquet(path)
-    print(f"Successfully wrote Silver layer to {path}")
+        .format("iceberg") \
+        .mode("append") \
+        .save("silver.orders")
+    print("Successfully wrote Silver layer Iceberg table")
 
 
 def main():

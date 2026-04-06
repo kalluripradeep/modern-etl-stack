@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Parse Airflow DAGs
+      run: |
+        python -m py_compile airflow/dags/*.py
+
+    - name: Set up Helm
+      uses: azure/setup-helm@v3
+      with:
+        version: v3.12.0
+
+    - name: Helm Lint
+      run: |
+        helm lint helm/etl-stack/
+
+    - name: Install dbt
+      run: |
+        pip install dbt-postgres==1.7.0
+
+    - name: dbt parse (Compile Check)
+      run: |
+        # Set dummy env vars for parsing
+        export SOURCE_DB_HOST=localhost DEST_DB_HOST=localhost SOURCE_DB_PASSWORD=pwd DEST_DB_PASSWORD=pwd
+        cd dbt && dbt parse
