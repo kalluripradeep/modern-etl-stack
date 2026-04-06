@@ -1,21 +1,26 @@
 """
-Real-time CDC Consumer: Kafka → PostgreSQL Destination
-Consumes order changes from Kafka and updates warehouse in real-time
+CDC Consumer: Kafka -> PostgreSQL
+Consumes upstream change events from Debezium and applies them to the data warehouse sink.
+Orchestrated to run on a micro-batch schedule.
 """
+
+import json
+import logging
+import os
+from datetime import datetime, timedelta, timezone
+
+import psycopg2
+from kafka import KafkaConsumer
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from datetime import datetime, timedelta, timezone
-from kafka import KafkaConsumer
-import json
-import os
-import psycopg2
+
+log = logging.getLogger(__name__)
 
 default_args = {
-    'owner': 'pradeep',
+    'owner': 'data_engineering',
     'depends_on_past': False,
     'start_date': datetime(2026, 2, 8),
-    'email_on_failure': False,
     'retries': 1,
     'retry_delay': timedelta(minutes=1),
 }
@@ -23,36 +28,45 @@ default_args = {
 dag = DAG(
     'consume_cdc_events',
     default_args=default_args,
-    description='Consume CDC events from Kafka and update warehouse',
-    schedule_interval='*/5 * * * *',  # Every 5 minutes
+    description='Micro-batch consumer to sink CDC events into data warehouse',
+    schedule_interval='*/5 * * * *',
     catchup=False,
-    tags=['cdc', 'real-time', 'kafka'],
+    max_active_runs=1,
+    tags=['cdc', 'streaming', 'sink'],
 )
 
 
 def _convert_timestamp(value):
-    """Convert Debezium microsecond integer timestamps to Python datetime."""
+    """Safely convert microseconds since epoch to UTC datetime."""
     if isinstance(value, int):
         return datetime.fromtimestamp(value / 1_000_000.0, tz=timezone.utc)
     return value
 
 
-def consume_and_process():
-    """Consume CDC events from Kafka and process them"""
+def sync_cdc_batch():
+    """
+    Connects to the Kafka broker, processes a batch of raw Debezium events,
+    and applies corresponding UPSERTs and DELETEs to the destination database.
+    Commits state back to the database on a configured batch size.
+    """
+    max_messages = int(os.environ.get('CDC_MAX_MESSAGES', 5000))
+    commit_batch_size = int(os.environ.get('CDC_COMMIT_EVERY', 500))
 
-    print("Starting CDC consumer...")
+    try:
+        consumer = KafkaConsumer(
+            'cdc.public.orders',
+            bootstrap_servers=[os.environ.get('KAFKA_BROKER', 'kafka:9092')],
+            auto_offset_reset='earliest',
+            enable_auto_commit=True,
+            group_id='cdc-orders-sink-group',
+            value_deserializer=lambda x: json.loads(x.decode('utf-8')) if x else None,
+            consumer_timeout_ms=5000,
+        )
+    except Exception as e:
+        log.error(f"Failed to connect to Kafka broker: {e}")
+        raise
 
-    consumer = KafkaConsumer(
-        'cdc.public.orders',
-        bootstrap_servers=['kafka:9092'],
-        auto_offset_reset='earliest',
-        enable_auto_commit=True,
-        group_id='cdc-consumer-group',
-        value_deserializer=lambda x: json.loads(x.decode('utf-8')),
-        consumer_timeout_ms=10000,
-    )
-
-    conn = psycopg2.connect(
+    dest_conn = psycopg2.connect(
         host=os.environ.get('DEST_DB_HOST', 'postgres-dest'),
         port=int(os.environ.get('DEST_DB_PORT', 5432)),
         database=os.environ.get('DEST_DB_NAME', 'destdb'),
@@ -60,110 +74,88 @@ def consume_and_process():
         password=os.environ.get('DEST_DB_PASSWORD', 'destpass'),
     )
 
-    # FIX 1: configurable via env — default small, override large via CDC_MAX_MESSAGES
-    max_messages = int(os.environ.get('CDC_MAX_MESSAGES', 100))
-    # FIX 2: batch commit every N rows — override via CDC_COMMIT_EVERY
-    commit_every = int(os.environ.get('CDC_COMMIT_EVERY', 100))
+    processed_count = 0
+    upserts = 0
+    deletes = 0
 
-    processed = 0
-    print(f"Consuming CDC events (max {max_messages}, commit every {commit_every})...")
+    log.info(f"Initialized CDC sync (Batch Limit: {max_messages}, Commit Rate: {commit_batch_size})")
 
     try:
-        for message in consumer:
-            if processed >= max_messages:
-                break
+        with dest_conn.cursor() as cursor:
+            for message in consumer:
+                if message.value is None:
+                    continue
 
-            event = message.value
+                if processed_count >= max_messages:
+                    log.info("Reached maximum configured message boundary. Halting read loop.")
+                    break
 
-            if 'payload' in event:
-                payload = event['payload']
-            else:
-                payload = event
+                payload = message.value.get('payload', message.value)
+                operation = payload.get('op')
 
-            operation = payload.get('op')
+                if operation in ('r', 'c', 'u'):
+                    record = payload.get('after')
+                    if record:
+                        _apply_upsert(cursor, record)
+                        upserts += 1
+                elif operation == 'd':
+                    record = payload.get('before')
+                    if record:
+                        _apply_delete(cursor, record)
+                        deletes += 1
 
-            if operation:
-                if operation in ('r', 'c'):  # READ (snapshot) or CREATE
-                    after = payload.get('after')
-                    if after:
-                        upsert_order(conn, after)
-                        print(f"Upserted order {after.get('order_id')}")
+                processed_count += 1
 
-                elif operation == 'u':  # UPDATE
-                    after = payload.get('after')
-                    if after:
-                        upsert_order(conn, after)
-                        print(f"Updated order {after.get('order_id')}")
+                if processed_count % commit_batch_size == 0:
+                    dest_conn.commit()
+                    log.info(f"Transaction committed: Processed {processed_count} events.")
 
-                elif operation == 'd':  # DELETE
-                    before = payload.get('before')
-                    if before:
-                        delete_order(conn, before.get('order_id'))
-                        print(f"Deleted order {before.get('order_id')}")
-
-            processed += 1
-
-            # FIX 3: commit in batches, not per row
-            if processed % commit_every == 0:
-                conn.commit()
-                print(f"Committed {processed} events")
-
-        # final commit for remaining rows
-        conn.commit()
-
+            dest_conn.commit()
+            
     except Exception as e:
-        print(f"Error processing messages: {e}")
-        conn.rollback()
+        log.error(f"Error encountered during CDC sync: {e}")
+        dest_conn.rollback()
+        raise
     finally:
         consumer.close()
-        conn.close()
+        dest_conn.close()
 
-    print(f"Processed {processed} CDC events")
-    return processed
-
-
-def upsert_order(conn, data):
-    """Insert or update order in destination — no commit here, caller commits in batch"""
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO public.orders (
-                    order_id, customer_id, order_date,
-                    total_amount, status, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (order_id)
-                DO UPDATE SET
-                    customer_id  = EXCLUDED.customer_id,
-                    order_date   = EXCLUDED.order_date,
-                    total_amount = EXCLUDED.total_amount,
-                    status       = EXCLUDED.status,
-                    updated_at   = EXCLUDED.updated_at
-            """, (
-                data['order_id'],
-                data['customer_id'],
-                _convert_timestamp(data.get('order_date')),
-                data['total_amount'],
-                data['status'],
-                _convert_timestamp(data.get('created_at')),
-                _convert_timestamp(data.get('updated_at')),
-            ))
-    except Exception as e:
-        print(f"Error upserting order: {e}")
-        conn.rollback()
+    log.info(f"CDC Sync complete. Total processed: {processed_count} (Upserts: {upserts}, Deletes: {deletes})")
+    return processed_count
 
 
-def delete_order(conn, order_id):
-    """Delete order from destination — no commit here, caller commits in batch"""
-    try:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM public.orders WHERE order_id = %s", (order_id,))
-    except Exception as e:
-        print(f"Error deleting order: {e}")
-        conn.rollback()
+def _apply_upsert(cursor, record):
+    """Executes atomic UPSERT against destination store."""
+    cursor.execute("""
+        INSERT INTO public.orders (
+            order_id, customer_id, order_date,
+            total_amount, status, created_at, updated_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (order_id)
+        DO UPDATE SET
+            customer_id  = EXCLUDED.customer_id,
+            order_date   = EXCLUDED.order_date,
+            total_amount = EXCLUDED.total_amount,
+            status       = EXCLUDED.status,
+            updated_at   = EXCLUDED.updated_at
+    """, (
+        record['order_id'],
+        record['customer_id'],
+        _convert_timestamp(record.get('order_date')),
+        record['total_amount'],
+        record['status'],
+        _convert_timestamp(record.get('created_at')),
+        _convert_timestamp(record.get('updated_at')),
+    ))
+
+
+def _apply_delete(cursor, record):
+    """Executes atomic DELETE against destination store."""
+    cursor.execute("DELETE FROM public.orders WHERE order_id = %s", (record['order_id'],))
 
 
 task_consume = PythonOperator(
-    task_id='consume_cdc_events',
-    python_callable=consume_and_process,
+    task_id='sync_cdc_batch',
+    python_callable=sync_cdc_batch,
     dag=dag,
 )

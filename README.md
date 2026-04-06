@@ -1,16 +1,16 @@
-# modern-etl-stack
+# Modern ETL Infrastructure
 
-A production-grade, fully containerised modern ETL stack built entirely with open-source tools — Apache Kafka, Debezium, Airflow, dbt, Spark, and Prometheus. Processes 1,000+ orders in real-time with sub-second CDC latency and ML-powered anomaly detection achieving sub-10ms inference. A cost-effective alternative to enterprise ETL tools, saving companies £100k+ annually.
+A comprehensive ETL stack demonstrating the integration of open-source data engineering tools. This project features real-time CDC (Change Data Capture) and batch processing pipelines orchestrating data movement between a staging relational database, a data lake, and a destination database. 
 
 ## Architecture
 
-```
+```text
 ┌──────────────┐     batch (daily)      ┌───────────────┐
 │  PostgreSQL  │ ──────────────────────▶ │     MinIO     │
 │   (source)   │                         │  (S3 / bronze)│
 └──────┬───────┘                         └───────────────┘
        │                                         │
-       │  CDC (real-time)                        │ (reference only)
+       │  CDC (real-time)                        │
        ▼                                         ▼
 ┌──────────────┐    Kafka topic     ┌───────────────────┐
 │   Debezium   │ ──────────────────▶│  Airflow CDC DAG  │
@@ -35,131 +35,103 @@ A production-grade, fully containerised modern ETL stack built entirely with ope
 Monitoring: Prometheus + Grafana + Node Exporter
 ```
 
-## Stack
+## Technology Stack
 
-| Layer | Tool |
+| Layer | Component |
 |---|---|
-| Orchestration | Apache Airflow 2.8 |
-| CDC / Streaming | Debezium 2.5 + Kafka 7.5 |
-| Object Storage | MinIO (S3-compatible) |
-| Transformation | dbt-core 1.7 (Medallion: bronze/silver/gold) |
-| Batch compute | Apache Spark 3.5 |
-| Data warehouse | PostgreSQL 15 |
-| Monitoring | Prometheus + Grafana |
+| **Orchestration** | Apache Airflow 2.8 |
+| **CDC / Streaming** | Debezium 2.5 & Confluent Kafka 7.5 |
+| **Object Storage** | MinIO (S3-compatible) |
+| **Transformation** | dbt-core 1.7 |
+| **Batch Compute** | Apache Spark 3.5 |
+| **Data Warehouse** | PostgreSQL 15 |
+| **Monitoring** | Prometheus & Grafana |
 
 ## Prerequisites
 
 - Docker + Docker Compose
 - `make` (optional but recommended)
-- ~6 GB free RAM (all containers)
+- ~6 GB free RAM available for Docker daemon
 
-### Linux: Docker group permissions
+### Linux Permissions Note
 
-If you get a `permission denied` error running Docker commands, add your user to the docker group:
-```bash
-sudo groupadd docker
-sudo usermod -aG docker $USER
-newgrp docker
-```
-
-### Linux: Airflow directory permissions
-
-If Airflow containers fail to start due to permission errors on `logs/`, `dags/`, or `plugins/`, run:
+If you encounter `permission denied` errors when running Airflow containers, you may need to adjust local directory ownership to match the `airflow` user's UID (50000):
 ```bash
 sudo chown -R 50000:0 logs dags plugins
 sudo chmod -R 775 logs dags plugins
 ```
 
-The UID `50000` is the default Airflow user inside the container.
-
 ## Quick Start
 
 ```bash
-# 1. Clone and configure
-git clone https://github.com/kalluripradeep/modern-etl-stack.git
-cd modern-etl-stack
-cp .env.example .env          # edit .env if you want custom passwords
+# 1. Clone repository and initialize environment variables
+cp .env.example .env 
 
-# 2. Start everything
+# 2. Spin up containers
 make up
-# or: docker-compose up -d
 
-# 3. Wait ~60 seconds for services to be healthy, then seed source data
+# 3. Wait ~60 seconds for services to reach healthy state, then seed database
 make seed
 
 # 4. Register the Debezium CDC connector
 make register-connector
-
-# 5. Trigger the batch pipeline manually in the Airflow UI (or wait for schedule)
 ```
 
-## Service URLs
+## Service Access URLs
 
-| Service | URL | Default credentials |
+| Service | Local URL | Credentials (Default) |
 |---|---|---|
-| Airflow | http://localhost:8080 | admin / admin |
-| MinIO Console | http://localhost:9001 | minioadmin / minioadmin |
-| Kafka UI | http://localhost:8001 | — |
-| Spark Master UI | http://localhost:8081 | — |
-| Grafana | http://localhost:3000 | admin / admin |
-| Prometheus | http://localhost:9090 | — |
-| Kafka Connect | http://localhost:8083 | — |
+| **Airflow UI** | http://localhost:8080 | admin / admin |
+| **MinIO Console** | http://localhost:9001 | minioadmin / minioadmin |
+| **Kafka UI** | http://localhost:8001 | — |
+| **Spark Master UI** | http://localhost:8081 | — |
+| **Grafana** | http://localhost:3000 | admin / admin |
+| **Prometheus** | http://localhost:9090 | — |
+| **Kafka Connect** | http://localhost:8083 | — |
 
-All credentials are overridable via `.env` — see `.env.example`.
+## Data Pipelines
 
-## DAGs
+### Airflow DAGs
 
-| DAG | Schedule | Description |
-|---|---|---|
-| `extract_orders_to_minio` | Daily | PostgreSQL → Parquet → MinIO → dest PostgreSQL → dbt run |
-| `consume_cdc_events` | Every 5 min | Kafka → dest PostgreSQL (real-time upserts via Debezium) |
-| `spark_transform_orders` | Daily | Spark Bronze → Silver local Parquet transform |
+1. **`extract_orders_to_minio`** *(Daily)*
+   - Batch extraction of PostgreSQL source.
+   - Converts to Parquet, validates data quality, and uploads to MinIO.
+   - Replicates to Destination PostgreSQL database for downstream modeling.
+2. **`consume_cdc_events`** *(Every 5 Minutes)*
+   - Micro-batch consumer. 
+   - Reads serialized events from Kafka (Debezium source) and executes Upserts/Deletes on the target schema.
+3. **`spark_transform_orders`** *(Daily)*
+   - Submits PySpark applications for heavy compute processing (Bronze -> Silver translation) over MinIO.
 
-## dbt Models
+### dbt Modeling
 
-```
-models/
+```text
+dbt/models/
 ├── bronze/
-│   └── bronze_orders.sql       # view over raw.orders
+│   └── bronze_orders.sql
 ├── silver/
-│   ├── silver_orders.sql       # cleaned + validated table
-│   └── schema.yml              # uniqueness, not_null, accepted_values tests
+│   ├── silver_orders.sql
+│   └── schema.yml
 └── gold/
-    ├── gold_daily_revenue.sql  # daily revenue by status
-    └── schema.yml              # model-level tests
+    ├── gold_daily_revenue.sql
+    └── schema.yml
 ```
 
-Run models and tests:
+Execute models and test suites:
 ```bash
 make dbt-run
 make dbt-test
 ```
 
-## Useful Commands
+## Project Operations
 
 ```bash
-make up                  # start all containers
-make down                # stop all containers
-make logs                # tail all logs
-make ps                  # show container health
-make seed                # seed source database
-make register-connector  # register Debezium connector
-make dbt-run             # run dbt models
-make dbt-test            # run dbt tests
-```
-
-## Project Layout
-
-```
-.
-├── airflow/dags/           # Airflow DAG definitions
-├── dbt/                    # dbt project (models, profiles, tests)
-├── docker/airflow/         # Custom Airflow Dockerfile + requirements
-├── monitoring/             # Prometheus config + Grafana dashboards
-├── sample-data/            # Script to seed the source database
-├── scripts/                # Utility scripts (Debezium registration, etc.)
-├── spark/jobs/             # PySpark job for Bronze → Silver
-├── docker-compose.yml
-├── Makefile
-└── .env.example            # Environment variable template
+make up                  # Start infrastructure
+make down                # Tear down infrastructure
+make logs                # Tail aggregated container logs
+make ps                  # Service health check
+make seed                # Generate sample source data
+make register-connector  # Initialize Debezium CDC connector
+make dbt-run             # Execute dbt transformation
+make dbt-test            # Execute dbt validation tests
 ```
