@@ -11,24 +11,11 @@ import sys
 
 
 def create_spark_session():
-    """Create Spark session — all config injected via env vars for K8s compatibility"""
-    spark_master   = os.environ.get('SPARK_MASTER_URL', 'spark://spark-master:7077')
-    minio_endpoint = os.environ.get('MINIO_ENDPOINT', 'http://minio:9000')
-    minio_user     = os.environ.get('MINIO_ROOT_USER', 'minioadmin')
-    minio_password = os.environ.get('MINIO_ROOT_PASSWORD', 'minioadmin')
-    executor_mem   = os.environ.get('SPARK_EXECUTOR_MEMORY', '1g')
-
+    """Create Spark session — relying on external --conf from SparkSubmit for flexibility"""
+    master_url = os.environ.get('SPARK_MASTER_URL', 'spark://spark-master:7077')
     return SparkSession.builder \
         .appName("Orders-Bronze-to-Silver") \
-        .master(spark_master) \
-        .config("spark.executor.memory", executor_mem) \
-        .config("spark.sql.adaptive.enabled", "true") \
-        .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
-        .config("spark.hadoop.fs.s3a.endpoint", minio_endpoint) \
-        .config("spark.hadoop.fs.s3a.access.key", minio_user) \
-        .config("spark.hadoop.fs.s3a.secret.key", minio_password) \
-        .config("spark.hadoop.fs.s3a.path.style.access", "true") \
-        .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
+        .master(master_url) \
         .getOrCreate()
 
 
@@ -71,13 +58,19 @@ def transform_to_silver(df):
     return silver_df
 
 
-def write_to_minio(df, date):
+def write_to_minio(df, date, spark):
     """Write Silver layer to MinIO using Apache Iceberg format"""
     print("Writing Silver layer Iceberg table...")
-    df.write \
-        .format("iceberg") \
-        .mode("append") \
-        .save("silver.orders")
+    catalog_name = "silver"
+    table_name = f"{catalog_name}.orders"
+
+    # Use Spark 3 writeTo API — it behaves much better with Iceberg catalogs
+    print(f"Using writeTo API for {table_name}")
+    df.writeTo(table_name) \
+        .tableProperty("write.format.default", "parquet") \
+        .partitionedBy("status") \
+        .createOrReplace()
+
     print("Successfully wrote Silver layer Iceberg table")
 
 
@@ -93,13 +86,21 @@ def main():
     spark = create_spark_session()
 
     try:
+        # Debug: Print configuration
+        print("Spark Configurations:")
+        for k, v in spark.sparkContext.getConf().getAll():
+            if "catalog" in k or "s3a" in k:
+                print(f"  {k}: {v}")
+
         bronze_df = read_from_minio(spark, date)
+        # Show count to verify data is actually read
+        print(f"Bronze record count: {bronze_df.count()}")
         bronze_df.show(5)
 
         silver_df = transform_to_silver(bronze_df)
         silver_df.show(5)
 
-        write_to_minio(silver_df, date)
+        write_to_minio(silver_df, date, spark)
         print("Spark Job Completed Successfully!")
 
     except Exception as e:

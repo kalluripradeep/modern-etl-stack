@@ -52,10 +52,17 @@ dag = DAG(
 )
 
 
-def extract_and_load_batch():
+def extract_and_load_batch(**kwargs):
     """
     Executes the extraction, validation, and load process atomically using Airflow Hooks.
+    Uses logical_date from context for idempotent storage paths.
     """
+    logical_date = kwargs.get('logical_date')
+    if not logical_date:
+        # Fallback for manual testing outside of Airflow context if needed
+        logical_date = datetime.now()
+        
+    date_prefix = logical_date.strftime("%Y/%m/%d")
     chunk_size = int(os.environ.get('ETL_CHUNK_SIZE', 10000))
     bucket_name = 'bronze'
 
@@ -93,7 +100,6 @@ def extract_and_load_batch():
         ORDER BY order_id
     """
 
-    date_prefix = datetime.now().strftime("%Y/%m/%d")
     source_engine = source_hook.get_sqlalchemy_engine()
 
     with tempfile.TemporaryDirectory() as tmpdirname:
@@ -160,19 +166,18 @@ def extract_and_load_batch():
         log.info(f"Successfully validated and loaded {total_loaded} rows. Total Revenue: ${total_revenue:,.2f}")
 
 
-task_extract_load = PythonOperator(
-    task_id='extract_and_load_batch',
-    python_callable=extract_and_load_batch,
-    dag=dag,
-)
+with dag:
+    task_extract_load = PythonOperator(
+        task_id='extract_and_load_batch',
+        python_callable=extract_and_load_batch,
+    )
 
-# Astronomer Cosmos DbtTaskGroup automatically parses and builds Airflow Tasks!
-dbt_transformations = DbtTaskGroup(
-    group_id="dbt_transformations",
-    project_config=ProjectConfig(DBT_PROJECT_PATH),
-    profile_config=profile_config,
-    execution_config=ExecutionConfig(dbt_executable_path="/usr/local/bin/dbt"),
-    dag=dag,
-)
+    # Astronomer Cosmos DbtTaskGroup automatically parses and builds Airflow Tasks!
+    dbt_transformations = DbtTaskGroup(
+        group_id="dbt_transformations",
+        project_config=ProjectConfig(DBT_PROJECT_PATH),
+        profile_config=profile_config,
+        execution_config=ExecutionConfig(dbt_executable_path="/usr/local/bin/dbt"),
+    )
 
-task_extract_load >> dbt_transformations
+    task_extract_load >> dbt_transformations
