@@ -208,6 +208,12 @@ airflow:
   extraEnv: |-
     - name: AIRFLOW_CONN_SPARK_DEFAULT
       value: "spark://spark-master.{{ .Release.Namespace }}.svc.cluster.local:7077"
+    - name: AIRFLOW_CONN_SOURCE_POSTGRES
+      value: "postgres://sourceuser:sourcepass@postgres-source.{{ .Release.Namespace }}.svc.cluster.local:5432/sourcedb"
+    - name: AIRFLOW_CONN_DEST_POSTGRES
+      value: "postgres://destuser:destpass@postgres-dest.{{ .Release.Namespace }}.svc.cluster.local:5432/destdb"
+    - name: AIRFLOW_CONN_MINIO_S3
+      value: "aws://minioadmin:minioadmin123@/?endpoint_url=http://minio.{{ .Release.Namespace }}.svc.cluster.local:9000"
 
   postgresql:
     enabled: true
