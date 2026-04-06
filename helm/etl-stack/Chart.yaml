@@ -1,0 +1,15 @@
+apiVersion: v2
+name: etl-stack
+description: >
+  Modern ETL Stack — umbrella Helm chart.
+  Deploys PostgreSQL (source + dest), Zookeeper, Kafka, Kafka Connect (Debezium),
+  MinIO, Spark, Prometheus, Grafana, and Apache Airflow in one command.
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+
+dependencies:
+  - name: airflow
+    version: "1.13.1"
+    repository: https://airflow.apache.org
+    condition: airflow.enabled

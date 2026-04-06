@@ -99,7 +99,7 @@ def extract_and_load_batch():
         FROM orders
         ORDER BY order_id
     """
-    
+
     date_prefix = datetime.now().strftime("%Y/%m/%d")
 
     # Use a secure temp directory to store parquet partitions for this worker thread
@@ -110,7 +110,7 @@ def extract_and_load_batch():
         log.info("Starting chunked extraction from source database.")
         for chunk_idx, df_chunk in enumerate(pd.read_sql(query, source_conn, chunksize=chunk_size)):
             out_path = os.path.join(tmpdirname, f'part-{chunk_idx:05d}.parquet')
-            df_chunk.to_parquet(out_path, index=False, compression='snappy')
+            df_chunk.to_parquet(out_path, index=False, compression='snappy', coerce_timestamps='us', allow_truncated_timestamps=True)
             total_rows += len(df_chunk)
         
         log.info(f"Extracted {total_rows} total rows to {tmpdirname}")

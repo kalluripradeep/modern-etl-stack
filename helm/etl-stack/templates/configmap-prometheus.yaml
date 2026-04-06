@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "etl-stack.labels" . | nindent 4 }}
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    scrape_configs:
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+
+      - job_name: 'node-exporter'
+        static_configs:
+          - targets: ['node-exporter.{{ .Release.Namespace }}.svc.cluster.local:9100']
+
+      - job_name: 'airflow'
+        static_configs:
+          - targets: ['airflow-webserver.{{ .Release.Namespace }}.svc.cluster.local:8080']
+        metrics_path: '/admin/metrics'
