@@ -1,11 +1,17 @@
 """
 Spark SQL Orchestration: Bronze -> Silver (Iceberg)
 Parallelized transformation tasks for all source entities.
+Environment-aware configuration for local and Kubernetes compatibility.
 """
 
+import os
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.bash import BashOperator
+
+# Fetch cluster-specific configurations from environment (set via Docker or Helm)
+SPARK_MASTER_URL = os.getenv('SPARK_MASTER_URL', 'spark://spark-master:7077')
+MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT', 'http://minio:9000')
 
 default_args = {
     'owner': 'data_engineering',
@@ -21,19 +27,19 @@ with DAG(
     description='Orchestrate PySpark jobs for Bronze to Silver Iceberg layer',
     schedule_interval='@daily',
     catchup=False,
-    tags=['spark', 'iceberg', 'silver', 'multi-table'],
+    tags=['spark', 'iceberg', 'silver', 'multi-table', 'k8s-compatible'],
 ) as dag:
 
     # Helper function to generate standardized spark-submit commands
     def get_spark_submit_command(job_name, script_path):
         return f"""
     spark-submit \
-        --master spark://spark-master:7077 \
+        --master {SPARK_MASTER_URL} \
         --conf spark.executor.memory=1g \
         --conf spark.executor.cores=1 \
         --conf spark.sql.adaptive.enabled=true \
         --conf spark.sql.adaptive.coalescePartitions.enabled=true \
-        --conf spark.hadoop.fs.s3a.endpoint=http://minio:9000 \
+        --conf spark.hadoop.fs.s3a.endpoint={MINIO_ENDPOINT} \
         --conf spark.hadoop.fs.s3a.access.key=minioadmin \
         --conf spark.hadoop.fs.s3a.secret.key=minioadmin \
         --conf spark.hadoop.fs.s3a.path.style.access=true \
