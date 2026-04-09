@@ -31,6 +31,7 @@ ok "All prerequisites found"
 echo ""
 warn "You need a container registry to push the Airflow image."
 warn "Options: DockerHub (docker.io/USERNAME), GCR (gcr.io/PROJECT), ECR, etc."
+warn "IMPORTANT: Ensure you have run 'docker login' for your registry first."
 read -rp "Enter your registry (e.g. docker.io/myuser): " REGISTRY
 
 if [ -z "$REGISTRY" ]; then
@@ -42,7 +43,7 @@ else
   info "Building Airflow image: $AIRFLOW_IMAGE"
   docker build -t "$AIRFLOW_IMAGE" -f "$REPO_ROOT/docker/airflow/Dockerfile" "$REPO_ROOT"
   info "Pushing $AIRFLOW_IMAGE..."
-  docker push "$AIRFLOW_IMAGE"
+  docker push "$AIRFLOW_IMAGE" || error "Push failed! Are you logged in? Run 'docker login' and try again."
   ok "Image pushed: $AIRFLOW_IMAGE"
 
   # Patch the helm values with actual image
