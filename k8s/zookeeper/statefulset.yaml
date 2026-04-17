@@ -24,6 +24,8 @@ spec:
           value: "2181"
         - name: ZOOKEEPER_TICK_TIME
           value: "2000"
+        - name: ZOOKEEPER_SERVER_ID
+          value: "1"
         resources:
           requests:
             memory: "256Mi"
@@ -36,9 +38,11 @@ spec:
           mountPath: /var/lib/zookeeper
         readinessProbe:
           exec:
-            command: ["bash", "-c", "echo ruok | nc localhost 2181 | grep imok"]
-          initialDelaySeconds: 10
-          periodSeconds: 5
+            command: ["bash", "-c", "echo ruok | nc 127.0.0.1 2181 | grep imok"]
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 10
   volumeClaimTemplates:
   - metadata:
       name: zookeeper-data
