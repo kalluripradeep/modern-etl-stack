@@ -15,6 +15,7 @@ import pandas as pd
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 
@@ -145,9 +146,26 @@ def extract_and_load_table(table_name, **kwargs):
     # 1. Ensure target table exists in DWH
     dest_hook.run(config['ddl'])
 
-    # 2. Extract from Source
+    # 2. Extract from Source (Incremental CDC Logic)
     cols_str = ",".join(config['columns'])
-    query = f"SELECT {cols_str} FROM {table_name} ORDER BY {config['pk']}"
+    
+    # 2a. Fetch the high-water mark (MAX updated_at) from the Destination staging DB
+    max_date = None
+    try:
+        records = dest_hook.get_records(f"SELECT MAX(updated_at) FROM public.{table_name}")
+        if records and records[0] and records[0][0]:
+            max_date = records[0][0]
+    except Exception as e:
+        log.warning(f"Could not fetch high-water mark for {table_name}, doing full refresh. Error: {e}")
+
+    # 2b. Build dynamic Source query
+    if max_date:
+        log.info(f"CDC Active: Extracting {table_name} where updated_at > '{max_date}'")
+        formatted_date = max_date.strftime('%Y-%m-%d %H:%M:%S.%f')
+        query = f"SELECT {cols_str} FROM {table_name} WHERE updated_at > '{formatted_date}' ORDER BY {config['pk']}"
+    else:
+        log.info(f"CDC Inactive: Performing full extraction for {table_name}")
+        query = f"SELECT {cols_str} FROM {table_name} ORDER BY {config['pk']}"
     source_engine = source_hook.get_sqlalchemy_engine()
 
     with tempfile.TemporaryDirectory() as tmpdirname:
@@ -222,7 +240,16 @@ with dag:
         group_id="dbt_transformations",
         project_config=ProjectConfig(DBT_PROJECT_PATH),
         profile_config=profile_config,
-        execution_config=ExecutionConfig(dbt_executable_path="/usr/local/bin/dbt"),
+        execution_config=ExecutionConfig(dbt_executable_path="/home/airflow/.local/bin/dbt"),
+    )
+
+    # After ingestion completes, branch off to execute both the analytical warehouse (dbt)
+    # AND trigger the massive scalabiliy data lakehouse (Spark Iceberg)
+    trigger_spark = TriggerDagRunOperator(
+        task_id="trigger_spark_pipeline",
+        trigger_dag_id="spark_transform_silver",
+        wait_for_completion=False,
     )
 
     ingestion_tasks >> dbt_transformations
+    ingestion_tasks >> trigger_spark

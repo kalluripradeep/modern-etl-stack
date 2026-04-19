@@ -30,11 +30,15 @@ def create_tables(conn):
         cur.execute("""
             CREATE TABLE customers (
                 customer_id SERIAL PRIMARY KEY,
-                name VARCHAR(100),
+                first_name VARCHAR(100),
+                last_name VARCHAR(100),
                 email VARCHAR(100) UNIQUE,
+                address VARCHAR(200),
                 city VARCHAR(100),
-                country VARCHAR(100),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                state VARCHAR(100),
+                zip_code VARCHAR(20),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
@@ -42,10 +46,13 @@ def create_tables(conn):
         cur.execute("""
             CREATE TABLE products (
                 product_id SERIAL PRIMARY KEY,
-                product_name VARCHAR(200),
-                category VARCHAR(50),
+                name VARCHAR(200),
+                description TEXT,
                 price DECIMAL(10, 2),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                category VARCHAR(50),
+                stock_quantity INT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
@@ -69,8 +76,9 @@ def create_tables(conn):
                 order_id INT REFERENCES orders(order_id),
                 product_id INT REFERENCES products(product_id),
                 quantity INT,
-                price DECIMAL(10, 2),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                unit_price DECIMAL(10, 2),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
@@ -85,13 +93,16 @@ def generate_customers(conn, count=100):
         for i in range(count):
             try:
                 cur.execute("""
-                    INSERT INTO customers (name, email, city, country)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO customers (first_name, last_name, email, address, city, state, zip_code)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """, (
-                    fake.name()[:100],
+                    fake.first_name()[:100],
+                    fake.last_name()[:100],
                     fake.email()[:100],
+                    fake.street_address()[:200],
                     fake.city()[:100],
-                    fake.country()[:100],
+                    fake.state()[:100],
+                    fake.postcode()[:20],
                 ))
             except Exception as e:
                 print(f"  ⚠️  Skipping customer {i}: {e}")
@@ -109,12 +120,14 @@ def generate_products(conn, count=50):
     with conn.cursor() as cur:
         for _ in range(count):
             cur.execute("""
-                INSERT INTO products (product_name, category, price)
-                VALUES (%s, %s, %s)
+                INSERT INTO products (name, description, price, category, stock_quantity)
+                VALUES (%s, %s, %s, %s, %s)
             """, (
                 fake.catch_phrase()[:200],
-                random.choice(categories),
+                fake.text()[:500],
                 round(random.uniform(9.99, 999.99), 2),
+                random.choice(categories),
+                random.randint(0, 1000)
             ))
 
     conn.commit()
@@ -170,7 +183,7 @@ def generate_orders(conn, count=1000):
                 total_amount += float(price) * quantity
 
                 cur.execute("""
-                    INSERT INTO order_items (order_id, product_id, quantity, price)
+                    INSERT INTO order_items (order_id, product_id, quantity, unit_price)
                     VALUES (%s, %s, %s, %s)
                 """, (order_id, product_id, quantity, price))
 

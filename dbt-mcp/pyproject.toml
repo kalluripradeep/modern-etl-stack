@@ -6,7 +6,7 @@ readme = "README.md"
 license = { file = "LICENSE" }
 # until pyarrow releases wheels for 3.14 https://github.com/apache/arrow/issues/47438
 requires-python = ">=3.12,<3.14"
-dynamic = ["version"]
+version = "0.0.1"
 keywords = [
   "dbt",
   "mcp",
@@ -73,9 +73,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.sdist]
 include = ["src/dbt_mcp/**/*", "README.md", "LICENSE"]
-
-[tool.hatch.version]
-source = "vcs"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
