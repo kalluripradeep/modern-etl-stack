@@ -1,0 +1,171 @@
+# https://taskfile.dev
+
+version: '3'
+
+# Environment Variables will be set with the following precedence (from high to low):
+# .env.local.<env>
+#     Local environment variables that are specific to an environment have the highest priority.
+#     For example, to test a staging environment, put any staging-specific variables in
+#     .env.local.stg. These variables will be set first and will not be overridden by
+#     variables set in other .env files. A common use case for this is to set specific
+#     variables used for testing personal staging sites in a provider/consumer configuration.
+#
+# .env
+#     Local environment variables that should be common across all environments when doing local
+#     development. In the most common case, this will have the full 'dev' configuration.
+#
+#  envs/.env.<env>
+#     Default environment variables for each of the dev, stg and prod environments. If an
+#     environment variable is not set in any of the local .env files, the default value from this
+#     file will be used. These default values are the non-secret values that will be used for
+#     configuration of the shared stg and prod apps managed through CI/CD.
+
+dotenv: [".env.local.{{.ENV}}", ".env", "envs/.env.{{.ENV}}"]
+
+tasks:
+  default:
+    desc: "List tasks"
+    cmds:
+      - task --list
+    silent: true
+
+  install:
+    desc: Install dependencies
+    cmds:
+      - (cd ui && pnpm install && pnpm build)
+      - uv sync
+      - uv pip install -e .
+
+  install-pre-commit:
+    desc: Install pre-commit hooks
+    cmds:
+      - uv run pre-commit install
+
+  check:
+    desc: Run linting and type checking
+    cmds:
+      - (cd ui && pnpm run lint)
+      - uv run pre-commit run --all-files
+
+  fmt:
+    desc: Format code
+    cmds:
+      - uv run pre-commit run ruff --all-files
+
+  clear:
+    desc: >
+      Remove local mypy and pytest cache directories to ensure clean state between runs.
+    cmds:
+      - find . -type d -name ".mypy_cache" -exec rm -rf {} +
+      - find . -type d -name ".pytest_cache" -exec rm -rf {} +
+
+  run:
+    desc: "Run the dbt-mcp server"
+    cmds:
+      - (cd ui && pnpm install && pnpm build)
+      - uv run src/dbt_mcp/main.py
+
+  dev:
+    desc: "Run the dbt-mcp server in development mode (with debugger support)"
+    env:
+      MCP_TRANSPORT: streamable-http
+    cmds:
+      - (cd ui && pnpm install && pnpm build)
+      - ./.venv/bin/python ./src/dbt_mcp/main.py
+
+  inspector:
+    desc: "Run the dbt-mcp server with MCP inspector"
+    cmds:
+      - (cd ui && pnpm install && pnpm build)
+      - npx @modelcontextprotocol/inspector ./.venv/bin/python src/dbt_mcp/main.py
+
+  test:
+    desc: "Run the tests"
+    cmds:
+      - uv run pytest tests {{.CLI_ARGS}}
+
+  test:integration:
+    desc: "Run the integration tests"
+    cmds:
+      - uv run pytest tests/integration {{.CLI_ARGS}}
+
+  test:unit:
+    desc: "Run the unit tests"
+    cmds:
+      - uv run pytest tests/unit {{.CLI_ARGS}}
+
+  eval:
+    desc: "Run the evals"
+    cmds:
+      - uv run pytest evals {{.CLI_ARGS}}
+
+  build:
+    desc: "Build the package"
+    cmds:
+      - (cd ui && pnpm install && pnpm build)
+      - uv build
+
+  client:
+    desc: "Run the test client"
+    cmds:
+      - (cd ui && pnpm install && pnpm build)
+      - uv run src/client/main.py
+
+  docs:generate:
+    desc: "Generate documentation from tool definitions"
+    vars:
+      CHECK_ARG: '{{if .CHECK_FLAG}}--check{{end}}'
+    cmds:
+      - uv run python scripts/generate_docs.py {{.CHECK_ARG}}
+      - task: d2
+      # d2.png check lives here (not in generate_docs.py)
+      # because task: d2 must run first to regenerate png
+      - silent: true
+        cmd: |
+          if git diff --exit-code docs/d2.png > /dev/null 2>&1; then
+            if [ -n "{{.CHECK_FLAG}}" ]; then
+              echo "✓ d2.png is up to date"
+            else
+              echo "d2.png was already up to date"
+            fi
+          elif [ -n "{{.CHECK_FLAG}}" ]; then
+            echo "✗ d2.png is out of date"
+            exit 1
+          else
+            echo "d2.png updated successfully"
+          fi
+
+  d2:
+    desc: "Update d2 diagram from the config"
+    silent: true
+    preconditions:
+      - sh: command -v d2 &> /dev/null
+        msg: "Error: d2 command not found. You can install it with 'brew install d2'"
+    sources:
+      - docs/diagram.d2
+    generates:
+      - docs/d2.png
+    cmds:
+      - d2 docs/diagram.d2 docs/d2.png --pad 20
+
+  mcpb:pack:
+    desc: "Pack mcpb bundle"
+    cmds:
+      - (cd ui && pnpm install && pnpm build)
+      - uv run scripts/sync_manifest_version.py
+      - mcpb pack . {{.MCPB_PACKAGE_NAME | default "dbt-mcp.mcpb"}}
+
+  mcpb:validate:
+    desc: "Validate mcpb manifest"
+    cmds:
+      - mcpb validate ./manifest.json
+
+  mcpb:sign-and-verify:
+    desc: "Sign and verify mcpb bundle"
+    vars:
+      MCPB_CERT: '{{.MCPB_CERT}}'
+      MCPB_KEY: '{{.MCPB_KEY}}'
+      MCPB_PACKAGE_NAME: '{{.MCPB_PACKAGE_NAME | default "dbt-mcp.mcpb"}}'
+    cmds:
+      - mcpb sign -c <(echo "{{.MCPB_CERT}}") -k <(echo "{{.MCPB_KEY}}") {{.MCPB_PACKAGE_NAME}}
+      - mcpb verify {{.MCPB_PACKAGE_NAME}}

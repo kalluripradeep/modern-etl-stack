@@ -1,0 +1,58 @@
+exclude: |
+  (?x)^(
+      .mypy_cache/
+      | .pytest_cache/
+      | .venv/
+      | __pycache__/
+  )$
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: pretty-format-json
+        args: ["--autofix"]
+        exclude: manifest.json
+      - id: check-merge-conflict
+      - id: no-commit-to-branch
+        args: [--branch, main]
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.3
+    hooks:
+      - id: actionlint
+  - repo: local
+    hooks:
+      - id: generate-docs
+        name: Generate documentation from registered tools
+        entry: uv run python scripts/generate_docs.py
+        language: system
+        files: ^(src/dbt_mcp/tools/(tool_names|toolsets|human_descriptions)\.py|README\.md|docs/diagram\.d2)$
+        pass_filenames: false
+      - id: uv lock check
+        name: uv lock check
+        entry: uv lock --check
+        language: system
+        files: ^(uv\.lock|pyproject\.toml|uv\.toml)$
+        pass_filenames: false
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --force-exclude --fix
+        language: system
+        types_or: [python, pyi, jupyter]
+        require_serial: true
+        exclude: examples/
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format --force-exclude
+        language: system
+        types_or: [python, pyi, jupyter]
+        require_serial: true
+        exclude: examples/
+      - id: mypy
+        name: mypy
+        entry: uv run mypy --show-error-codes --namespace-packages . --exclude examples/
+        language: system
+        types_or: [python, pyi]
+        pass_filenames: false
+        require_serial: true
+        exclude: examples/

@@ -1,0 +1,86 @@
+[project]
+name = "dbt-mcp"
+description = "A MCP (Model Context Protocol) server for interacting with dbt resources."
+authors = [{ name = "dbt Labs" }]
+readme = "README.md"
+license = { file = "LICENSE" }
+# until pyarrow releases wheels for 3.14 https://github.com/apache/arrow/issues/47438
+requires-python = ">=3.12,<3.14"
+dynamic = ["version"]
+keywords = [
+  "dbt",
+  "mcp",
+  "model-context-protocol",
+  "data",
+  "analytics",
+  "ai-agent",
+  "llm",
+]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Information Technology",
+  "Intended Audience :: System Administrators",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Information Analysis",
+  "Typing :: Typed",
+]
+dependencies = [
+  "authlib~=1.6.7",
+  "dbt-protos~=1.0.431",
+  "dbt-sl-sdk[sync]~=0.13.2",
+  "dbtlabs-vortex~=0.2.0",
+  "fastapi~=0.128.0",
+  "uvicorn~=0.38.0",
+  # Pinned to a patch range because src/dbt_mcp/proxy/tools.py accesses private
+  # MCP SDK internals (_tool_manager._tools, mcp.server.fastmcp.utilities.func_metadata).
+  # When upgrading, verify those APIs are unchanged and update this pin accordingly.
+  "mcp[cli]==1.26.0",
+  "pydantic-settings~=2.10.1",
+  "pyjwt~=2.12.0",
+  "pyyaml~=6.0.2",
+  "httpx~=0.28.1",
+  "filelock~=3.20.3",
+  "starlette~=0.50.0",
+]
+[dependency-groups]
+dev = [
+  "ruff>=0.11.2",
+  "mypy>=1.12.1",
+  "pre-commit>=4.2.0",
+  "pytest-asyncio>=0.26.0",
+  "pytest>=8.3.5",
+  "openai>=1.71.0",
+  "pyarrow-stubs>=19.1",
+  "types-pyyaml>=6.0.12.20250516",
+  "types-authlib>=1.6.4.20250920",
+]
+
+[project.urls]
+Documentation = "https://docs.getdbt.com/docs/dbt-ai/about-mcp"
+Issues = "https://github.com/dbt-labs/dbt-mcp/issues"
+Source = "https://github.com/dbt-labs/dbt-mcp"
+Changelog = "https://github.com/dbt-labs/dbt-mcp/blob/main/CHANGELOG.md"
+
+[project.scripts]
+dbt-mcp = "dbt_mcp.main:main"
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+include = ["src/dbt_mcp/**/*", "README.md", "LICENSE"]
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+pythonpath = [".", "src"]
+
+[tool.ruff.lint]
+extend-select = ["UP"] # UP=pyupgrade

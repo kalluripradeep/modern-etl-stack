@@ -1,0 +1,375 @@
+import pytest
+
+from dbt_mcp.config.config_providers import ConfigProvider, DiscoveryConfig
+from dbt_mcp.config.credentials import CredentialsProvider
+from dbt_mcp.discovery.client import (
+    DBT_BUILTIN_PACKAGES,
+    DEFAULT_PAGE_SIZE,
+    ExposuresFetcher,
+    MacrosFetcher,
+    ModelFilter,
+    ModelsFetcher,
+    SourcesFetcher,
+)
+from dbt_mcp.discovery.tools import DISCOVERY_TOOLS, DiscoveryToolContext
+from dbt_mcp.tools.tool_names import ToolName
+
+
+@pytest.mark.asyncio
+async def test_fetch_models(
+    models_fetcher: ModelsFetcher, discovery_config: DiscoveryConfig
+):
+    results = await models_fetcher.fetch_models(config=discovery_config)
+
+    # Basic validation of the response
+    assert isinstance(results, list)
+    assert len(results) > 0
+
+    # Validate structure of returned models
+    for model in results:
+        assert "name" in model
+        assert "uniqueId" in model
+        assert "description" in model
+        assert isinstance(model["name"], str)
+
+
+@pytest.mark.asyncio
+async def test_fetch_models_with_filter(
+    models_fetcher: ModelsFetcher, discovery_config: DiscoveryConfig
+):
+    # model_filter: ModelFilter = {"access": "protected"}
+    model_filter: ModelFilter = {"modelingLayer": "marts"}
+
+    # Fetch filtered results
+    filtered_results = await models_fetcher.fetch_models(
+        model_filter=model_filter, config=discovery_config
+    )
+
+    # Validate filtered results
+    assert len(filtered_results) > 0
+
+
+@pytest.mark.asyncio
+async def test_fetch_model_parents(
+    models_fetcher: ModelsFetcher, discovery_config: DiscoveryConfig
+):
+    models = await models_fetcher.fetch_models(config=discovery_config)
+    model_name = models[0]["name"]
+
+    # Fetch filtered results
+    filtered_results = await models_fetcher.fetch_model_parents(
+        model_name, config=discovery_config
+    )
+
+    # Validate filtered results
+    assert len(filtered_results) > 0
+
+
+@pytest.mark.asyncio
+async def test_fetch_model_parents_with_uniqueId(
+    models_fetcher: ModelsFetcher, discovery_config: DiscoveryConfig
+):
+    models = await models_fetcher.fetch_models(config=discovery_config)
+    model = models[0]
+    model_name = model["name"]
+    unique_id = model["uniqueId"]
+
+    # Fetch by name
+    results_by_name = await models_fetcher.fetch_model_parents(
+        model_name, config=discovery_config
+    )
+
+    # Fetch by uniqueId
+    results_by_uniqueId = await models_fetcher.fetch_model_parents(
+        model_name, unique_id, config=discovery_config
+    )
+
+    # Validate that both methods return the same result
+    assert len(results_by_name) == len(results_by_uniqueId)
+    if len(results_by_name) > 0:
+        # Compare the first parent's name if there are any parents
+        assert results_by_name[0]["name"] == results_by_uniqueId[0]["name"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_model_children(
+    models_fetcher: ModelsFetcher, discovery_config: DiscoveryConfig
+):
+    models = await models_fetcher.fetch_models(config=discovery_config)
+    model_name = models[0]["name"]
+
+    # Fetch filtered results
+    filtered_results = await models_fetcher.fetch_model_children(
+        model_name, config=discovery_config
+    )
+
+    # Validate filtered results
+    assert isinstance(filtered_results, list)
+
+
+@pytest.mark.asyncio
+async def test_fetch_model_children_with_uniqueId(
+    models_fetcher: ModelsFetcher, discovery_config: DiscoveryConfig
+):
+    models = await models_fetcher.fetch_models(config=discovery_config)
+    model = models[0]
+    model_name = model["name"]
+    unique_id = model["uniqueId"]
+
+    # Fetch by name
+    results_by_name = await models_fetcher.fetch_model_children(
+        model_name, config=discovery_config
+    )
+
+    # Fetch by uniqueId
+    results_by_uniqueId = await models_fetcher.fetch_model_children(
+        model_name, unique_id, config=discovery_config
+    )
+
+    # Validate that both methods return the same result
+    assert len(results_by_name) == len(results_by_uniqueId)
+    if len(results_by_name) > 0:
+        # Compare the first child's name if there are any children
+        assert results_by_name[0]["name"] == results_by_uniqueId[0]["name"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_exposures(
+    exposures_fetcher: ExposuresFetcher, discovery_config: DiscoveryConfig
+):
+    results = await exposures_fetcher.fetch_exposures(config=discovery_config)
+
+    # Basic validation of the response
+    assert isinstance(results, list)
+
+    # If there are exposures, validate their structure
+    if len(results) > 0:
+        for exposure in results:
+            assert "name" in exposure
+            assert "uniqueId" in exposure
+            assert isinstance(exposure["name"], str)
+            assert isinstance(exposure["uniqueId"], str)
+
+
+@pytest.mark.asyncio
+async def test_fetch_exposures_pagination(
+    exposures_fetcher: ExposuresFetcher, discovery_config: DiscoveryConfig
+):
+    # Test that pagination works correctly by fetching all exposures
+    # This test ensures the pagination logic handles multiple pages properly
+    results = await exposures_fetcher.fetch_exposures(config=discovery_config)
+
+    # Validate that we get results (assuming the test environment has some exposures)
+    assert isinstance(results, list)
+
+    # If we have more than the page size, ensure no duplicates
+    if len(results) > DEFAULT_PAGE_SIZE:
+        unique_ids = set()
+        for exposure in results:
+            unique_id = exposure["uniqueId"]
+            assert unique_id not in unique_ids, f"Duplicate exposure found: {unique_id}"
+            unique_ids.add(unique_id)
+
+
+@pytest.mark.asyncio
+async def test_fetch_sources(
+    sources_fetcher: SourcesFetcher, discovery_config: DiscoveryConfig
+):
+    """Test basic sources fetching functionality."""
+    results = await sources_fetcher.fetch_sources(config=discovery_config)
+
+    # Basic validation of the response
+    assert isinstance(results, list)
+
+    # If sources exist, validate their structure
+    if len(results) > 0:
+        for source in results:
+            assert "name" in source
+            assert "uniqueId" in source
+            assert "sourceName" in source
+            assert "resourceType" in source
+            assert source["resourceType"] == "source"
+
+            # Validate types
+            assert isinstance(source["name"], str)
+            assert isinstance(source["uniqueId"], str)
+            assert isinstance(source["sourceName"], str)
+
+            # Check for description (may be None)
+            assert "description" in source
+
+            # Validate freshness data if present
+            if source.get("freshness"):
+                freshness = source["freshness"]
+                assert isinstance(freshness, dict)
+
+
+@pytest.mark.asyncio
+async def test_fetch_sources_with_filter(
+    sources_fetcher: SourcesFetcher, discovery_config: DiscoveryConfig
+):
+    """Test sources fetching with filter."""
+    # First get all sources to find a valid source name
+    all_sources = await sources_fetcher.fetch_sources(config=discovery_config)
+
+    if len(all_sources) > 0:
+        # Pick the first source name for filtering
+        source_name = all_sources[0]["sourceName"]
+
+        # Test filtering by source name
+        filtered_results = await sources_fetcher.fetch_sources(
+            source_names=[source_name], config=discovery_config
+        )
+
+        # Validate filtered results
+        assert isinstance(filtered_results, list)
+
+        # All results should have the specified source name
+        for source in filtered_results:
+            assert source["sourceName"] == source_name
+
+
+@pytest.mark.asyncio
+async def test_get_all_sources_tool(
+    config_provider: ConfigProvider[DiscoveryConfig],
+    credentials_provider: CredentialsProvider,
+) -> None:
+    """Test the get_all_sources tool function integration."""
+
+    # Create tool definitions
+    tool_definitions = DISCOVERY_TOOLS
+
+    # Find the get_all_sources tool
+    get_all_sources_tool = None
+    for tool_def in tool_definitions:
+        if tool_def.get_name() == ToolName.GET_ALL_SOURCES:
+            get_all_sources_tool = tool_def
+            break
+
+    assert get_all_sources_tool is not None, (
+        "get_all_sources tool not found in tool definitions"
+    )
+
+    # Execute the tool function
+    result = await get_all_sources_tool.fn(
+        context=DiscoveryToolContext(
+            config_provider=config_provider,
+        )
+    )
+
+    # Validate the result
+    assert isinstance(result, list)
+
+    # If sources exist, validate structure
+    if len(result) > 0:
+        for source in result:
+            assert "name" in source
+            assert "uniqueId" in source
+            assert "sourceName" in source
+            assert "resourceType" in source
+            assert source["resourceType"] == "source"
+
+
+@pytest.mark.asyncio
+async def test_fetch_macros(
+    macros_fetcher: MacrosFetcher, discovery_config: DiscoveryConfig
+):
+    """Test basic macros fetching functionality (excluding dbt-labs first-party macros)."""
+    from dbt_mcp.discovery.client import DBT_BUILTIN_PACKAGES
+
+    results = await macros_fetcher.fetch_macros(config=discovery_config)
+
+    # Basic validation of the response
+    assert isinstance(results, list)
+
+    # If macros exist, validate their structure
+    if len(results) > 0:
+        for macro in results:
+            assert isinstance(macro, dict)
+            assert "name" in macro
+            assert "uniqueId" in macro
+            assert "packageName" in macro
+            assert isinstance(macro["name"], str)
+            assert isinstance(macro["uniqueId"], str)
+
+            # Check for description (may be None)
+            assert "description" in macro
+
+            # Verify dbt-labs first-party macros are excluded by default
+            package_name = macro.get("packageName", "")
+            assert package_name.lower() not in DBT_BUILTIN_PACKAGES
+
+
+@pytest.mark.asyncio
+async def test_fetch_macros_with_package_filter(
+    macros_fetcher: MacrosFetcher, discovery_config: DiscoveryConfig
+):
+    """Test macros fetching with package name filter."""
+    # First get all macros to find available packages
+    all_macros = await macros_fetcher.fetch_macros(config=discovery_config)
+
+    if len(all_macros) > 0:
+        first_macro = all_macros[0]
+        assert isinstance(first_macro, dict)
+
+        # Pick the first package name for filtering
+        package_name = first_macro["packageName"]
+
+        # Test filtering by package name
+        filtered_results = await macros_fetcher.fetch_macros(
+            package_names=[package_name], config=discovery_config
+        )
+
+        # Validate filtered results
+        assert isinstance(filtered_results, list)
+
+        # All results should have the specified package name
+        for macro in filtered_results:
+            assert isinstance(macro, dict)
+            assert macro["packageName"].lower() == package_name.lower()
+
+
+@pytest.mark.asyncio
+async def test_get_all_macros_tool(
+    config_provider: ConfigProvider[DiscoveryConfig],
+    credentials_provider: CredentialsProvider,
+) -> None:
+    """Test the get_all_macros tool function integration."""
+
+    # Create tool definitions
+    tool_definitions = DISCOVERY_TOOLS
+
+    # Find the get_all_macros tool
+    get_all_macros_tool = None
+    for tool_def in tool_definitions:
+        if tool_def.get_name() == ToolName.GET_ALL_MACROS:
+            get_all_macros_tool = tool_def
+            break
+
+    assert get_all_macros_tool is not None, (
+        "get_all_macros tool not found in tool definitions"
+    )
+
+    # Execute the tool function
+    result = await get_all_macros_tool.fn(
+        context=DiscoveryToolContext(
+            config_provider=config_provider,
+        ),
+        package_names=None,
+        return_package_names_only=False,
+        include_default_dbt_packages=False,
+    )
+
+    # Validate the result
+    assert isinstance(result, list)
+
+    # If macros exist, validate structure
+    if len(result) > 0:
+        for macro in result:
+            assert "name" in macro
+            assert "uniqueId" in macro
+            assert "packageName" in macro
+
+            # Verify dbt-labs first-party macros are excluded by default
+            package_name = macro.get("packageName", "").lower()
+            assert package_name not in DBT_BUILTIN_PACKAGES

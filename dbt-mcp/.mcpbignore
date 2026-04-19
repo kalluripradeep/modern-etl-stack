@@ -1,0 +1,13 @@
+.*
+/dist/
+/ui/
+docs/
+evals/
+examples/
+scripts/
+tests/
+*.yml
+CHANGELOG.md
+CONTRIBUTING.md
+uv.lock
+!.git

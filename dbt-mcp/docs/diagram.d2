@@ -1,0 +1,84 @@
+vars: {
+  d2-config: {
+    layout-engine: elk
+  }
+}
+
+direction: right
+*.style.border-radius: 8
+
+classes: {
+  container: {
+    grid-columns: 2
+    grid-rows: 2
+    grid-gap: 10
+    width: 600
+    *.style.border-radius: 8
+  }
+
+  big-container: {
+    grid-columns: 2
+    grid-rows: 4
+    grid-gap: 10
+    width: 600
+    *.style.border-radius: 8
+  }
+}
+
+mcp: dbt MCP server
+
+tools: Tools {
+  sql: SQL {
+    style.border-radius: 8
+  }
+
+  semantic_layer: Semantic Layer {
+    style.border-radius: 8
+  }
+
+  discovery: Discovery {
+    style.border-radius: 8
+  }
+
+  dbt_cli: dbt CLI {
+    style.border-radius: 8
+  }
+
+  admin_api: Admin API {
+    style.border-radius: 8
+  }
+
+  dbt_codegen: dbt Codegen {
+    style.border-radius: 8
+  }
+
+  dbt_lsp: dbt LSP {
+    style.border-radius: 8
+  }
+
+  product_docs: Product Docs {
+    style.border-radius: 8
+  }
+
+  mcp_server_metadata: MCP Server Metadata {
+    style.border-radius: 8
+  }
+
+}
+
+mcp -- tools.*
+
+clients: MCP Clients {
+  grid-columns: 1
+  *.style.border-radius: 8
+  Claude
+  Cursor
+  mcp_clients: Any MCP client
+}
+
+other_mcp: Other MCP servers
+other_tools: Other tools
+
+clients -- mcp
+clients -- other_mcp
+other_mcp -- other_tools
