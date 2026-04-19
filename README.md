@@ -1,36 +1,37 @@
-# Modern ETL Infrastructure
+# Modern ETL Infrastructure: Enterprise Data Lakehouse
 
-A comprehensive ETL stack demonstrating the integration of open-source data engineering tools. This project features real-time CDC (Change Data Capture) and batch processing pipelines orchestrating data movement between a staging relational database, a data lake, and a destination database. 
+A comprehensive ETL stack demonstrating the integration of open-source data engineering tools. This project features a **Dual-Engine Architecture**: running a low-latency relational Data Warehouse (dbt + PostgreSQL) in parallel with an unlimited-scale Data Lakehouse (Apache Spark + Apache Iceberg) powered by Airflow Change Data Capture (CDC).
 
 ## Architecture
 
 ```text
-┌──────────────┐     batch (daily)      ┌───────────────┐
-│  PostgreSQL  │ ──────────────────────▶ │     MinIO     │
-│   (source)   │                         │  (S3 / bronze)│
-└──────┬───────┘                         └───────────────┘
-       │                                         │
-       │  CDC (real-time)                        │
-       ▼                                         ▼
-┌──────────────┐    Kafka topic     ┌───────────────────┐
-│   Debezium   │ ──────────────────▶│  Airflow CDC DAG  │
-│ (Kafka Conn.)│                    └────────┬──────────┘
-└──────────────┘                             │ upserts
-                                             ▼
-                                    ┌──────────────────┐
-                                    │   PostgreSQL     │
-                                    │  (destination)   │
-                                    └────────┬─────────┘
-                                             │
-                                    ┌────────▼─────────┐
-                                    │       dbt        │
-                                    │ bronze→silver→gold│
-                                    └──────────────────┘
-                                             │
-                                    ┌────────▼──────────┐
-                                    │  Spark (optional) │
-                                    │ Bronze→Silver job │
-                                    └───────────────────┘
+                                  ┌───────────────┐
+                                  │  PostgreSQL   │
+                                  │   (source)    │
+                                  └──────┬────────┘
+                                         │  1. High-Water Mark CDC 
+                                         │  (Extracts Delta Only)
+                                         ▼
+                                  ┌───────────────┐
+                                  │  Airflow DAG  │
+                                  │  (Ingestion)  │
+                                  └──────┬────────┘
+                                         │
+             ┌───────────────────────────┴────────────────────────────┐
+             │                           │                            │
+             ▼                           ▼                            ▼
+      2A. UPSERT Delta            2B. Write Parquet           3B. Iceberg Delta 
+   ┌─────────────────┐           ┌───────────────┐           ┌─────────────────┐
+   │   PostgreSQL    │           │     MinIO     │──────────▶│  Apache Spark   │
+   │  (destination)  │           │   (Bronze S3) │           │ (Silver/Iceberg)│
+   └────────┬────────┘           └───────────────┘           └─────────┬───────┘
+            │                                                          │
+            ▼                                                          ▼
+   ┌─────────────────┐                                       ┌─────────────────┐
+   │    dbt Core     │  ◀───── 3A. Incremental Merges        │ Iceberg Catalog │
+   │ (Silver/Gold)   │                                       │ (Compaction /   │
+   └─────────────────┘                                       │  Z-Ordering)    │
+                                                             └─────────────────┘
 
 Monitoring: Prometheus + Grafana + Node Exporter
 ```
@@ -39,27 +40,30 @@ Monitoring: Prometheus + Grafana + Node Exporter
 
 | Layer | Component |
 |---|---|
-| **Orchestration** | Apache Airflow 2.8 |
-| **CDC / Streaming** | Debezium 2.5 & Confluent Kafka 7.5 |
+| **Orchestration** | Apache Airflow 2.8 & Cosmos |
 | **Object Storage** | MinIO (S3-compatible) |
-| **Transformation** | dbt-core 1.7 |
+| **Transformation** | dbt-core 1.7 (Incremental Models) |
 | **Batch Compute** | Apache Spark 3.5 |
+| **Lakehouse Format**| Apache Iceberg 1.4 |
 | **Data Warehouse** | PostgreSQL 15 |
 | **Monitoring** | Prometheus & Grafana |
 
-## Prerequisites
+## Core Data Pipelines
 
-- Docker + Docker Compose
-- `make` (optional but recommended)
-- ~6 GB free RAM available for Docker daemon
+### 1. The High-Water Mark CDC (`ingest_source_to_bronze.py`)
+This is the master ingestion DAG. It queries the destination database for the `MAX(updated_at)` timestamp and seamlessly injects it into the extraction query against the source database. This guarantees that only **modified or new rows** (the delta) are extracted, entirely bypassing expensive full-table reloads.
 
-### Linux Permissions Note
+It handles data dispatching by:
+1. Staging the delta into a PostgreSQL temporary table and executing `ON CONFLICT DO UPDATE`.
+2. Saving the delta as a historical Parquet blob inside MinIO's `s3a://bronze` layer.
+3. Dynamically triggering the downstream Spark Data Lakehouse and dbt processing jobs.
 
-If you encounter `permission denied` errors when running Airflow containers, you may need to adjust local directory ownership to match the `airflow` user's UID (50000):
-```bash
-sudo chown -R 50000:0 logs dags plugins
-sudo chmod -R 775 logs dags plugins
-```
+### 2. The Analytical Warehouse (`dbt`)
+Configured to use `materialized='incremental'` across the Silver layer, the dbt pipeline runs within Airflow (via Astronomer Cosmos). It natively detects new incremental batches and elegantly merges them to uphold sub-second BI dashboard latency for current data.
+
+### 3. The Scalable Data Lakehouse (`spark_transform_silver.py`)
+Triggered automatically by Airflow, four heavy PySpark jobs natively download the parquet deltas from MinIO and execute `MERGE INTO` SQL commands against **Apache Iceberg**. This allows unlimited structural scaling without database locking constraints.
+* A weekly `iceberg_maintenance.py` job sequentially fires to execute small-file `rewrite_data_files` (Compaction) and apply advanced **Z-Ordering algorithms** on core partition clusters.
 
 ## Quick Start
 
@@ -72,9 +76,6 @@ make up
 
 # 3. Wait ~60 seconds for services to reach healthy state, then seed database
 make seed
-
-# 4. Register the Debezium CDC connector
-make register-connector
 ```
 
 ## Service Access URLs
@@ -83,45 +84,9 @@ make register-connector
 |---|---|---|
 | **Airflow UI** | http://localhost:8080 | admin / admin |
 | **MinIO Console** | http://localhost:9001 | minioadmin / minioadmin |
-| **Kafka UI** | http://localhost:8001 | — |
 | **Spark Master UI** | http://localhost:8081 | — |
 | **Grafana** | http://localhost:3000 | admin / admin |
 | **Prometheus** | http://localhost:9090 | — |
-| **Kafka Connect** | http://localhost:8083 | — |
-
-## Data Pipelines
-
-### Airflow DAGs
-
-1. **`extract_orders_to_minio`** *(Daily)*
-   - Batch extraction of PostgreSQL source.
-   - Converts to Parquet, validates data quality, and uploads to MinIO.
-   - Replicates to Destination PostgreSQL database for downstream modeling.
-2. **`consume_cdc_events`** *(Every 5 Minutes)*
-   - Micro-batch consumer. 
-   - Reads serialized events from Kafka (Debezium source) and executes Upserts/Deletes on the target schema.
-3. **`spark_transform_orders`** *(Daily)*
-   - Submits PySpark applications for heavy compute processing (Bronze -> Silver translation) over MinIO.
-
-### dbt Modeling
-
-```text
-dbt/models/
-├── bronze/
-│   └── bronze_orders.sql
-├── silver/
-│   ├── silver_orders.sql
-│   └── schema.yml
-└── gold/
-    ├── gold_daily_revenue.sql
-    └── schema.yml
-```
-
-Execute models and test suites:
-```bash
-make dbt-run
-make dbt-test
-```
 
 ## Project Operations
 
@@ -130,8 +95,7 @@ make up                  # Start infrastructure
 make down                # Tear down infrastructure
 make logs                # Tail aggregated container logs
 make ps                  # Service health check
-make seed                # Generate sample source data
-make register-connector  # Initialize Debezium CDC connector
-make dbt-run             # Execute dbt transformation
-make dbt-test            # Execute dbt validation tests
+make seed                # Generate sample eCommerce data
+make dbt-run             # Execute manual dbt transformation
+make dbt-test            # Execute dbt data quality tests
 ```
