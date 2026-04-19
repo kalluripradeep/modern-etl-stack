@@ -1,36 +1,31 @@
 # Modern ETL Infrastructure
 
-A comprehensive ETL stack demonstrating the integration of open-source data engineering tools. This project features real-time CDC (Change Data Capture) and batch processing pipelines orchestrating data movement between a staging relational database, a data lake, and a destination database. 
+A comprehensive ETL stack demonstrating the integration of open-source data engineering tools. This project features both **real-time CDC (Change Data Capture)** via Kafka/Debezium and **high-scale batch processing** pipelines orchestrating data movement between a staging relational database, a data lake, and a destination database. 
 
 ## Architecture
 
 ```text
-┌──────────────┐     batch (daily)      ┌───────────────┐
-│  PostgreSQL  │ ──────────────────────▶ │     MinIO     │
-│   (source)   │                         │  (S3 / bronze)│
-└──────┬───────┘                         └───────────────┘
-       │                                         │
-       │  CDC (real-time)                        │
-       ▼                                         ▼
-┌──────────────┐    Kafka topic     ┌───────────────────┐
-│   Debezium   │ ──────────────────▶│  Airflow CDC DAG  │
-│ (Kafka Conn.)│                    └────────┬──────────┘
-└──────────────┘                             │ upserts
-                                             ▼
-                                    ┌──────────────────┐
-                                    │   PostgreSQL     │
-                                    │  (destination)   │
-                                    └────────┬─────────┘
-                                             │
-                                    ┌────────▼─────────┐
-                                    │       dbt        │
-                                    │ bronze→silver→gold│
-                                    └──────────────────┘
-                                             │
-                                    ┌────────▼──────────┐
-                                    │  Spark (optional) │
-                                    │ Bronze→Silver job │
-                                    └───────────────────┘
+┌──────────────┐   batch (high-water mark)  ┌───────────────┐
+│  PostgreSQL  │ ─────────────────────────▶ │     MinIO     │
+│   (source)   │                            │  (S3 / bronze)│
+└──────┬───────┘                            └───────────────┘
+       │                                            │
+       │  CDC (real-time)                           │
+       ▼                                            ▼
+┌──────────────┐       Kafka topic          ┌───────────────────┐               ┌─────────────────┐
+│   Debezium   │ ─────────────────────────▶ │  Airflow CDC DAG  │    Iceberg    │  Apache Spark   │
+│ (Kafka Conn.)│                            └────────┬──────────┘  ◀──────────▶ │ (Iceberg/Silver)│
+└──────────────┘                                     │ upserts                  └─────────────────┘
+                                                     ▼
+                                            ┌──────────────────┐
+                                            │   PostgreSQL     │
+                                            │  (destination)   │
+                                            └────────┬─────────┘
+                                                     │
+                                            ┌────────▼─────────┐
+                                            │       dbt        │
+                                            │ bronze→silver→gold│
+                                            └──────────────────┘
 
 Monitoring: Prometheus + Grafana + Node Exporter
 ```
@@ -42,10 +37,19 @@ Monitoring: Prometheus + Grafana + Node Exporter
 | **Orchestration** | Apache Airflow 2.8 |
 | **CDC / Streaming** | Debezium 2.5 & Confluent Kafka 7.5 |
 | **Object Storage** | MinIO (S3-compatible) |
-| **Transformation** | dbt-core 1.7 |
-| **Batch Compute** | Apache Spark 3.5 |
+| **Transformation** | dbt-core 1.7 (Incremental Models) |
+| **Batch Compute** | Apache Spark 3.5 & Apache Iceberg 1.4 |
 | **Data Warehouse** | PostgreSQL 15 |
 | **Monitoring** | Prometheus & Grafana |
+
+## Agentic AI Integration
+
+This repository features state-of-the-art **Model Context Protocol (MCP)** integration, allowing LLM coding agents (like Claude Desktop or Cursor) to act natively as Data Engineers.
+
+Through the custom `dbt-mcp` server located in this repository, the AI Agent interacts directly with the production environment:
+- **Zero-Guessing Architecture:** The Agent explicitly reads and writes real SQL code and schema metadata directly from the Destination Data Warehouse. It never has to "guess" or "hallucinate" table structures because it has live, native database access.
+- **Autonomous Validation:** It can natively trigger `dbt test` against the live PostgreSQL database to instantly verify its own code changes.
+- **Human-in-the-Loop Self-Healing:** By hooking the MCP directly into the warehouse, the Agent can analyze live pipeline failures and explicitly write and test its own SQL patches. However, it strictly requires human approval before any code is committed or applied, guaranteeing complete control and security without requiring human copy-pasting.
 
 ## Prerequisites
 
@@ -93,15 +97,17 @@ make register-connector
 
 ### Airflow DAGs
 
-1. **`extract_orders_to_minio`** *(Daily)*
-   - Batch extraction of PostgreSQL source.
-   - Converts to Parquet, validates data quality, and uploads to MinIO.
-   - Replicates to Destination PostgreSQL database for downstream modeling.
+1. **`ingest_source_to_bronze`** *(Daily or Hourly Batch)*
+   - Batch extraction of PostgreSQL source using **High-Water Mark CDC** (`MAX(updated_at)` logic).
+   - Converts to Parquet and uploads delta to MinIO.
+   - Replicates delta to Destination PostgreSQL database via Upsert.
+   - Automatically branches out to trigger both the `dbt` and `Spark Iceberg` downstream tasks!
 2. **`consume_cdc_events`** *(Every 5 Minutes)*
-   - Micro-batch consumer. 
-   - Reads serialized events from Kafka (Debezium source) and executes Upserts/Deletes on the target schema.
-3. **`spark_transform_orders`** *(Daily)*
-   - Submits PySpark applications for heavy compute processing (Bronze -> Silver translation) over MinIO.
+   - Micro-batch consumer for real-time streaming. 
+   - Reads serialized events from Kafka (Debezium source) and executes Upserts/Deletes instantly on the target schema.
+3. **`spark_transform_silver`** *(Triggered Automatically)*
+   - Submits clustered PySpark applications for heavy compute processing (Bronze -> Silver translation) over MinIO.
+   - Merges delta Parquet streams into massive-scale **Apache Iceberg** tables. Includes Z-Ordering compaction tasks.
 
 ### dbt Modeling
 
@@ -132,6 +138,6 @@ make logs                # Tail aggregated container logs
 make ps                  # Service health check
 make seed                # Generate sample source data
 make register-connector  # Initialize Debezium CDC connector
-make dbt-run             # Execute dbt transformation
+make dbt-run             # Execute dbt transformation (Incremental)
 make dbt-test            # Execute dbt validation tests
 ```
