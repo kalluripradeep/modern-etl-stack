@@ -30,7 +30,9 @@ def transform_order_items(df):
     - Metadata tracking (processed_at)
     """
     print("Applying OrderItems Silver layer transformations...")
-    return df.withColumn("processed_at", current_timestamp())
+    return df.withColumn("created_at", col("created_at").cast("timestamp")) \
+             .withColumn("updated_at", col("updated_at").cast("timestamp")) \
+             .withColumn("processed_at", current_timestamp())
 
 
 def upsert_to_iceberg(spark, df):

@@ -33,6 +33,8 @@ def transform_products(df):
     print("Applying Product Silver layer transformations...")
     return df.withColumn("name", trim(col("name"))) \
              .withColumn("category", lower(trim(col("category")))) \
+             .withColumn("created_at", col("created_at").cast("timestamp")) \
+             .withColumn("updated_at", col("updated_at").cast("timestamp")) \
              .withColumn("processed_at", current_timestamp())
 
 
