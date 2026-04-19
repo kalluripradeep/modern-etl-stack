@@ -42,6 +42,15 @@ Monitoring: Prometheus + Grafana + Node Exporter
 | **Data Warehouse** | PostgreSQL 15 |
 | **Monitoring** | Prometheus & Grafana |
 
+## Agentic AI Integration
+
+This repository features state-of-the-art **Model Context Protocol (MCP)** integration, allowing LLM coding agents (like Claude Desktop or Cursor) to act natively as Data Engineers.
+
+Through the custom `dbt-mcp` server located in this repository, your AI Agent can:
+- **Autonomously test your warehouse:** It can natively trigger `dbt test` against the live PostgreSQL database.
+- **Perform SQL Analysis:** It can run ad-hoc queries, profile your data, and diagnose pipeline failures using live metadata without requiring human copy-pasting.
+- **Self-Healing Data:** By hooking the MCP directly into the destination PostgreSQL database, the Agent can write and validate its own SQL patches directly resulting from pipeline errors.
+
 ## Prerequisites
 
 - Docker + Docker Compose
