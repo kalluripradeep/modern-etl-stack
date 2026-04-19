@@ -49,7 +49,7 @@ This repository features state-of-the-art **Model Context Protocol (MCP)** integ
 Through the custom `dbt-mcp` server located in this repository, the AI Agent interacts directly with the production environment:
 - **Zero-Guessing Architecture:** The Agent explicitly reads and writes real SQL code and schema metadata directly from the Destination Data Warehouse. It never has to "guess" or "hallucinate" table structures because it has live, native database access.
 - **Autonomous Validation:** It can natively trigger `dbt test` against the live PostgreSQL database to instantly verify its own code changes.
-- **Self-Healing Pipelines:** By hooking the MCP directly into the warehouse, the Agent can analyze live pipeline failures and explicitly write, test, and commit its own SQL patches without requiring human copy-pasting.
+- **Human-in-the-Loop Self-Healing:** By hooking the MCP directly into the warehouse, the Agent can analyze live pipeline failures and explicitly write and test its own SQL patches. However, it strictly requires human approval before any code is committed or applied, guaranteeing complete control and security without requiring human copy-pasting.
 
 ## Prerequisites
 
