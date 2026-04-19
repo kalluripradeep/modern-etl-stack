@@ -46,10 +46,10 @@ Monitoring: Prometheus + Grafana + Node Exporter
 
 This repository features state-of-the-art **Model Context Protocol (MCP)** integration, allowing LLM coding agents (like Claude Desktop or Cursor) to act natively as Data Engineers.
 
-Through the custom `dbt-mcp` server located in this repository, your AI Agent can:
-- **Autonomously test your warehouse:** It can natively trigger `dbt test` against the live PostgreSQL database.
-- **Perform SQL Analysis:** It can run ad-hoc queries, profile your data, and diagnose pipeline failures using live metadata without requiring human copy-pasting.
-- **Self-Healing Data:** By hooking the MCP directly into the destination PostgreSQL database, the Agent can write and validate its own SQL patches directly resulting from pipeline errors.
+Through the custom `dbt-mcp` server located in this repository, the AI Agent interacts directly with the production environment:
+- **Zero-Guessing Architecture:** The Agent explicitly reads and writes real SQL code and schema metadata directly from the Destination Data Warehouse. It never has to "guess" or "hallucinate" table structures because it has live, native database access.
+- **Autonomous Validation:** It can natively trigger `dbt test` against the live PostgreSQL database to instantly verify its own code changes.
+- **Self-Healing Pipelines:** By hooking the MCP directly into the warehouse, the Agent can analyze live pipeline failures and explicitly write, test, and commit its own SQL patches without requiring human copy-pasting.
 
 ## Prerequisites
 
