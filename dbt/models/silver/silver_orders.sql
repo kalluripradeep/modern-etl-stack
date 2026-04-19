@@ -2,7 +2,8 @@
 -- Removes duplicates, nulls, and invalid data
 
 {{ config(
-    materialized='table',
+    materialized='incremental',
+    unique_key='order_id',
     tags=['silver', 'orders']
 ) }}
 
@@ -23,6 +24,11 @@ WITH cleaned_orders AS (
             ELSE 'valid'
         END as quality_flag
     FROM {{ ref('bronze_orders') }}
+    
+    {% if is_incremental() %}
+    -- CDC filtering: only fetch records modernized since the last run
+    WHERE updated_at > (SELECT MAX(updated_at) FROM {{ this }})
+    {% endif %}
 )
 
 SELECT 

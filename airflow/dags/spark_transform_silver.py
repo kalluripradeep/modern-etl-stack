@@ -78,8 +78,8 @@ with DAG(
         execution_timeout=timedelta(hours=2),
     )
 
-    # Transformation happens in parallel
-    [transform_orders, transform_customers, transform_products, transform_order_items]
+    # Transformation happens sequentially to prevent Maven/Ivy cache download collisions
+    transform_orders >> transform_customers >> transform_products >> transform_order_items >> maintenance_task
 
     # Maintenance is logically downstream, but you can schedule it separately.
     # Here, we trigger it once a week, but the task exists in the same DAG for visibility.

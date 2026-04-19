@@ -57,7 +57,7 @@ def main():
         ("silver.orders", "order_date"),
         ("silver.customers", "customer_id"),
         ("silver.order_items", "order_id"),
-        ("silver.products", "category")
+        ("silver.products", "product_id")
     ]
     
     try:
