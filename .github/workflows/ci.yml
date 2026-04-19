@@ -2,7 +2,7 @@ name: Enterprise CI
 
 on:
   push:
-    branches: [ "main", "feat/robust-ci-cd" ]
+    branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
 
