@@ -34,6 +34,8 @@ def transform_customers(df):
     return df.withColumn("first_name", trim(col("first_name"))) \
              .withColumn("last_name", trim(col("last_name"))) \
              .withColumn("email", lower(trim(col("email")))) \
+             .withColumn("created_at", col("created_at").cast("timestamp")) \
+             .withColumn("updated_at", col("updated_at").cast("timestamp")) \
              .withColumn("processed_at", current_timestamp())
 
 

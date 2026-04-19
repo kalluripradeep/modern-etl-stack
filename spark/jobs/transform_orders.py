@@ -42,6 +42,8 @@ def transform_to_silver(df):
         .filter(col("total_amount") > 0) \
         .filter(col("status").isNotNull()) \
         .withColumn("total_amount", col("total_amount").cast(DecimalType(10, 2))) \
+        .withColumn("created_at", col("created_at").cast("timestamp")) \
+        .withColumn("updated_at", col("updated_at").cast("timestamp")) \
         .withColumn("processed_at", current_timestamp()) \
         .select(
             "order_id",
