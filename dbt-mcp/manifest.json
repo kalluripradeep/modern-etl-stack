@@ -1,0 +1,63 @@
+{
+    "manifest_version": "0.4",
+    "name": "dbt-mcp",
+    "display_name": "dbt MCP Server",
+    "version": "{dynamic-version}",
+    "description": "A MCP (Model Context Protocol) server for interacting with dbt.",
+    "long_description": "This MCP (Model Context Protocol) server provides various tools to interact with dbt. You can use this MCP server to provide AI agents with context of your project in dbt Core, dbt Fusion, and dbt Platform.",
+    "author": {
+        "name": "dbt Labs",
+        "url": "https://www.getdbt.com"
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/dbt-labs/dbt-mcp"
+    },
+    "homepage": "https://docs.getdbt.com/docs/dbt-ai/about-mcp",
+    "documentation": "https://docs.getdbt.com/docs/dbt-ai/about-mcp",
+    "support": "https://github.com/dbt-labs/dbt-mcp/issues",
+    "server": {
+        "type": "uv",
+        "entry_point": "src/dbt_mcp/main.py",
+        "mcp_config": {
+            "command": "uv",
+            "args": [
+                "run",
+                "dbt-mcp"
+            ],
+            "env": {
+                "DBT_HOST": "${user_config.dbt_host}"
+            }
+        }
+    },
+    "tools_generated": true,
+    "keywords": [
+        "dbt",
+        "data-analytics",
+        "data-engineering",
+        "llm"
+    ],
+    "license": "Apache-2.0",
+    "privacy_policies": [
+        "https://www.getdbt.com/cloud/privacy-policy"
+    ],
+    "compatibility": {
+        "platforms": [
+            "darwin",
+            "win32",
+            "linux"
+        ],
+        "runtimes": {
+            "python": ">=3.12,<3.14"
+        }
+    },
+    "user_config": {
+        "dbt_host": {
+            "default": "cloud.getdbt.com",
+            "description": "Your dbt platform instance hostname (e.g., cloud.getdbt.com). You can find this in dbt platform by navigating to Dashboard, then Settings.",
+            "required": true,
+            "title": "dbt Platform Host",
+            "type": "string"
+        }
+    }
+}

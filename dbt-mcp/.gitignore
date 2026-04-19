@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+.venv/
+.mypy_cache/
+.pytest_cache/
+pytest-of-*/
+*.egg-info/
+
+# IDEs
+.idea/
+
+# dbt Labs
+vortex_dev_mode_output.jsonl
+
+# Logs
+dbt-mcp.log
+
+# OS
+**/.DS_Store
+
+# Environment variables
+.env
+
+# MCPB zip file
+dbt-mcp.mcpb
