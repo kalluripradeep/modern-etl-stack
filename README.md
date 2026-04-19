@@ -44,7 +44,7 @@ Monitoring: Prometheus + Grafana + Node Exporter
 
 ## Agentic AI Integration
 
-This repository features state-of-the-art **Model Context Protocol (MCP)** integration, allowing LLM coding agents (like Claude Desktop or Cursor) to act natively as Data Engineers.
+**Deploy an AI Agent directly into your raw database!** This repository features state-of-the-art **Model Context Protocol (MCP)** integration, essentially placing an autonomous LLM coding agent (like Claude Desktop or Cursor) on the ground to act as a native Data Engineer.
 
 Through the custom `dbt-mcp` server located in this repository, the AI Agent interacts directly with the production environment:
 - **Zero-Guessing Architecture:** The Agent explicitly reads and writes real SQL code and schema metadata directly from the Destination Data Warehouse. It never has to "guess" or "hallucinate" table structures because it has live, native database access.
