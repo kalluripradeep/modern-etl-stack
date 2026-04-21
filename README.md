@@ -38,10 +38,11 @@ The system utilizes a **Definitive "Three-Track" Architecture**. This design sep
 ┌─────▼─────┐          
 │    dbt    │ (The Brain)
 └─────┬─────┘          
+      │ (Materialize)
       ▼                
 ┌────────────┐         
-│ analytics  │         
-│   (Gold)   │         
+│ analytics  │ (Warehouse)        
+│   (Gold)   │ (Dest DB)
 └────────────┘         
   PostgreSQL (Destination)
 ```
