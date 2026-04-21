@@ -4,31 +4,54 @@ A comprehensive ETL stack demonstrating the integration of open-source data engi
 
 ## Architecture
 
-```text
-┌──────────────┐   batch (high-water mark)  ┌───────────────┐
-│  PostgreSQL  │ ─────────────────────────▶ │     MinIO     │
-│   (source)   │                            │  (S3 / bronze)│
-└──────┬───────┘                            └───────────────┘
-       │                                            │
-       │  CDC (real-time)                           │
-       ▼                                            ▼
-┌──────────────┐       Kafka topic          ┌───────────────────┐               ┌─────────────────┐
-│   Debezium   │ ─────────────────────────▶ │  Airflow CDC DAG  │    Iceberg    │  Apache Spark   │
-│ (Kafka Conn.)│                            └────────┬──────────┘  ◀──────────▶ │ (Iceberg/Silver)│
-└──────────────┘                                     │ upserts                  └─────────────────┘
-                                                     ▼
-                                            ┌──────────────────┐
-                                            │   PostgreSQL     │
-                                            │  (destination)   │
-                                            └────────┬─────────┘
-                                                     │
-                                            ┌────────▼─────────┐
-                                            │       dbt        │
-                                            │ bronze→silver→gold│
-                                            └──────────────────┘
+The system utilizes a **Definitive "Three-Track" Architecture**. This design separates highspeed operational mirrors, business-critical analytics, and massive historical archives into independent, parallel tracks.
 
-Monitoring: Prometheus + Grafana + Node Exporter
+```text
+           ┌──────────────┐
+           │  PostgreSQL  │  (Source Transactional Database)
+           │   (source)   │
+           └──────┬───────┘
+                  │
+      ┌───────────┼───────────┐
+      ▼           ▼           ▼
+  TRACK 1:      TRACK 2:    TRACK 3:
+ OPERATIONAL   ANALYTICAL   BIG DATA
+  (Mirror)    (Warehouse)  (Lakehouse)
+      │           │           │
+┌─────▼─────┐     │     ┌─────▼─────┐
+│ Debezium  │     │     │  Airflow  │ (The Courier)
+└─────┬─────┘     │     └─────┬─────┘
+      │           │           │
+┌─────▼─────┐     │     ┌─────▼─────┐
+│   Kafka   │     │     │  MinIO    │ (Bronze / Raw)
+└─────┬─────┘     │     └─────┬─────┘
+      │      ┌────▼────┐      │
+┌─────▼─────┐│ Airflow │┌─────▼─────┐
+│ JDBC Sink │└────┬────┘│  Spark    │ (The Chef)
+└─────┬─────┘     │     └─────┬─────┘
+      │           │           │
+┌─────▼─────┐     │     ┌─────▼─────┐
+│  public   │ ◀───┘     │  Silver   │ (Iceberg - 1Bn+ Rows)
+│  (raw)    │           │ (Lakehouse)│
+└─────┬─────┘           └───────────┘
+      │                      
+┌─────▼─────┐          
+│    dbt    │ (The Brain)
+└─────┬─────┘          
+      │ (Materialize)
+      ▼                
+┌────────────┐         
+│ analytics  │ (Warehouse)        
+│   (Gold)   │ (Dest DB)
+└────────────┘         
+  PostgreSQL (Destination)
 ```
+
+### The Triple-Track Strategy
+
+1.  **Track 1: Operational Mirror (Hot):** Captured in real-time by **Debezium** and **Kafka**. This provides a sub-second mirror of the source in the `public` schema for live dashboards and operational lookups.
+2.  **Track 2: Analytical Warehouse (Warehouse):** Managed by **Airflow** and **dbt**. Snapshots are extracted daily and transformed into the `analytics` schema (Gold layer). This provides the "Cleaned Truth" for financial and business reporting.
+3.  **Track 3: Big Data Lakehouse (Scale):** Managed by **Airflow** and **Spark**. Raw files are processed into **Apache Iceberg** tables (Silver layer) in MinIO. This track is designed to handle billions of rows that would be too expensive to store in the relational warehouse.
 
 ## Technology Stack
 
@@ -97,17 +120,16 @@ make register-connector
 
 ### Airflow DAGs
 
-1. **`ingest_source_to_bronze`** *(Daily or Hourly Batch)*
-   - Batch extraction of PostgreSQL source using **High-Water Mark CDC** (`MAX(updated_at)` logic).
-   - Converts to Parquet and uploads delta to MinIO.
-   - Replicates delta to Destination PostgreSQL database via Upsert.
-   - Automatically branches out to trigger both the `dbt` and `Spark Iceberg` downstream tasks!
-2. **`consume_cdc_events`** *(Every 5 Minutes)*
-   - Micro-batch consumer for real-time streaming. 
-   - Reads serialized events from Kafka (Debezium source) and executes Upserts/Deletes instantly on the target schema.
-3. **`spark_transform_silver`** *(Triggered Automatically)*
-   - Submits clustered PySpark applications for heavy compute processing (Bronze -> Silver translation) over MinIO.
-   - Merges delta Parquet streams into massive-scale **Apache Iceberg** tables. Includes Z-Ordering compaction tasks.
+### Airflow DAGs
+
+1. **`ingest_source_to_bronze`** *(The Ingestion Engine)*
+   - Parallel flow: Simultaneously extracts data to **MinIO Bronze** (for the Lakehouse) and **Postgres public** (for the Warehouse).
+   - This ensures both tracks start with the exact same raw snapshot.
+2. **`spark_transform_silver`** *(The Lakehouse Engine)*
+   - High-scale Spark jobs that process billions of rows from Bronze into **Apache Iceberg** tables.
+   - Includes maintenance tasks like Z-Ordering and compaction for extreme performance.
+3. **`dbt_transformations`** *(The Warehouse Engine)*
+   - dbt models that take the raw mirrored data and apply business logic to create the **Gold** layer in the `analytics` schema.
 
 ### dbt Modeling
 
