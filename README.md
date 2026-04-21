@@ -4,36 +4,36 @@ A comprehensive ETL stack demonstrating the integration of open-source data engi
 
 ## Architecture
 
-The system utilizes a **Unified "Warehouse + Lakehouse" Architecture**. It splits data into two parallel high-speed tracks: a **Relational Data Warehouse** for operational speed and an **Iceberg Lakehouse** for massive historical scale (billions of rows).
+The system utilizes a **Definitive "Three-Track" Architecture**. This design separates highspeed operational mirrors, business-critical analytics, and massive historical archives into independent, parallel tracks.
 
 ```text
-       ┌──────────────┐
-       │  PostgreSQL  │  (Source Transactional Database)
-       │   (source)   │
-       └──────┬───────┘
-              │
-      ┌───────┴──────────────┐
-      │                      │
-      ▼                      ▼
- TRACK 1: WAREHOUSE     TRACK 2: LAKEHOUSE
- (Postgres Mirror)      (MinIO Iceberg)
-      │                      │
-┌─────▼─────┐          ┌─────▼─────┐
-│  Debezium │          │  Airflow  │ (The Courier)
-└─────┬─────┘          └─────┬─────┘
-      │                      │
-┌─────▼─────┐          ┌─────▼─────┐
-│   Kafka   │          │  MinIO    │ (Bronze / Raw)
-└─────┬─────┘          └─────┬─────┘
-      │                      │
-┌─────▼─────┐          ┌─────▼─────┐
-│ JDBC Sink │          │  Spark    │ (The Chef)
-└─────┬─────┘          └─────┬─────┘
-      │                      │
-┌─────▼─────┐          ┌─────▼─────┐
-│  public   │          │  Silver   │ (Iceberg - Billions of Rows)
-│ (Mirror)  │          │ (Lakehouse)│
-└─────┬─────┘          └───────────┘
+           ┌──────────────┐
+           │  PostgreSQL  │  (Source Transactional Database)
+           │   (source)   │
+           └──────┬───────┘
+                  │
+      ┌───────────┼───────────┐
+      ▼           ▼           ▼
+  TRACK 1:      TRACK 2:    TRACK 3:
+ OPERATIONAL   ANALYTICAL   BIG DATA
+  (Mirror)    (Warehouse)  (Lakehouse)
+      │           │           │
+┌─────▼─────┐     │     ┌─────▼─────┐
+│ Debezium  │     │     │  Airflow  │ (The Courier)
+└─────┬─────┘     │     └─────┬─────┘
+      │           │           │
+┌─────▼─────┐     │     ┌─────▼─────┐
+│   Kafka   │     │     │  MinIO    │ (Bronze / Raw)
+└─────┬─────┘     │     └─────┬─────┘
+      │      ┌────▼────┐      │
+┌─────▼─────┐│ Airflow │┌─────▼─────┐
+│ JDBC Sink │└────┬────┘│  Spark    │ (The Chef)
+└─────┬─────┘     │     └─────┬─────┘
+      │           │           │
+┌─────▼─────┐     │     ┌─────▼─────┐
+│  public   │ ◀───┘     │  Silver   │ (Iceberg - 1Bn+ Rows)
+│  (raw)    │           │ (Lakehouse)│
+└─────┬─────┘           └───────────┘
       │                      
 ┌─────▼─────┐          
 │    dbt    │ (The Brain)
@@ -46,9 +46,11 @@ The system utilizes a **Unified "Warehouse + Lakehouse" Architecture**. It split
   PostgreSQL (Destination)
 ```
 
-### The "Dual-Engine" Design
-1.  **The Warehouse Path (Hot):** Designed for Raghu's dashboards. Data is mirrored via **Kafka** and **Airflow** into the `public` schema. **dbt** then calculates the high-value **Gold** layer (`analytics` schema) for instant SQL reporting.
-2.  **The Lakehouse Path (Cold):** Designed for extreme scalability (1bn+ rows). **Spark** transforms the raw files into **Apache Iceberg** tables in MinIO. This acts as your historical "Big Data" archive that would be too expensive or slow to store in a standard database.
+### The Triple-Track Strategy
+
+1.  **Track 1: Operational Mirror (Hot):** Captured in real-time by **Debezium** and **Kafka**. This provides a sub-second mirror of the source in the `public` schema for live dashboards and operational lookups.
+2.  **Track 2: Analytical Warehouse (Warehouse):** Managed by **Airflow** and **dbt**. Snapshots are extracted daily and transformed into the `analytics` schema (Gold layer). This provides the "Cleaned Truth" for financial and business reporting.
+3.  **Track 3: Big Data Lakehouse (Scale):** Managed by **Airflow** and **Spark**. Raw files are processed into **Apache Iceberg** tables (Silver layer) in MinIO. This track is designed to handle billions of rows that would be too expensive to store in the relational warehouse.
 
 ## Technology Stack
 
@@ -117,17 +119,16 @@ make register-connector
 
 ### Airflow DAGs
 
-1. **`ingest_source_to_bronze`** *(The Courier)*
-   - Performs "High-Water Mark" extraction from the source.
-   - Saves raw Parquet files to **MinIO Bronze**.
-   - **Safety Feature:** Also performs an redundant Upsert to the `public` schema to ensure the Kafka mirror is 100% complete.
-   - Automatically triggers the downstream Spark pipeline.
-2. **`spark_transform_silver`** *(The Chef)*
-   - Spark reads the raw Bronze files and "cooks" them into **Apache Iceberg** tables (Silver layer).
-   - Handles schema enforcement, massive-scale deduplication, and timestamp casting.
-3. **`dbt_transformations`** *(The Brain)*
-   - Triggered after Spark ingestion. 
-   - Reads from Silver Iceberg tables and applies business logic to create the **Gold** layer in the `analytics` schema.
+### Airflow DAGs
+
+1. **`ingest_source_to_bronze`** *(The Ingestion Engine)*
+   - Parallel flow: Simultaneously extracts data to **MinIO Bronze** (for the Lakehouse) and **Postgres public** (for the Warehouse).
+   - This ensures both tracks start with the exact same raw snapshot.
+2. **`spark_transform_silver`** *(The Lakehouse Engine)*
+   - High-scale Spark jobs that process billions of rows from Bronze into **Apache Iceberg** tables.
+   - Includes maintenance tasks like Z-Ordering and compaction for extreme performance.
+3. **`dbt_transformations`** *(The Warehouse Engine)*
+   - dbt models that take the raw mirrored data and apply business logic to create the **Gold** layer in the `analytics` schema.
 
 ### dbt Modeling
 
