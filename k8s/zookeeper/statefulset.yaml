@@ -28,6 +28,12 @@ spec:
           value: "1"
         - name: ZOOKEEPER_4LW_COMMANDS_WHITELIST
           value: "ruok"
+        - name: ZOO_4LW_COMMANDS_WHITELIST
+          value: "ruok"
+        - name: KAFKA_OPTS
+          value: "-Dzookeeper.4lw.commands.whitelist=ruok"
+        - name: ZOOKEEPER_ADMIN_SERVER_ENABLE
+          value: "false"
         resources:
           requests:
             memory: "256Mi"
@@ -40,7 +46,7 @@ spec:
           mountPath: /var/lib/zookeeper
         readinessProbe:
           exec:
-            command: ["bash", "-c", "echo ruok | nc 127.0.0.1 2181 | grep imok"]
+            command: ["/bin/bash", "-c", "[[ \"$(echo ruok | (exec 3<>/dev/tcp/127.0.0.1/2181; cat >&3; cat <&3; exec 3<&-))\" == \"imok\" ]]"]
           initialDelaySeconds: 30
           periodSeconds: 10
           timeoutSeconds: 5
