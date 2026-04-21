@@ -4,47 +4,51 @@ A comprehensive ETL stack demonstrating the integration of open-source data engi
 
 ## Architecture
 
-The system utilizes a **Dual-Engine / Hybrid CDC Architecture**, splitting data into two parallel tracks to satisfy both low-latency operational needs and high-scale analytical auditing.
+The system utilizes a **Unified "Warehouse + Lakehouse" Architecture**. It splits data into two parallel high-speed tracks: a **Relational Data Warehouse** for operational speed and an **Iceberg Lakehouse** for massive historical scale (billions of rows).
 
 ```text
        ┌──────────────┐
-       │  PostgreSQL  │
+       │  PostgreSQL  │  (Source Transactional Database)
        │   (source)   │
        └──────┬───────┘
               │
-      ┌───────┴───────┐
-      │               │
-      ▼               ▼
- TRACK 1: REAL-TIME  TRACK 2: BATCH (Data Lakehouse)
- (Operational Mirror) (Analytics & Time-Travel)
-      │               │
-┌─────▼─────┐   ┌─────▼─────┐
-│ Debezium  │   │  Airflow  │
-└─────┬─────┘   └─────┬─────┘
-      │               │
-┌─────▼─────┐   ┌─────▼─────┐
-│   Kafka   │   │ MinIO S3  │
-└─────┬─────┘   │ (Bronze)  │
-      │               │
-┌─────▼─────┐   ┌─────▼─────┐
-│ JDBC Sink │   │  Spark    │
-└─────┬─────┘   │ (Silver)  │
-      │               │
-      │         ┌─────▼─────┐
-      │         │    dbt    │
-      │         │   (Gold)  │
-      │         └─────┬─────┘
-      ▼               ▼
-┌────────────┬─────────────┐
-│   public   │  analytics  │
-│  (Mirror)  │ (Audited)   │
-└────────────┴─────────────┘
+      ┌───────┴──────────────┐
+      │                      │
+      ▼                      ▼
+ TRACK 1: WAREHOUSE     TRACK 2: LAKEHOUSE
+ (Postgres Mirror)      (MinIO Iceberg)
+      │                      │
+┌─────▼─────┐          ┌─────▼─────┐
+│  Debezium │          │  Airflow  │ (The Courier)
+└─────┬─────┘          └─────┬─────┘
+      │                      │
+┌─────▼─────┐          ┌─────▼─────┐
+│   Kafka   │          │  MinIO    │ (Bronze / Raw)
+└─────┬─────┘          └─────┬─────┘
+      │                      │
+┌─────▼─────┐          ┌─────▼─────┐
+│ JDBC Sink │          │  Spark    │ (The Chef)
+└─────┬─────┘          └─────┬─────┘
+      │                      │
+┌─────▼─────┐          ┌─────▼─────┐
+│  public   │          │  Silver   │ (Iceberg - Billions of Rows)
+│ (Mirror)  │          │ (Lakehouse)│
+└─────┬─────┘          └───────────┘
+      │                      
+┌─────▼─────┐          
+│    dbt    │ (The Brain)
+└─────┬─────┘          
+      ▼                
+┌────────────┐         
+│ analytics  │         
+│   (Gold)   │         
+└────────────┘         
   PostgreSQL (Destination)
 ```
 
-### The Two-Track Design
-1.  **The Real-Time Path (Hot):** Changes are captured via Debezium and streamed through Kafka directly into the `public` schema. This is an identical raw mirror used for live operational dashboards.
-2.  **The Analytical Path (Cold):** Data is extracted daily into MinIO. Spark transforms raw files into **Apache Iceberg** tables (Silver layer). dbt then processes these curated tables into high-value business metrics in the `analytics` schema (Gold layer).
+### The "Dual-Engine" Design
+1.  **The Warehouse Path (Hot):** Designed for Raghu's dashboards. Data is mirrored via **Kafka** and **Airflow** into the `public` schema. **dbt** then calculates the high-value **Gold** layer (`analytics` schema) for instant SQL reporting.
+2.  **The Lakehouse Path (Cold):** Designed for extreme scalability (1bn+ rows). **Spark** transforms the raw files into **Apache Iceberg** tables in MinIO. This acts as your historical "Big Data" archive that would be too expensive or slow to store in a standard database.
 
 ## Technology Stack
 
