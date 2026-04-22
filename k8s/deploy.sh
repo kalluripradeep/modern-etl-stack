@@ -80,7 +80,7 @@ ok "MinIO is ready"
 
 # Create bronze and silver buckets
 info "Creating MinIO buckets (bronze, silver)..."
-MINIO_POD=$(kubectl get pod -n $NAMESPACE -l app=minio -o jsonpath='{.items[0].metadata.name}')
+MINIO_POD="minio-0"
 kubectl exec -n $NAMESPACE "$MINIO_POD" -- sh -c "
   mc alias set local http://localhost:9000 minioadmin minioadmin123 &&
   mc mb --ignore-existing local/bronze &&

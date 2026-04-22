@@ -13,6 +13,7 @@ spec:
   - name: ui
     port: 8080
     targetPort: 8080
+  clusterIP: None   # headless — required for StatefulSet pod DNS
 ---
 apiVersion: v1
 kind: Service

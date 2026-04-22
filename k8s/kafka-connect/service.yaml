@@ -9,3 +9,4 @@ spec:
   ports:
   - port: 8083
     targetPort: 8083
+  clusterIP: None   # headless — required for StatefulSet pod DNS

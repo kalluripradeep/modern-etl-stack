@@ -1,9 +1,10 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: kafka-connect
   namespace: etl
 spec:
+  serviceName: kafka-connect
   replicas: 1
   selector:
     matchLabels:
