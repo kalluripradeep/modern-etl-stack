@@ -110,8 +110,8 @@ kubectl rollout status deployment/kafka-connect -n $NAMESPACE --timeout=180s
 ok "Kafka Connect is ready"
 
 info "Registering Debezium CDC connector..."
-KAFKA_CONNECT_URL="http://kafka-connect.${NAMESPACE}.svc.cluster.local:8083"
-export KAFKA_CONNECT_URL SOURCE_DB_HOST="postgres-source.${NAMESPACE}.svc.cluster.local"
+KAFKA_CONNECT_URL="http://kafka-connect-0.kafka-connect.${NAMESPACE}.svc.cluster.local:8083"
+export KAFKA_CONNECT_URL SOURCE_DB_HOST="postgres-source-0.postgres-source.${NAMESPACE}.svc.cluster.local"
 bash "$REPO_ROOT/scripts/register_debezium_connector.sh" \
   || warn "Could not register connector automatically — run register_debezium_connector.sh manually"
 ok "Debezium connector registered"

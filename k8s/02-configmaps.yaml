@@ -29,14 +29,14 @@ metadata:
   name: etl-env
   namespace: etl
 data:
-  SOURCE_DB_HOST: "postgres-source.etl.svc.cluster.local"
+  SOURCE_DB_HOST: "postgres-source-0.postgres-source.etl.svc.cluster.local"
   SOURCE_DB_PORT: "5432"
-  DEST_DB_HOST: "postgres-dest.etl.svc.cluster.local"
+  DEST_DB_HOST: "postgres-dest-0.postgres-dest.etl.svc.cluster.local"
   DEST_DB_PORT: "5432"
-  MINIO_ENDPOINT: "http://minio.etl.svc.cluster.local:9000"
-  KAFKA_BOOTSTRAP: "kafka.etl.svc.cluster.local:9092"
-  SPARK_MASTER_URL: "spark://spark-master.etl.svc.cluster.local:7077"
-  KAFKA_CONNECT_URL: "http://kafka-connect.etl.svc.cluster.local:8083"
+  MINIO_ENDPOINT: "http://minio-0.minio.etl.svc.cluster.local:9000"
+  KAFKA_BOOTSTRAP: "kafka-0.kafka.etl.svc.cluster.local:9092"
+  SPARK_MASTER_URL: "spark://spark-master-0.spark-master.etl.svc.cluster.local:7077"
+  KAFKA_CONNECT_URL: "http://kafka-connect-0.kafka-connect.etl.svc.cluster.local:8083"
   BRONZE_BUCKET: "bronze"
   SILVER_BUCKET: "silver"
   # Scale these up for large datasets (50GB+)
