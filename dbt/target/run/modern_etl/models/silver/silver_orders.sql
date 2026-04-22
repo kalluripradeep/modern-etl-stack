@@ -1,4 +1,5 @@
 
+      
   
     
 
@@ -30,6 +31,8 @@ WITH cleaned_orders AS (
             ELSE 'valid'
         END as quality_flag
     FROM "destdb"."analytics"."bronze_orders"
+    
+    
 )
 
 SELECT 
@@ -45,4 +48,5 @@ WHERE quality_flag = 'valid'  -- Only keep valid records
     AND order_id IS NOT NULL   -- No null IDs
     AND total_amount > 0       -- Positive amounts only
   );
+  
   

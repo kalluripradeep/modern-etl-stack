@@ -20,6 +20,11 @@ WITH cleaned_orders AS (
             ELSE 'valid'
         END as quality_flag
     FROM "destdb"."analytics"."bronze_orders"
+    
+    
+    -- CDC filtering: only fetch records modernized since the last run
+    WHERE updated_at > (SELECT MAX(updated_at) FROM "destdb"."analytics"."silver_orders")
+    
 )
 
 SELECT 
