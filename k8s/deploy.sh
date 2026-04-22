@@ -106,7 +106,7 @@ echo ""
 info "Deploying Kafka Connect with Debezium..."
 kubectl apply -f "$REPO_ROOT/k8s/kafka-connect/"
 info "Waiting for Kafka Connect to be ready (this takes ~60s)..."
-kubectl rollout status deployment/kafka-connect -n $NAMESPACE --timeout=180s
+kubectl rollout status statefulset/kafka-connect -n $NAMESPACE --timeout=180s
 ok "Kafka Connect is ready"
 
 info "Registering Debezium CDC connector..."
@@ -120,7 +120,7 @@ ok "Debezium connector registered"
 echo ""
 info "Deploying Spark master and workers..."
 kubectl apply -f "$REPO_ROOT/k8s/spark/"
-kubectl rollout status deployment/spark-master -n $NAMESPACE --timeout=120s
+kubectl rollout status statefulset/spark-master -n $NAMESPACE --timeout=120s
 kubectl rollout status deployment/spark-worker -n $NAMESPACE --timeout=120s
 ok "Spark cluster is ready"
 
