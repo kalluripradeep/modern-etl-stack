@@ -157,7 +157,7 @@ if [[ "$SEED" =~ ^[Yy]$ ]]; then
     --image=python:3.11-slim \
     --restart=Never \
     --namespace=$NAMESPACE \
-    --env="SOURCE_DB_HOST=postgres-source.${NAMESPACE}.svc.cluster.local" \
+    --env="SOURCE_DB_HOST=postgres-source-0.postgres-source.${NAMESPACE}.svc.cluster.local" \
     --env="SOURCE_DB_USER=sourceuser" \
     --env="SOURCE_DB_PASSWORD=sourcepass" \
     --env="SOURCE_DB_NAME=sourcedb" \
