@@ -1,9 +1,10 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: kafka-connect
   namespace: etl
 spec:
+  serviceName: kafka-connect
   replicas: 1
   selector:
     matchLabels:
@@ -16,9 +17,9 @@ spec:
       # Wait for Kafka to be ready before starting
       initContainers:
       - name: wait-for-kafka
-        image: busybox
+        image: bash:5.2
         command:
-        - sh
+        - bash
         - -c
         - |
           until timeout 1 bash -c 'cat < /dev/null > /dev/tcp/kafka-0.kafka.etl.svc.cluster.local/9092'; do

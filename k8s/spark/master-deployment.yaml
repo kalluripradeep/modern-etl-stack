@@ -1,9 +1,10 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: spark-master
   namespace: etl
 spec:
+  serviceName: spark-master
   replicas: 1
   selector:
     matchLabels:

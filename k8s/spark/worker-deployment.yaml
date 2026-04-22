@@ -19,8 +19,6 @@ spec:
         env:
         - name: SPARK_MODE
           value: worker
-        - name: SPARK_MASTER_URL
-          value: spark://spark-master.etl.svc.cluster.local:7077
         - name: SPARK_WORKER_MEMORY
           value: "2G"       # increase to 8G for 50GB datasets
         - name: SPARK_WORKER_CORES
