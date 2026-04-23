@@ -109,11 +109,13 @@ info "Waiting for Kafka Connect to be ready (this takes ~60s)..."
 kubectl rollout status statefulset/kafka-connect -n $NAMESPACE --timeout=180s
 ok "Kafka Connect is ready"
 
-info "Registering Debezium CDC connector..."
-KAFKA_CONNECT_URL="http://kafka-connect-0.kafka-connect.${NAMESPACE}.svc.cluster.local:8083"
-export KAFKA_CONNECT_URL SOURCE_DB_HOST="postgres-source-0.postgres-source.${NAMESPACE}.svc.cluster.local"
-bash "$REPO_ROOT/scripts/register_debezium_connector.sh" \
-  || warn "Could not register connector automatically — run register_debezium_connector.sh manually"
+info "Registering Debezium CDC connector (via in-cluster exec)..."
+kubectl exec -i kafka-connect-0 -n $NAMESPACE -- bash -s <<EOF
+export KAFKA_CONNECT_URL=http://localhost:8083
+export SOURCE_DB_HOST="postgres-source-0.postgres-source.${NAMESPACE}.svc.cluster.local"
+export DEST_DB_HOST="postgres-dest-0.postgres-dest.${NAMESPACE}.svc.cluster.local"
+$(cat "$REPO_ROOT/scripts/register_debezium_connector.sh")
+EOF || warn "Could not register connector automatically — check Kafka Connect logs"
 ok "Debezium connector registered"
 
 # ─── Step 7: Spark ────────────────────────────────────────────────────────────
