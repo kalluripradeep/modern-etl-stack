@@ -172,6 +172,13 @@ if [[ "$SEED" =~ ^[Yy]$ ]]; then
   ok "Sample data seeded"
 fi
 
+# ─── Step 11: AI Data Assistant Dashboard ──────────────────────────────────────
+echo ""
+info "Deploying AI Data Assistant Dashboard..."
+kubectl apply -f "$REPO_ROOT/k8s/ui/"
+kubectl rollout status deployment/data-dashboard -n $NAMESPACE --timeout=120s
+ok "AI Dashboard is ready"
+
 # ─── Done ─────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}============================================================${NC}"
@@ -184,6 +191,7 @@ echo "  Service            URL"
 echo "  ─────────────────────────────────────────────────────"
 echo "  Airflow UI         http://${NODE_IP}:30880  (admin / admin123)"
 echo "  Grafana            http://${NODE_IP}:30300  (admin / admin123)"
+echo "  AI Dashboard       http://${NODE_IP}:30333  (Enterprise AI Assistant)"
 echo "  MinIO Console      http://${NODE_IP}:30901  (minioadmin / minioadmin123)"
 echo "  Spark UI           http://${NODE_IP}:30808"
 echo ""

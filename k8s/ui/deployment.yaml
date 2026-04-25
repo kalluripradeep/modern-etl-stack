@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-dashboard
+  namespace: etl
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: data-dashboard
+  template:
+    metadata:
+      labels:
+        app: data-dashboard
+    spec:
+      containers:
+      - name: dashboard
+        image: data-dashboard:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: NEXT_PUBLIC_API_URL
+          value: "http://data-dashboard.etl.svc.cluster.local:3000"
+        - name: DBT_MCP_URL
+          value: "http://dbt-mcp.etl.svc.cluster.local:8000"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-dashboard
+  namespace: etl
+spec:
+  type: NodePort
+  selector:
+    app: data-dashboard
+  ports:
+  - port: 3000
+    targetPort: 3000
+    nodePort: 30333   # Dashboard accessible at http://NODE_IP:30333
