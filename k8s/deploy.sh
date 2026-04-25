@@ -154,10 +154,12 @@ ok "Airflow is ready"
 echo ""
 read -rp "Seed sample orders data into postgres-source? (y/N): " SEED
 if [[ "$SEED" =~ ^[Yy]$ ]]; then
-  info "Running data generator..."
-  kubectl run seed-data \
+  info "Running data generator (this may take a minute)..."
+  # Pipe the local script into a temporary pod
+  cat "$REPO_ROOT/sample-data/generate_ecommerce.py" | kubectl run seed-data \
     --image=python:3.11-slim \
     --restart=Never \
+    -i --rm \
     --namespace=$NAMESPACE \
     --env="SOURCE_DB_HOST=postgres-source-0.postgres-source.${NAMESPACE}.svc.cluster.local" \
     --env="SOURCE_DB_USER=sourceuser" \
@@ -165,8 +167,8 @@ if [[ "$SEED" =~ ^[Yy]$ ]]; then
     --env="SOURCE_DB_NAME=sourcedb" \
     --command -- sh -c "
       pip install psycopg2-binary faker pandas pyarrow -q &&
-      python /scripts/generate_ecommerce.py
-    " || warn "Seed job failed — run generate_ecommerce.py manually"
+      python3 -
+    " || warn "Seed job failed — ensure you have internet access in the cluster to install python deps"
   ok "Sample data seeded"
 fi
 
