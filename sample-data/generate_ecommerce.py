@@ -133,12 +133,12 @@ def generate_products(conn, count=50):
     conn.commit()
     print(f"✅ Generated {count} products")
 
-def generate_orders(conn, count=1000):
+def generate_orders(conn, count=10000):
     """Generate sample orders."""
     print(f"📦 Generating {count} orders...")
 
     statuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
-    start_date = datetime.now() - timedelta(days=90)
+    start_date = datetime.now() - timedelta(days=365)
 
     with conn.cursor() as cur:
         # Get customer IDs and a price lookup dict for all products in one query each
@@ -230,7 +230,7 @@ def main():
         conn = psycopg2.connect(**DB_CONFIG)
         print("✅ Connected!\n")
 
-        create_tables(conn)
+        # create_tables(conn)
         print()
 
         generate_customers(conn, count=100)
@@ -239,7 +239,7 @@ def main():
         generate_products(conn, count=50)
         print()
 
-        generate_orders(conn, count=1000)
+        generate_orders(conn, count=10000)
 
         print_stats(conn)
 
