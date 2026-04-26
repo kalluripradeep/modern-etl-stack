@@ -97,7 +97,7 @@ kafkaConnect:
 
 # ─── Spark ────────────────────────────────────────────────────────────────────
 spark:
-  image: bitnami/spark:3.5
+  image: bitnami/spark:3.5.1
   workerReplicas: 2
   workerMemory: 2G
   workerCores: "2"

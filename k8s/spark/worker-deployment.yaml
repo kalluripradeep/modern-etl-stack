@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: spark-worker
-        image: bitnami/spark:3.5
+        image: bitnami/spark:3.5.1
         env:
         - name: SPARK_MODE
           value: worker
