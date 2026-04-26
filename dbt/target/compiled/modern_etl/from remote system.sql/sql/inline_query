@@ -1,0 +1,1 @@
+SELECT DATE(order_date) AS order_day, COUNT(*) AS order_count FROM orders GROUP BY DATE(order_date) ORDER BY order_day ASC
