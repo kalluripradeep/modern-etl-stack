@@ -66,16 +66,16 @@ kubectl apply -f "$REPO_ROOT/k8s/postgres-source/"
 kubectl apply -f "$REPO_ROOT/k8s/postgres-dest/"
 
 info "Waiting for postgres-source to be ready..."
-kubectl rollout status statefulset/postgres-source -n $NAMESPACE --timeout=120s
+kubectl rollout status statefulset/postgres-source -n $NAMESPACE --timeout=300s
 info "Waiting for postgres-dest to be ready..."
-kubectl rollout status statefulset/postgres-dest -n $NAMESPACE --timeout=120s
+kubectl rollout status statefulset/postgres-dest -n $NAMESPACE --timeout=300s
 ok "PostgreSQL pods are ready"
 
 # ─── Step 4: MinIO ────────────────────────────────────────────────────────────
 echo ""
 info "Deploying MinIO..."
 kubectl apply -f "$REPO_ROOT/k8s/minio/"
-kubectl rollout status statefulset/minio -n $NAMESPACE --timeout=120s
+kubectl rollout status statefulset/minio -n $NAMESPACE --timeout=300s
 ok "MinIO is ready"
 
 # Create bronze and silver buckets
@@ -92,13 +92,13 @@ ok "MinIO buckets ready"
 echo ""
 info "Deploying Zookeeper..."
 kubectl apply -f "$REPO_ROOT/k8s/zookeeper/"
-kubectl rollout status statefulset/zookeeper -n $NAMESPACE --timeout=120s
+kubectl rollout status statefulset/zookeeper -n $NAMESPACE --timeout=300s
 ok "Zookeeper is ready"
 
 info "Deploying Kafka..."
 kubectl apply -f "$REPO_ROOT/k8s/kafka/"
 info "Waiting for Kafka to be ready (this takes ~60s)..."
-kubectl rollout status statefulset/kafka -n $NAMESPACE --timeout=180s
+kubectl rollout status statefulset/kafka -n $NAMESPACE --timeout=300s
 ok "Kafka is ready"
 
 # ─── Step 6: Kafka Connect (Debezium) ─────────────────────────────────────────
@@ -106,7 +106,7 @@ echo ""
 info "Deploying Kafka Connect with Debezium..."
 kubectl apply -f "$REPO_ROOT/k8s/kafka-connect/"
 info "Waiting for Kafka Connect to be ready (this takes ~60s)..."
-kubectl rollout status statefulset/kafka-connect -n $NAMESPACE --timeout=180s
+kubectl rollout status statefulset/kafka-connect -n $NAMESPACE --timeout=300s
 ok "Kafka Connect is ready"
 
 info "Registering Debezium CDC connector (via in-cluster exec)..."
@@ -122,16 +122,16 @@ ok "Debezium connector registered"
 echo ""
 info "Deploying Spark master and workers..."
 kubectl apply -f "$REPO_ROOT/k8s/spark/"
-kubectl rollout status statefulset/spark-master -n $NAMESPACE --timeout=120s
-kubectl rollout status deployment/spark-worker -n $NAMESPACE --timeout=120s
+kubectl rollout status statefulset/spark-master -n $NAMESPACE --timeout=300s
+kubectl rollout status deployment/spark-worker -n $NAMESPACE --timeout=300s
 ok "Spark cluster is ready"
 
 # ─── Step 8: Monitoring ───────────────────────────────────────────────────────
 echo ""
 info "Deploying Prometheus and Grafana..."
 kubectl apply -f "$REPO_ROOT/k8s/monitoring/"
-kubectl rollout status deployment/prometheus -n $NAMESPACE --timeout=120s
-kubectl rollout status deployment/grafana    -n $NAMESPACE --timeout=120s
+kubectl rollout status deployment/prometheus -n $NAMESPACE --timeout=300s
+kubectl rollout status deployment/grafana    -n $NAMESPACE --timeout=300s
 ok "Monitoring stack is ready"
 
 # ─── Step 9: Airflow ──────────────────────────────────────────────────────────
@@ -176,7 +176,7 @@ fi
 echo ""
 info "Deploying AI Data Assistant Dashboard..."
 kubectl apply -f "$REPO_ROOT/k8s/ui/"
-kubectl rollout status deployment/data-dashboard -n $NAMESPACE --timeout=120s
+kubectl rollout status deployment/data-dashboard -n $NAMESPACE --timeout=300s
 ok "AI Dashboard is ready"
 
 # ─── Done ─────────────────────────────────────────────────────────────────────
