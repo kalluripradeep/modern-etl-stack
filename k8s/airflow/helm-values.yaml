@@ -1,26 +1,18 @@
 # Airflow Helm Chart values for Kubernetes deployment
 # Install: helm install airflow apache-airflow/airflow -n etl -f k8s/airflow/helm-values.yaml
-#
-# BEFORE deploying:
-# 1. Build and push the custom Airflow image:
-#    docker build -t YOUR_REGISTRY/airflow-etl:latest -f docker/airflow/Dockerfile .
-#    docker push YOUR_REGISTRY/airflow-etl:latest
-# 2. Replace YOUR_REGISTRY below with your actual registry
 
 executor: KubernetesExecutor
 
 images:
   airflow:
-    repository: YOUR_REGISTRY/airflow-etl   # <-- replace with your registry
+    repository: YOUR_REGISTRY/airflow-etl
     tag: latest
     pullPolicy: Always
 
-# Service account for KubernetesExecutor to launch pods
 serviceAccount:
   create: true
   name: airflow
 
-# Pull DAGs from git — no need to rebuild image for every DAG change
 dags:
   gitSync:
     enabled: true
@@ -29,108 +21,107 @@ dags:
     subPath: airflow/dags
     period: 60s
 
-# All service endpoints and scale settings
-env:
-- name: SOURCE_DB_HOST
-  valueFrom:
-    configMapKeyRef:
-      name: etl-env
-      key: SOURCE_DB_HOST
-- name: SOURCE_DB_PORT
-  valueFrom:
-    configMapKeyRef:
-      name: etl-env
-      key: SOURCE_DB_PORT
-- name: DEST_DB_HOST
-  valueFrom:
-    configMapKeyRef:
-      name: etl-env
-      key: DEST_DB_HOST
-- name: DEST_DB_PORT
-  valueFrom:
-    configMapKeyRef:
-      name: etl-env
-      key: DEST_DB_PORT
-- name: MINIO_ENDPOINT
-  valueFrom:
-    configMapKeyRef:
-      name: etl-env
-      key: MINIO_ENDPOINT
-- name: KAFKA_BOOTSTRAP
-  valueFrom:
-    configMapKeyRef:
-      name: etl-env
-      key: KAFKA_BOOTSTRAP
-- name: SPARK_MASTER_URL
-  valueFrom:
-    configMapKeyRef:
-      name: etl-env
-      key: SPARK_MASTER_URL
-- name: KAFKA_CONNECT_URL
-  valueFrom:
-    configMapKeyRef:
-      name: etl-env
-      key: KAFKA_CONNECT_URL
-- name: BRONZE_BUCKET
-  valueFrom:
-    configMapKeyRef:
-      name: etl-env
-      key: BRONZE_BUCKET
-- name: SILVER_BUCKET
-  valueFrom:
-    configMapKeyRef:
-      name: etl-env
-      key: SILVER_BUCKET
-- name: ETL_CHUNK_SIZE
-  valueFrom:
-    configMapKeyRef:
-      name: etl-env
-      key: ETL_CHUNK_SIZE
-- name: CDC_MAX_MESSAGES
-  valueFrom:
-    configMapKeyRef:
-      name: etl-env
-      key: CDC_MAX_MESSAGES
-- name: CDC_COMMIT_EVERY
-  valueFrom:
-    configMapKeyRef:
-      name: etl-env
-      key: CDC_COMMIT_EVERY
-- name: SPARK_EXECUTOR_MEMORY
-  valueFrom:
-    configMapKeyRef:
-      name: etl-env
-      key: SPARK_EXECUTOR_MEMORY
-- name: SPARK_EXECUTOR_CORES
-  valueFrom:
-    configMapKeyRef:
-      name: etl-env
-      key: SPARK_EXECUTOR_CORES
+# Use extraEnv for all environment variables that use valueFrom
+# This bypasses the strict schema validation of the default 'env' block
+extraEnv:
+  - name: SOURCE_DB_HOST
+    valueFrom:
+      configMapKeyRef:
+        name: etl-env
+        key: SOURCE_DB_HOST
+  - name: SOURCE_DB_PORT
+    valueFrom:
+      configMapKeyRef:
+        name: etl-env
+        key: SOURCE_DB_PORT
+  - name: DEST_DB_HOST
+    valueFrom:
+      configMapKeyRef:
+        name: etl-env
+        key: DEST_DB_HOST
+  - name: DEST_DB_PORT
+    valueFrom:
+      configMapKeyRef:
+        name: etl-env
+        key: DEST_DB_PORT
+  - name: MINIO_ENDPOINT
+    valueFrom:
+      configMapKeyRef:
+        name: etl-env
+        key: MINIO_ENDPOINT
+  - name: KAFKA_BOOTSTRAP
+    valueFrom:
+      configMapKeyRef:
+        name: etl-env
+        key: KAFKA_BOOTSTRAP
+  - name: SPARK_MASTER_URL
+    valueFrom:
+      configMapKeyRef:
+        name: etl-env
+        key: SPARK_MASTER_URL
+  - name: KAFKA_CONNECT_URL
+    valueFrom:
+      configMapKeyRef:
+        name: etl-env
+        key: KAFKA_CONNECT_URL
+  - name: BRONZE_BUCKET
+    valueFrom:
+      configMapKeyRef:
+        name: etl-env
+        key: BRONZE_BUCKET
+  - name: SILVER_BUCKET
+    valueFrom:
+      configMapKeyRef:
+        name: etl-env
+        key: SILVER_BUCKET
+  - name: ETL_CHUNK_SIZE
+    valueFrom:
+      configMapKeyRef:
+        name: etl-env
+        key: ETL_CHUNK_SIZE
+  - name: CDC_MAX_MESSAGES
+    valueFrom:
+      configMapKeyRef:
+        name: etl-env
+        key: CDC_MAX_MESSAGES
+  - name: CDC_COMMIT_EVERY
+    valueFrom:
+      configMapKeyRef:
+        name: etl-env
+        key: CDC_COMMIT_EVERY
+  - name: SPARK_EXECUTOR_MEMORY
+    valueFrom:
+      configMapKeyRef:
+        name: etl-env
+        key: SPARK_EXECUTOR_MEMORY
+  - name: SPARK_EXECUTOR_CORES
+    valueFrom:
+      configMapKeyRef:
+        name: etl-env
+        key: SPARK_EXECUTOR_CORES
+  - name: AIRFLOW_CONN_SPARK_DEFAULT
+    value: "spark://spark-master.etl.svc.cluster.local:7077"
 
 extraEnvFrom:
-- secretRef:
-    name: etl-secrets
+  - secretRef:
+      name: etl-secrets
 
-# Spark connection for SparkSubmitOperator
-extraEnv:
-- name: AIRFLOW_CONN_SPARK_DEFAULT
-  value: "spark://spark-master.etl.svc.cluster.local:7077"
+# S3A / MinIO configuration for logs and data access
+# These are used by the SparkSubmitOperator and S3Hook
+# We use the standard extraEnv for these to avoid schema conflicts
 
-# dbt path inside the custom Airflow image
 extraVolumeMounts:
-- name: dbt-project
-  mountPath: /opt/airflow/dbt
+  - name: dbt-project
+    mountPath: /opt/airflow/dbt
 
 extraVolumes:
-- name: dbt-project
-  configMap:
-    name: dbt-project   # created by deploy.sh from the dbt/ folder
+  - name: dbt-project
+    configMap:
+      name: dbt-project
 
-# Use built-in PostgreSQL for Airflow metadata
 postgresql:
   enabled: true
 
-# Redis not needed with KubernetesExecutor
 redis:
   enabled: false
 
@@ -157,7 +148,6 @@ webserver:
       - name: airflow-ui
         port: 8080
         targetPort: 8080
-        nodePort: 30880   # access Airflow UI at http://NODE_IP:30880
+        nodePort: 30880
 
-# Default admin user (change password in production)
 webserverSecretKey: "etl-secret-key-change-in-production"
