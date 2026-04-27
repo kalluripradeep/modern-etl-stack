@@ -21,9 +21,9 @@ dags:
     subPath: airflow/dags
     period: 60s
 
-# Use extraEnv for all environment variables that use valueFrom
-# This bypasses the strict schema validation of the default 'env' block
-extraEnv:
+# Use extraEnv as a multi-line string (using |) to satisfy strict schema validation
+# Some chart versions expect a string that they then parse as YAML internally.
+extraEnv: |
   - name: SOURCE_DB_HOST
     valueFrom:
       configMapKeyRef:
@@ -102,13 +102,9 @@ extraEnv:
   - name: AIRFLOW_CONN_SPARK_DEFAULT
     value: "spark://spark-master.etl.svc.cluster.local:7077"
 
-extraEnvFrom:
+extraEnvFrom: |
   - secretRef:
       name: etl-secrets
-
-# S3A / MinIO configuration for logs and data access
-# These are used by the SparkSubmitOperator and S3Hook
-# We use the standard extraEnv for these to avoid schema conflicts
 
 extraVolumeMounts:
   - name: dbt-project
