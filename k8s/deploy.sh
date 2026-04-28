@@ -46,24 +46,51 @@ else
   docker push "$AIRFLOW_IMAGE" || error "Push failed! Are you logged in? Run 'docker login' and try again."
   ok "Image pushed: $AIRFLOW_IMAGE"
 
-  # Patch the helm values with actual image
-  sed -i "s|YOUR_REGISTRY/airflow-etl|${REGISTRY}/airflow-etl|g" \
-    "$REPO_ROOT/k8s/airflow/helm-values.yaml"
+  # Patch the helm values with actual image in the temporary directory (created later)
+  # We'll defer this until TMP_K8S is created.
+  export REGISTRY_FOR_REPLACE="$REGISTRY"
 fi
+
+# ─── Step 1.5: Detect StorageClass ─────────────────────────────────────────────
+echo ""
+info "Detecting default StorageClass in your cluster..."
+DEFAULT_SC=$(kubectl get sc -o jsonpath='{.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}' 2>/dev/null || true)
+if [ -z "$DEFAULT_SC" ]; then
+  DEFAULT_SC="standard"
+  warn "No default StorageClass found. Defaulting to '$DEFAULT_SC'."
+else
+  ok "Found default StorageClass: $DEFAULT_SC"
+fi
+
+read -rp "Enter StorageClass to use [$DEFAULT_SC]: " STORAGE_CLASS
+STORAGE_CLASS=${STORAGE_CLASS:-$DEFAULT_SC}
+info "Using StorageClass: $STORAGE_CLASS"
+
+info "Preparing temporary manifests with chosen StorageClass..."
+TMP_K8S=$(mktemp -d)
+cp -r "$REPO_ROOT/k8s"/* "$TMP_K8S/"
+
+if [ -n "${REGISTRY_FOR_REPLACE:-}" ]; then
+  # Apply the registry change to the temporary file
+  sed -i "s|YOUR_REGISTRY/airflow-etl|${REGISTRY_FOR_REPLACE}/airflow-etl|g" "$TMP_K8S/airflow/helm-values.yaml" 2>/dev/null || perl -pi -e "s|YOUR_REGISTRY/airflow-etl|${REGISTRY_FOR_REPLACE}/airflow-etl|g" "$TMP_K8S/airflow/helm-values.yaml"
+fi
+
+# Replace any hardcoded storageClassName values with the chosen one
+find "$TMP_K8S" -type f -name "*.yaml" -exec perl -pi -e "s/storageClassName: .*/storageClassName: ${STORAGE_CLASS}/g" {} +
 
 # ─── Step 2: Namespace + Secrets + ConfigMaps ─────────────────────────────────
 echo ""
 info "Creating namespace, secrets, and configmaps..."
-kubectl apply -f "$REPO_ROOT/k8s/00-namespace.yaml"
-kubectl apply -f "$REPO_ROOT/k8s/01-secrets.yaml"
-kubectl apply -f "$REPO_ROOT/k8s/02-configmaps.yaml"
+kubectl apply -f "$TMP_K8S/00-namespace.yaml"
+kubectl apply -f "$TMP_K8S/01-secrets.yaml"
+kubectl apply -f "$TMP_K8S/02-configmaps.yaml"
 ok "Namespace, secrets, configmaps applied"
 
 # ─── Step 3: Databases ────────────────────────────────────────────────────────
 echo ""
 info "Deploying PostgreSQL source and destination..."
-kubectl apply -f "$REPO_ROOT/k8s/postgres-source/"
-kubectl apply -f "$REPO_ROOT/k8s/postgres-dest/"
+kubectl apply -f "$TMP_K8S/postgres-source/"
+kubectl apply -f "$TMP_K8S/postgres-dest/"
 
 info "Waiting for postgres-source to be ready..."
 kubectl rollout status statefulset/postgres-source -n $NAMESPACE --timeout=300s
@@ -74,7 +101,7 @@ ok "PostgreSQL pods are ready"
 # ─── Step 4: MinIO ────────────────────────────────────────────────────────────
 echo ""
 info "Deploying MinIO..."
-kubectl apply -f "$REPO_ROOT/k8s/minio/"
+kubectl apply -f "$TMP_K8S/minio/"
 kubectl rollout status statefulset/minio -n $NAMESPACE --timeout=300s
 ok "MinIO is ready"
 
@@ -91,12 +118,12 @@ ok "MinIO buckets ready"
 # ─── Step 5: Zookeeper + Kafka ────────────────────────────────────────────────
 echo ""
 info "Deploying Zookeeper..."
-kubectl apply -f "$REPO_ROOT/k8s/zookeeper/"
+kubectl apply -f "$TMP_K8S/zookeeper/"
 kubectl rollout status statefulset/zookeeper -n $NAMESPACE --timeout=300s
 ok "Zookeeper is ready"
 
 info "Deploying Kafka..."
-kubectl apply -f "$REPO_ROOT/k8s/kafka/"
+kubectl apply -f "$TMP_K8S/kafka/"
 info "Waiting for Kafka to be ready (this takes ~60s)..."
 kubectl rollout status statefulset/kafka -n $NAMESPACE --timeout=300s
 ok "Kafka is ready"
@@ -104,7 +131,7 @@ ok "Kafka is ready"
 # ─── Step 6: Kafka Connect (Debezium) ─────────────────────────────────────────
 echo ""
 info "Deploying Kafka Connect with Debezium..."
-kubectl apply -f "$REPO_ROOT/k8s/kafka-connect/"
+kubectl apply -f "$TMP_K8S/kafka-connect/"
 info "Waiting for Kafka Connect to be ready (this takes ~60s)..."
 kubectl rollout status statefulset/kafka-connect -n $NAMESPACE --timeout=300s
 ok "Kafka Connect is ready"
@@ -121,7 +148,7 @@ ok "Debezium connector registered"
 # ─── Step 7: Spark ────────────────────────────────────────────────────────────
 echo ""
 info "Deploying Spark master and workers..."
-kubectl apply -f "$REPO_ROOT/k8s/spark/"
+kubectl apply -f "$TMP_K8S/spark/"
 kubectl rollout status statefulset/spark-master -n $NAMESPACE --timeout=300s
 kubectl rollout status deployment/spark-worker -n $NAMESPACE --timeout=300s
 ok "Spark cluster is ready"
@@ -129,7 +156,7 @@ ok "Spark cluster is ready"
 # ─── Step 8: Monitoring ───────────────────────────────────────────────────────
 echo ""
 info "Deploying Prometheus and Grafana..."
-kubectl apply -f "$REPO_ROOT/k8s/monitoring/"
+kubectl apply -f "$TMP_K8S/monitoring/"
 kubectl rollout status deployment/prometheus -n $NAMESPACE --timeout=300s
 kubectl rollout status deployment/grafana    -n $NAMESPACE --timeout=300s
 ok "Monitoring stack is ready"
@@ -143,9 +170,11 @@ helm repo update
 info "Deploying Airflow via Helm (this takes 2-3 minutes)..."
 helm upgrade --install airflow apache-airflow/airflow \
   --namespace $NAMESPACE \
-  --values "$REPO_ROOT/k8s/airflow/helm-values.yaml" \
+  --values "$TMP_K8S/airflow/helm-values.yaml" \
   --set "images.airflow.repository=${AIRFLOW_IMAGE%:*}" \
   --set "images.airflow.tag=${AIRFLOW_IMAGE##*:}" \
+  --set "postgresql.primary.persistence.storageClass=${STORAGE_CLASS}" \
+  --set "logs.persistence.storageClassName=${STORAGE_CLASS}" \
   --timeout 10m \
   --wait
 ok "Airflow is ready"
@@ -175,7 +204,7 @@ fi
 # ─── Step 11: AI Data Assistant Dashboard ──────────────────────────────────────
 echo ""
 info "Deploying AI Data Assistant Dashboard..."
-kubectl apply -f "$REPO_ROOT/k8s/ui/"
+kubectl apply -f "$TMP_K8S/ui/"
 kubectl rollout status deployment/data-dashboard -n $NAMESPACE --timeout=300s
 ok "AI Dashboard is ready"
 
