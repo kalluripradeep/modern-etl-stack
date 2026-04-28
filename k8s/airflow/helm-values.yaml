@@ -117,6 +117,16 @@ extraVolumes:
 
 postgresql:
   enabled: true
+  primary:
+    persistence:
+      enabled: true
+      storageClass: "local-path"
+
+# Explicitly set the storage class for Airflow logs to avoid Pending PVCs
+logs:
+  persistence:
+    enabled: true
+    storageClassName: "local-path"
 
 redis:
   enabled: false
