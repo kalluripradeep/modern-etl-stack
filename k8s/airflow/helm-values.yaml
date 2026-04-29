@@ -121,10 +121,11 @@ postgresql:
     persistence:
       enabled: true
 
-# Set the storage class for Airflow logs dynamically via CLI
+# Disable log persistence for local deployments since local-path provisioners
+# typically do not support the ReadWriteMany (RWX) access mode required by Airflow.
 logs:
   persistence:
-    enabled: true
+    enabled: false
 
 redis:
   enabled: false
