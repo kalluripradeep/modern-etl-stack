@@ -3,6 +3,10 @@
 
 executor: KubernetesExecutor
 
+config:
+  core:
+    auth_manager: "airflow.auth.managers.fab.fab_auth_manager.FabAuthManager"
+
 images:
   airflow:
     repository: YOUR_REGISTRY/airflow-etl
