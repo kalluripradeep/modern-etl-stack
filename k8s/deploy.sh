@@ -171,6 +171,8 @@ info "Deploying Airflow via Helm (this takes 2-3 minutes)..."
 helm upgrade --install airflow apache-airflow/airflow \
   --namespace $NAMESPACE \
   --values "$TMP_K8S/airflow/helm-values.yaml" \
+  --set "defaultAirflowRepository=${AIRFLOW_IMAGE%:*}" \
+  --set "defaultAirflowTag=${AIRFLOW_IMAGE##*:}" \
   --set "images.airflow.repository=${AIRFLOW_IMAGE%:*}" \
   --set "images.airflow.tag=${AIRFLOW_IMAGE##*:}" \
   --set "postgresql.primary.persistence.storageClass=${STORAGE_CLASS}" \
