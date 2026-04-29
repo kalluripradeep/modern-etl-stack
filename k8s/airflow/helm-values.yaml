@@ -6,6 +6,8 @@ executor: KubernetesExecutor
 config:
   core:
     auth_manager: "airflow.auth.managers.fab.fab_auth_manager.FabAuthManager"
+  api:
+    auth_backends: "airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session"
 
 images:
   airflow:
