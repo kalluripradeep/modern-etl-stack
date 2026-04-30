@@ -176,6 +176,8 @@ helm upgrade --install airflow apache-airflow/airflow \
   --set "images.airflow.repository=${AIRFLOW_IMAGE%:*}" \
   --set "images.airflow.tag=${AIRFLOW_IMAGE##*:}" \
   --set "postgresql.primary.persistence.storageClass=${STORAGE_CLASS}" \
+  --set "migrateDatabaseJob.useHelmHooks=false" \
+  --set "createUserJob.useHelmHooks=false" \
   --timeout 10m \
   --wait
 ok "Airflow is ready"
