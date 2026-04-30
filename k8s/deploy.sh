@@ -35,9 +35,9 @@ warn "IMPORTANT: Ensure you have run 'docker login' for your registry first."
 read -rp "Enter your registry (e.g. docker.io/myuser): " REGISTRY
 
 if [ -z "$REGISTRY" ]; then
-  warn "Skipping image build — using default apache/airflow:2.8.0-python3.11"
+  warn "Skipping image build — using default apache/airflow:3.2.0-python3.11"
   warn "DAGs and deps may be missing. Re-run after building your image."
-  AIRFLOW_IMAGE="apache/airflow:2.8.0-python3.11"
+  AIRFLOW_IMAGE="apache/airflow:3.2.0-python3.11"
 else
   AIRFLOW_IMAGE="${REGISTRY}/airflow-etl:latest"
   info "Building Airflow image: $AIRFLOW_IMAGE"
