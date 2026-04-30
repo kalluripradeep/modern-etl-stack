@@ -230,7 +230,7 @@ def main():
         conn = psycopg2.connect(**DB_CONFIG)
         print("✅ Connected!\n")
 
-        # create_tables(conn)
+        create_tables(conn)
         print()
 
         generate_customers(conn, count=100)

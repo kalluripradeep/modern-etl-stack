@@ -38,13 +38,24 @@ if [ -z "$REGISTRY" ]; then
   warn "Skipping image build — using default apache/airflow:3.2.0-python3.11"
   warn "DAGs and deps may be missing. Re-run after building your image."
   AIRFLOW_IMAGE="apache/airflow:3.2.0-python3.11"
+
+  info "Building local Data Dashboard image (data-dashboard:latest)"
+  docker build -t "data-dashboard:latest" -f "$REPO_ROOT/ui/Dockerfile" "$REPO_ROOT/ui" || warn "Dashboard build failed"
 else
   AIRFLOW_IMAGE="${REGISTRY}/airflow-etl:latest"
+  DASHBOARD_IMAGE="${REGISTRY}/data-dashboard:latest"
+
   info "Building Airflow image: $AIRFLOW_IMAGE"
   docker build -t "$AIRFLOW_IMAGE" -f "$REPO_ROOT/docker/airflow/Dockerfile" "$REPO_ROOT"
   info "Pushing $AIRFLOW_IMAGE..."
   docker push "$AIRFLOW_IMAGE" || error "Push failed! Are you logged in? Run 'docker login' and try again."
   ok "Image pushed: $AIRFLOW_IMAGE"
+
+  info "Building Data Dashboard image: $DASHBOARD_IMAGE"
+  docker build -t "$DASHBOARD_IMAGE" -f "$REPO_ROOT/ui/Dockerfile" "$REPO_ROOT/ui"
+  info "Pushing $DASHBOARD_IMAGE..."
+  docker push "$DASHBOARD_IMAGE" || warn "Push failed for dashboard"
+  ok "Image pushed: $DASHBOARD_IMAGE"
 
   # Patch the helm values with actual image in the temporary directory (created later)
   # We'll defer this until TMP_K8S is created.
@@ -73,6 +84,7 @@ cp -r "$REPO_ROOT/k8s"/* "$TMP_K8S/"
 if [ -n "${REGISTRY_FOR_REPLACE:-}" ]; then
   # Apply the registry change to the temporary file
   sed -i "s|YOUR_REGISTRY/airflow-etl|${REGISTRY_FOR_REPLACE}/airflow-etl|g" "$TMP_K8S/airflow/helm-values.yaml" 2>/dev/null || perl -pi -e "s|YOUR_REGISTRY/airflow-etl|${REGISTRY_FOR_REPLACE}/airflow-etl|g" "$TMP_K8S/airflow/helm-values.yaml"
+  sed -i "s|image: data-dashboard:latest|image: ${REGISTRY_FOR_REPLACE}/data-dashboard:latest|g" "$TMP_K8S/ui/deployment.yaml" 2>/dev/null || perl -pi -e "s|image: data-dashboard:latest|image: ${REGISTRY_FOR_REPLACE}/data-dashboard:latest|g" "$TMP_K8S/ui/deployment.yaml"
 fi
 
 # Replace any hardcoded storageClassName values with the chosen one

@@ -16,6 +16,7 @@ spec:
       containers:
       - name: dashboard
         image: data-dashboard:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 3000
         env:
