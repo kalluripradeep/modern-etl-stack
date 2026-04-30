@@ -176,10 +176,10 @@ helm upgrade --install airflow apache-airflow/airflow \
   --set "images.airflow.repository=${AIRFLOW_IMAGE%:*}" \
   --set "images.airflow.tag=${AIRFLOW_IMAGE##*:}" \
   --set "postgresql.primary.persistence.storageClass=${STORAGE_CLASS}" \
-  --set "migrateDatabaseJob.useHelmHooks=false" \
-  --set "createUserJob.useHelmHooks=false" \
-  --timeout 10m \
-  --wait
+  --timeout 10m
+
+info "Waiting for Airflow API Server to be ready (this may take a few minutes)..."
+kubectl rollout status deployment/airflow-api-server -n $NAMESPACE --timeout=600s || warn "Airflow API Server took too long, but may still be starting."
 ok "Airflow is ready"
 
 # ─── Step 10: Seed sample data ────────────────────────────────────────────────
