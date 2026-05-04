@@ -66,7 +66,7 @@ export async function POST(request: Request) {
     const rows = dbRes.rows;
     const tableHeader = rows.length > 0 ? `| ${Object.keys(rows[0]).join(' | ')} |` : '';
     const tableDivider = rows.length > 0 ? `| ${Object.keys(rows[0]).map(() => '---').join(' | ')} |` : '';
-    const tableRows = rows.map(r => `| ${Object.values(r).join(' | ')} |`).join('\n');
+    const tableRows = rows.map((r: any) => `| ${Object.values(r).join(' | ')} |`).join('\n');
 
     return NextResponse.json({
       role: 'assistant',
