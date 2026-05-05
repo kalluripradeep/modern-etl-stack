@@ -233,7 +233,7 @@ NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="
   || kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
 echo "  Service            URL"
 echo "  ─────────────────────────────────────────────────────"
-echo "  Airflow UI         http://${NODE_IP}:30880  (admin / admin123)"
+echo "  Airflow UI         http://${NODE_IP}:30880  (admin / admin)"
 echo "  Grafana            http://${NODE_IP}:30300  (admin / admin123)"
 echo "  AI Dashboard       http://${NODE_IP}:30333  (Enterprise AI Assistant)"
 echo "  MinIO Console      http://${NODE_IP}:30901  (minioadmin / minioadmin123)"
