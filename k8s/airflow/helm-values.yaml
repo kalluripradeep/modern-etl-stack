@@ -146,6 +146,14 @@ scheduler:
       cpu: "500m"
 
 webserver:
+  defaultUser:
+    enabled: true
+    role: Admin
+    username: admin
+    email: admin@example.com
+    firstName: Admin
+    lastName: User
+    password: admin123
   resources:
     requests:
       memory: "512Mi"
