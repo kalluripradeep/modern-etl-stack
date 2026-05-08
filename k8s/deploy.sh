@@ -140,6 +140,11 @@ info "Waiting for Kafka to be ready (this takes ~60s)..."
 kubectl rollout status statefulset/kafka -n $NAMESPACE --timeout=300s
 ok "Kafka is ready"
 
+info "Deploying Kafka UI..."
+kubectl apply -f "$TMP_K8S/kafka-ui/"
+kubectl rollout status deployment/kafka-ui -n $NAMESPACE --timeout=300s
+ok "Kafka UI is ready"
+
 # ─── Step 6: Kafka Connect (Debezium) ─────────────────────────────────────────
 echo ""
 info "Deploying Kafka Connect with Debezium..."
@@ -233,7 +238,8 @@ NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="
   || kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
 echo "  Service            URL"
 echo "  ─────────────────────────────────────────────────────"
-echo "  Airflow UI         http://${NODE_IP}:30880  (admin / admin)"
+echo "  Airflow UI         http://${NODE_IP}:30880  (admin / admin)
+  Kafka UI           http://${NODE_IP}:30801  (No credentials)"
 echo "  Grafana            http://${NODE_IP}:30300  (admin / admin123)"
 echo "  AI Dashboard       http://${NODE_IP}:30333  (Enterprise AI Assistant)"
 echo "  MinIO Console      http://${NODE_IP}:30901  (minioadmin / minioadmin123)"

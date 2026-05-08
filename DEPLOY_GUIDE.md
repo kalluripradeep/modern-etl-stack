@@ -202,6 +202,7 @@ Then open these in your browser:
 | Dashboard | URL | Username | Password |
 |---|---|---|---|
 | Airflow (pipeline runs) | `http://NODE_IP:30880` | admin | admin |
+| Kafka UI (topic monitoring) | `http://NODE_IP:30801` | — | — |
 | Grafana (metrics) | `http://NODE_IP:30300` | admin | admin123 |
 | MinIO (data files) | `http://NODE_IP:30901` | minioadmin | minioadmin123 |
 | Spark UI (job progress) | `http://NODE_IP:30808` | — | — |
