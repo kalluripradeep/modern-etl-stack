@@ -26,6 +26,7 @@ dags:
     branch: main
     subPath: airflow/dags
     period: 60s
+    recommendedProbeSetting: true
 
 # Use extraEnv as a multi-line string (using |) to satisfy strict schema validation
 # Some chart versions expect a string that they then parse as YAML internally.
@@ -145,7 +146,9 @@ scheduler:
       memory: "1Gi"
       cpu: "500m"
 
-webserver:
+createUserJob:
+  useHelmHooks: true
+  applyCustomEnv: true
   defaultUser:
     enabled: true
     role: Admin
@@ -154,6 +157,8 @@ webserver:
     firstName: Admin
     lastName: User
     password: admin
+
+webserver:
   resources:
     requests:
       memory: "512Mi"
