@@ -22,6 +22,18 @@ data:
         static_configs:
           - targets: ['airflow-webserver.etl.svc.cluster.local:8080']
         metrics_path: '/admin/metrics'
+
+      - job_name: 'postgres-source'
+        static_configs:
+          - targets: ['postgres-exporter-source.etl.svc.cluster.local:9187']
+        labels:
+          db_instance: source
+
+      - job_name: 'postgres-dest'
+        static_configs:
+          - targets: ['postgres-exporter-dest.etl.svc.cluster.local:9187']
+        labels:
+          db_instance: destination
 ---
 apiVersion: v1
 kind: ConfigMap

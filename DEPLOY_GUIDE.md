@@ -227,6 +227,28 @@ You should now see the full **Node Exporter Full** dashboard with live metrics f
 
 > **Reference:** [grafana.com/grafana/dashboards/1860](https://grafana.com/grafana/dashboards/1860-node-exporter-full/)
 
+### Step 8 — Load the PostgreSQL Dashboard in Grafana
+
+The deploy script automatically starts a `postgres_exporter` sidecar for both the source and destination databases. This feeds `pg_stat_*` metrics into Prometheus so you can visualise query performance, connections, cache hit rates, and more.
+
+> **Why not dashboard 9948?** Dashboard 9948 (*PostgreSQL Infrastructure*) requires **TimescaleDB** and **collectd**, which are not installed in this stack. Use **dashboard 9628** instead — it works with standard `postgres_exporter`.
+
+To load the dashboard:
+
+1. Open Grafana at `http://NODE_IP:30300` and log in.
+2. Click **Dashboards → Import** in the left sidebar.
+3. In the **"Import via grafana.com"** field, enter:
+   ```
+   9628
+   ```
+4. Click **Load**.
+5. Under **"Prometheus"**, select **Prometheus** from the dropdown.
+6. Click **Import**.
+
+You should now see live PostgreSQL metrics for both `postgres-source` and `postgres-dest`.
+
+> **Reference:** [grafana.com/grafana/dashboards/9628](https://grafana.com/grafana/dashboards/9628-postgresql-databases/)
+
 ---
 
 ## Troubleshooting
@@ -263,5 +285,5 @@ DEPLOY    bash k8s/deploy.sh
 WAIT      kubectl get pods -n etl -w
 TEST      bash scripts/test_e2e.sh
 OPEN      Airflow → :30880  Grafana → :30300  MinIO → :30901  Spark → :30808  Kafka UI → :30801
-GRAFANA   Dashboards → Import → ID 1860 (Node Exporter Full)
+GRAFANA   Import ID 1860 (Node Exporter Full) + ID 9628 (PostgreSQL Databases)
 ```
