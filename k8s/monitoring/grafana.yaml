@@ -21,6 +21,55 @@ data:
       jsonData:
         sslmode: disable
 ---
+# Dashboard provisioning config: tells Grafana WHERE to load dashboards from
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-providers
+  namespace: etl
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+    - name: default
+      type: file
+      updateIntervalSeconds: 10
+      options:
+        path: /var/lib/grafana/dashboards
+---
+# Node Exporter Full dashboard stub (Grafana ID 1860).
+# On first boot Grafana will show this placeholder. For the full dashboard,
+# use: Dashboards → Import → ID 1860 (one-time manual step, persisted to PVC in prod).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: etl
+data:
+  node-exporter-full.json: |
+    {
+      "uid": "node-exporter-full",
+      "title": "Node Exporter Full",
+      "tags": ["node-exporter", "infrastructure"],
+      "timezone": "browser",
+      "schemaVersion": 27,
+      "version": 1,
+      "refresh": "1m",
+      "panels": [
+        {
+          "type": "text",
+          "title": "How to load the full dashboard",
+          "gridPos": { "h": 5, "w": 24, "x": 0, "y": 0 },
+          "options": {
+            "mode": "markdown",
+            "content": "## Node Exporter Full (Grafana ID 1860)\n\nThis placeholder is auto-provisioned. To load the **complete** 30-panel dashboard:\n\n1. Open **Dashboards → Import**\n2. Enter ID **`1860`** and click **Load**\n3. Select **Prometheus** as the data source\n4. Click **Import**\n\nSee [grafana.com/dashboards/1860](https://grafana.com/grafana/dashboards/1860-node-exporter-full/) for details."
+          }
+        }
+      ],
+      "templating": { "list": [] },
+      "annotations": { "list": [] }
+    }
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -46,7 +95,7 @@ spec:
           valueFrom:
             secretKeyRef:
               name: etl-secrets
-              key: AIRFLOW_ADMIN_USER   # reusing admin user for grafana
+              key: AIRFLOW_ADMIN_USER
         - name: GF_SECURITY_ADMIN_PASSWORD
           valueFrom:
             secretKeyRef:
@@ -57,6 +106,10 @@ spec:
         volumeMounts:
         - name: grafana-datasources
           mountPath: /etc/grafana/provisioning/datasources
+        - name: grafana-dashboard-providers
+          mountPath: /etc/grafana/provisioning/dashboards
+        - name: grafana-dashboards
+          mountPath: /var/lib/grafana/dashboards
         - name: grafana-data
           mountPath: /var/lib/grafana
         resources:
@@ -70,8 +123,14 @@ spec:
       - name: grafana-datasources
         configMap:
           name: grafana-datasources
+      - name: grafana-dashboard-providers
+        configMap:
+          name: grafana-dashboard-providers
+      - name: grafana-dashboards
+        configMap:
+          name: grafana-dashboards
       - name: grafana-data
-        emptyDir: {}   # use a PVC in production for persistence
+        emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
@@ -85,4 +144,4 @@ spec:
   ports:
   - port: 3000
     targetPort: 3000
-    nodePort: 30300   # access Grafana at http://NODE_IP:30300
+    nodePort: 30300

@@ -209,6 +209,24 @@ Then open these in your browser:
 
 Replace `NODE_IP` with the IP address you got from the command above.
 
+### Step 7 — Load the Node Exporter Full Dashboard in Grafana
+
+The deploy script provisions a placeholder dashboard automatically. To load the **full** Node Exporter dashboard (30+ panels for CPU, memory, disk, and network):
+
+1. Open Grafana at `http://NODE_IP:30300` and log in.
+2. Click **Dashboards → Import** in the left sidebar.
+3. In the **"Import via grafana.com"** field, enter:
+   ```
+   1860
+   ```
+4. Click **Load**.
+5. Under **"Prometheus"**, select **Prometheus** from the dropdown.
+6. Click **Import**.
+
+You should now see the full **Node Exporter Full** dashboard with live metrics from your cluster.
+
+> **Reference:** [grafana.com/grafana/dashboards/1860](https://grafana.com/grafana/dashboards/1860-node-exporter-full/)
+
 ---
 
 ## Troubleshooting
@@ -244,5 +262,6 @@ CLONE     git clone https://github.com/kalluripradeep/modern-etl-stack.git
 DEPLOY    bash k8s/deploy.sh
 WAIT      kubectl get pods -n etl -w
 TEST      bash scripts/test_e2e.sh
-OPEN      Airflow → :30880  Grafana → :30300  MinIO → :30901  Spark → :30808
+OPEN      Airflow → :30880  Grafana → :30300  MinIO → :30901  Spark → :30808  Kafka UI → :30801
+GRAFANA   Dashboards → Import → ID 1860 (Node Exporter Full)
 ```
