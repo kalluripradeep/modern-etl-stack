@@ -249,6 +249,24 @@ You should now see live PostgreSQL metrics for both `postgres-source` and `postg
 
 > **Reference:** [grafana.com/grafana/dashboards/9628](https://grafana.com/grafana/dashboards/9628-postgresql-databases/)
 
+### Step 9 — Load the Kubernetes Cluster Dashboard in Grafana
+
+Prometheus is configured to scrape Kubernetes metrics (cAdvisor, kubelet, and nodes) directly from the cluster. You can use these metrics to monitor Pod and Node resource usage across the entire namespace.
+
+1. Open Grafana at `http://NODE_IP:30300` and log in.
+2. Click **Dashboards → Import** in the left sidebar.
+3. In the **"Import via grafana.com"** field, enter:
+   ```
+   315
+   ```
+4. Click **Load**.
+5. Under **"Prometheus"**, select **Prometheus** from the dropdown.
+6. Click **Import**.
+
+You should now see the **Kubernetes cluster monitoring (via Prometheus)** dashboard displaying CPU/Memory utilization for the ETL pods.
+
+> **Reference:** [grafana.com/grafana/dashboards/315](https://grafana.com/grafana/dashboards/315-kubernetes-cluster-monitoring-via-prometheus/)
+
 ---
 
 ## Troubleshooting
@@ -285,5 +303,5 @@ DEPLOY    bash k8s/deploy.sh
 WAIT      kubectl get pods -n etl -w
 TEST      bash scripts/test_e2e.sh
 OPEN      Airflow → :30880  Grafana → :30300  MinIO → :30901  Spark → :30808  Kafka UI → :30801
-GRAFANA   Import ID 1860 (Node Exporter Full) + ID 9628 (PostgreSQL Databases)
+GRAFANA   Import ID 1860 (Node) + ID 9628 (PostgreSQL) + ID 315 (Kubernetes)
 ```
