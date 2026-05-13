@@ -267,6 +267,24 @@ You should now see the **Kubernetes cluster monitoring (via Prometheus)** dashbo
 
 > **Reference:** [grafana.com/grafana/dashboards/315](https://grafana.com/grafana/dashboards/315-kubernetes-cluster-monitoring-via-prometheus/)
 
+### Step 10 — Load the MinIO Dashboard in Grafana
+
+The deploy script configures MinIO to expose Prometheus metrics (v2 API) on port 9000, and wires Prometheus to scrape them.
+
+1. Open Grafana at `http://NODE_IP:30300` and log in.
+2. Click **Dashboards → Import** in the left sidebar.
+3. In the **"Import via grafana.com"** field, enter:
+   ```
+   13502
+   ```
+4. Click **Load**.
+5. Under **"Prometheus"**, select **Prometheus** from the dropdown.
+6. Click **Import**.
+
+You will now see full observability into the Data Lake storage usage (buckets, object counts, traffic, and disk performance).
+
+> **Reference:** [grafana.com/grafana/dashboards/13502](https://grafana.com/grafana/dashboards/13502-minio-dashboard/)
+
 ---
 
 ## Troubleshooting
@@ -303,5 +321,5 @@ DEPLOY    bash k8s/deploy.sh
 WAIT      kubectl get pods -n etl -w
 TEST      bash scripts/test_e2e.sh
 OPEN      Airflow → :30880  Grafana → :30300  MinIO → :30901  Spark → :30808  Kafka UI → :30801
-GRAFANA   Import ID 1860 (Node) + ID 9628 (PostgreSQL) + ID 315 (Kubernetes)
+GRAFANA   Import ID 1860 (Node) + 9628 (Postgres) + 315 (K8s) + 13502 (MinIO)
 ```

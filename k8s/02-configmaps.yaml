@@ -72,6 +72,12 @@ data:
         relabel_configs:
         - action: labelmap
           regex: __meta_kubernetes_node_label_(.+)
+
+      - job_name: 'minio'
+        metrics_path: /minio/v2/metrics/cluster
+        scheme: http
+        static_configs:
+          - targets: ['minio-0.minio.etl.svc.cluster.local:9000']
 ---
 apiVersion: v1
 kind: ConfigMap
