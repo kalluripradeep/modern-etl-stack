@@ -119,7 +119,7 @@ dag = DAG(
     'ingest_source_to_bronze',
     default_args=default_args,
     description='Extract all source tables from postgres to data lake (Bronze)',
-    schedule_interval='@daily',
+    schedule='@daily',
     catchup=False,
     tags=['etl', 'bronze', 'multi-table'],
 )
