@@ -25,7 +25,6 @@ with DAG(
     default_args=default_args,
     description='Spark Batch Processing - Bronze to Silver (Iceberg)',
     schedule='@daily',
-    start_date=days_ago(1),
     catchup=False,
     tags=['spark', 'iceberg', 'silver', 'scalability', 'compaction'],
 ) as dag:

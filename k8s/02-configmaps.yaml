@@ -26,14 +26,14 @@ data:
       - job_name: 'postgres-source'
         static_configs:
           - targets: ['postgres-exporter-source.etl.svc.cluster.local:9187']
-        labels:
-          db_instance: source
+            labels:
+              db_instance: source
 
       - job_name: 'postgres-dest'
         static_configs:
           - targets: ['postgres-exporter-dest.etl.svc.cluster.local:9187']
-        labels:
-          db_instance: destination
+            labels:
+              db_instance: destination
 
       - job_name: 'kubernetes-apiservers'
         kubernetes_sd_configs:

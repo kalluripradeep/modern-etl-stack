@@ -104,7 +104,15 @@ default_args = {
     'retry_delay': timedelta(minutes=2),
 }
 
-DBT_PROJECT_PATH = Path("/opt/airflow/dbt")
+dbt_k8s_path = Path("/opt/airflow/dags/repo/dbt")
+dbt_docker_path = Path("/opt/airflow/dbt")
+
+if dbt_k8s_path.exists():
+    DBT_PROJECT_PATH = dbt_k8s_path
+elif dbt_docker_path.exists():
+    DBT_PROJECT_PATH = dbt_docker_path
+else:
+    DBT_PROJECT_PATH = Path(__file__).parent.parent.parent / "dbt"
 
 profile_config = ProfileConfig(
     profile_name="modern_etl",
