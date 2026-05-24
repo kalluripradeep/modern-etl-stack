@@ -1,6 +1,6 @@
 # Modern ETL Infrastructure
 
-A comprehensive ETL stack demonstrating the integration of open-source data engineering tools. This project features both **real-time CDC (Change Data Capture)** via Kafka/Debezium and **high-scale batch processing** pipelines orchestrating data movement between a staging relational database, a data lake, and a destination database. 
+A comprehensive ETL stack demonstrating the integration of open-source data engineering tools. This project features both **real-time CDC (Change Data Capture)** via Kafka/Debezium and **high-scale batch processing** pipelines orchestrating data movement between a staging relational database, a data lake, and a destination database.
 
 ## Architecture
 
@@ -14,44 +14,56 @@ The system utilizes a **Definitive "Three-Track" Architecture**. This design sep
                   │
       ┌───────────┼───────────┐
       ▼           ▼           ▼
-  TRACK 1:      TRACK 2:    TRACK 3:
+  TRACK B:      TRACK A:    TRACK C:
  OPERATIONAL   ANALYTICAL   BIG DATA
   (Mirror)    (Warehouse)  (Lakehouse)
       │           │           │
 ┌─────▼─────┐     │     ┌─────▼─────┐
-│ Debezium  │     │     │  Airflow  │ (The Courier)
+│ Debezium  │     │     │  Airflow  │ (The Orchestrator)
 └─────┬─────┘     │     └─────┬─────┘
       │           │           │
 ┌─────▼─────┐     │     ┌─────▼─────┐
-│   Kafka   │     │     │  MinIO    │ (Bronze / Raw)
+│   Kafka   │     │     │  MinIO    │ (Bronze Bucket)
 └─────┬─────┘     │     └─────┬─────┘
       │      ┌────▼────┐      │
 ┌─────▼─────┐│ Airflow │┌─────▼─────┐
-│ JDBC Sink │└────┬────┘│  Spark    │ (The Chef)
-└─────┬─────┘     │     └─────┬─────┘
-      │           │           │
-┌─────▼─────┐     │     ┌─────▼─────┐
-│  public   │ ◀───┘     │  Silver   │ (Iceberg - 1Bn+ Rows)
-│  (raw)    │           │ (Lakehouse)│
-└─────┬─────┘           └───────────┘
-      │                      
-┌─────▼─────┐          
-│    dbt    │ (The Brain)
-└─────┬─────┘          
-      │ (Materialize)
-      ▼                
-┌────────────┐         
-│ analytics  │ (Warehouse)        
-│   (Gold)   │ (Dest DB)
-└────────────┘         
-  PostgreSQL (Destination)
+│ Real-Time │└────┬────┘│  Spark    │ (PySpark / Iceberg)
+│   Apps    │     │     └─────┬─────┘
+└───────────┘     │           │
+            ┌─────▼─────┐     │
+            │    raw    │ ◀───┘
+            │ (_source) │
+            └─────┬─────┘
+                  │
+            ┌─────▼─────┐
+            │    dbt    │ (The Transformation Brain)
+            └─────┬─────┘
+                  ▼
+            ┌────────────┐
+            │    int     │ (Integration Layer: _clean)
+            └─────┬──────┘
+                  ▼
+            ┌────────────┐
+            │    prs     │ (Presentation Layer: v_*)
+            └─────┬──────┘
+                  │
+            ┌─────▼─────┐
+            │ Metabase  │ (BI Dashboard)
+            └───────────┘
 ```
 
 ### The Triple-Track Strategy
 
-1.  **Track 1: Operational Mirror (Hot):** Captured in real-time by **Debezium** and **Kafka**. This provides a sub-second mirror of the source in the `public` schema for live dashboards and operational lookups.
-2.  **Track 2: Analytical Warehouse (Warehouse):** Managed by **Airflow** and **dbt**. Snapshots are extracted daily and transformed into the `analytics` schema (Gold layer). This provides the "Cleaned Truth" for financial and business reporting.
-3.  **Track 3: Big Data Lakehouse (Scale):** Managed by **Airflow** and **Spark**. Raw files are processed into **Apache Iceberg** tables (Silver layer) in MinIO. This track is designed to handle billions of rows that would be too expensive to store in the relational warehouse.
+1.  **Track A: Analytical Warehouse (BI / Reporting):** Managed by **Airflow** and **dbt**. Snapshots are extracted daily and upserted into the `raw` schema. dbt cleans the data into the `int` schema, and aggregates it into the `prs` schema. This provides the "Cleaned Truth" for financial and business reporting via Metabase.
+2.  **Track B: Operational Streaming (Real-Time CDC):** Captured in real-time by **Debezium** and **Kafka**. This provides a sub-second mirror of the source database changes for live downstream event-driven microservices.
+3.  **Track C: Big Data Lakehouse (Scale):** Managed by **Airflow**, **MinIO**, and **Spark**. Raw Parquet files are processed into **Apache Iceberg** tables (Silver catalog). This track is designed to handle massive-scale analytical workloads using distributed computing.
+
+## Database Schema Structure
+
+The Destination Data Warehouse (`destdb`) is strictly organized to ensure data quality and clear governance:
+- **`raw` Schema:** Receives raw, messy data directly from the source system. Tables strictly follow the `_source` suffix (e.g., `raw.orders_source`).
+- **`int` Schema:** The integration layer where data is cleaned, filtered, and deduplicated. Tables strictly follow the `_clean` suffix (e.g., `int.orders_clean`).
+- **`prs` Schema:** The presentation layer exposing final, aggregated business views (e.g., `prs.v_daily_revenue`). Only this schema is exposed to BI tools.
 
 ## Technology Stack
 
@@ -63,30 +75,7 @@ The system utilizes a **Definitive "Three-Track" Architecture**. This design sep
 | **Transformation** | dbt-core 1.7 (Incremental Models) |
 | **Batch Compute** | Apache Spark 3.5 & Apache Iceberg 1.4 |
 | **Data Warehouse** | PostgreSQL 15 |
-| **Monitoring** | Prometheus & Grafana |
-
-## Agentic AI Integration
-
-This repository features state-of-the-art **Model Context Protocol (MCP)** integration, allowing LLM coding agents (like Claude Desktop or Cursor) to act natively as Data Engineers.
-
-Through the custom `dbt-mcp` server located in this repository, the AI Agent interacts directly with the production environment:
-- **Zero-Guessing Architecture:** The Agent explicitly reads and writes real SQL code and schema metadata directly from the Destination Data Warehouse. It never has to "guess" or "hallucinate" table structures because it has live, native database access.
-- **Autonomous Validation:** It can natively trigger `dbt test` against the live PostgreSQL database to instantly verify its own code changes.
-- **Human-in-the-Loop Self-Healing:** By hooking the MCP directly into the warehouse, the Agent can analyze live pipeline failures and explicitly write and test its own SQL patches. However, it strictly requires human approval before any code is committed or applied, guaranteeing complete control and security without requiring human copy-pasting.
-
-## Prerequisites
-
-- Docker + Docker Compose
-- `make` (optional but recommended)
-- ~6 GB free RAM available for Docker daemon
-
-### Linux Permissions Note
-
-If you encounter `permission denied` errors when running Airflow containers, you may need to adjust local directory ownership to match the `airflow` user's UID (50000):
-```bash
-sudo chown -R 50000:0 logs dags plugins
-sudo chmod -R 775 logs dags plugins
-```
+| **BI / Dashboards** | Metabase |
 
 ## Quick Start
 
@@ -111,44 +100,36 @@ make register-connector
 | **Airflow UI** | http://localhost:8080 | admin / admin |
 | **MinIO Console** | http://localhost:9001 | minioadmin / minioadmin |
 | **Kafka UI** | http://localhost:8001 | — |
-| **Spark Master UI** | http://localhost:8081 | — |
-| **Grafana** | http://localhost:3000 | admin / admin |
-| **Prometheus** | http://localhost:9090 | — |
+| **Metabase** | http://localhost:3030 | (Setup Required) |
+| **Spark Master** | http://localhost:8081 | — |
 | **Kafka Connect** | http://localhost:8083 | — |
 
 ## Data Pipelines
 
 ### Airflow DAGs
 
-### Airflow DAGs
-
 1. **`ingest_source_to_bronze`** *(The Ingestion Engine)*
-   - Parallel flow: Simultaneously extracts data to **MinIO Bronze** (for the Lakehouse) and **Postgres public** (for the Warehouse).
-   - This ensures both tracks start with the exact same raw snapshot.
-2. **`spark_transform_silver`** *(The Lakehouse Engine)*
-   - High-scale Spark jobs that process billions of rows from Bronze into **Apache Iceberg** tables.
-   - Includes maintenance tasks like Z-Ordering and compaction for extreme performance.
-3. **`dbt_transformations`** *(The Warehouse Engine)*
-   - dbt models that take the raw mirrored data and apply business logic to create the **Gold** layer in the `analytics` schema.
+   - Parallel flow: Simultaneously extracts data to **MinIO Bronze** (for the Lakehouse) and **Postgres `raw`** (for the Warehouse).
+   - Once ingestion is complete, it directly triggers the `dbt_transformations` task group.
+2. **`dbt_transformations`** *(The Transformation Engine)*
+   - Automatically cleans raw data into the `int` schema, and builds presentation views in the `prs` schema.
+3. **`spark_transform_silver`** *(The Lakehouse Engine)*
+   - High-scale Spark jobs that process raw Parquet files from Bronze into **Apache Iceberg** tables.
 
-### dbt Modeling
+### dbt Modeling Structure
 
 ```text
 dbt/models/
-├── bronze/
-│   └── bronze_orders.sql
-├── silver/
-│   ├── silver_orders.sql
-│   └── schema.yml
-└── gold/
-    ├── gold_daily_revenue.sql
-    └── schema.yml
-```
-
-Execute models and test suites:
-```bash
-make dbt-run
-make dbt-test
+├── int/
+│   ├── customers_clean.sql
+│   ├── order_items_clean.sql
+│   ├── orders_clean.sql
+│   └── products_clean.sql
+└── prs/
+    ├── v_customers.sql
+    ├── v_daily_revenue.sql
+    ├── v_orders.sql
+    └── v_products.sql
 ```
 
 ## Project Operations
@@ -160,6 +141,4 @@ make logs                # Tail aggregated container logs
 make ps                  # Service health check
 make seed                # Generate sample source data
 make register-connector  # Initialize Debezium CDC connector
-make dbt-run             # Execute dbt transformation (Incremental)
-make dbt-test            # Execute dbt validation tests
 ```
