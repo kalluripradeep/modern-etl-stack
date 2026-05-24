@@ -1,0 +1,41 @@
+version: 2
+
+models:
+  - name: orders_clean
+    description: "Cleaned and deduplicated orders data."
+    columns:
+      - name: order_id
+        description: "Primary key for orders"
+        tests:
+          - unique
+          - not_null
+      - name: total_amount
+        description: "Total order value"
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              min_value: 0
+      - name: status
+        description: "Order status"
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_in_set:
+              value_set: ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
+
+  - name: products_clean
+    description: "Cleaned product inventory data."
+    columns:
+      - name: product_id
+        tests:
+          - unique
+          - not_null
+      - name: price
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              min_value: 0
+      - name: stock_quantity
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              min_value: 0

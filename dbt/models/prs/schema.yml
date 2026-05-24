@@ -1,0 +1,17 @@
+version: 2
+
+models:
+  - name: v_daily_revenue
+    description: "Aggregated daily revenue metrics."
+    columns:
+      - name: order_date
+        tests:
+          - not_null
+      - name: order_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              min_value: 1
+      - name: total_revenue
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              min_value: 0
