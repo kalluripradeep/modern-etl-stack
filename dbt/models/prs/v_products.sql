@@ -1,11 +1,6 @@
 {{ config(
-    materialized='table',
-    unique_key='product_id'
+    materialized='view'
 ) }}
-
-WITH raw_products AS (
-    SELECT * FROM {{ source('raw', 'products') }}
-)
 
 SELECT
     product_id,
@@ -17,5 +12,4 @@ SELECT
     created_at,
     updated_at,
     CURRENT_TIMESTAMP AS dbt_updated_at
-FROM raw_products
-WHERE price >= 0
+FROM {{ ref('int_products') }}

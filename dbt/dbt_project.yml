@@ -18,9 +18,9 @@ clean-targets:
 
 models:
   modern_etl:
-    bronze:
+    int:
+      +schema: int
+      +materialized: table
+    prs:
+      +schema: prs
       +materialized: view
-    silver:
-      +materialized: table
-    gold:
-      +materialized: table

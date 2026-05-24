@@ -1,9 +1,5 @@
--- Gold Layer: Daily revenue metrics by status
--- Business-ready aggregated data
-
 {{ config(
-    materialized='table',
-    tags=['gold', 'metrics', 'revenue']
+    materialized='view'
 ) }}
 
 SELECT 
@@ -15,6 +11,6 @@ SELECT
     MIN(total_amount) as min_order_value,
     MAX(total_amount) as max_order_value,
     CURRENT_TIMESTAMP as calculated_at
-FROM {{ ref('silver_orders') }}
+FROM {{ ref('int_orders') }}
 GROUP BY DATE(order_date), status
 ORDER BY order_date DESC, status

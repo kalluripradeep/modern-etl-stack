@@ -4,7 +4,7 @@ sources:
   - name: raw
     description: Raw data from source systems
     database: destdb
-    schema: public
+    schema: raw
     tables:
       - name: orders
         description: Raw orders from PostgreSQL source

@@ -42,6 +42,7 @@ def transform_to_silver(df):
         .filter(col("total_amount") > 0) \
         .filter(col("status").isNotNull()) \
         .withColumn("total_amount", col("total_amount").cast(DecimalType(10, 2))) \
+        .withColumn("order_date", col("order_date").cast("timestamp")) \
         .withColumn("created_at", col("created_at").cast("timestamp")) \
         .withColumn("updated_at", col("updated_at").cast("timestamp")) \
         .withColumn("processed_at", current_timestamp()) \
@@ -64,6 +65,10 @@ def upsert_to_iceberg(spark, df):
     """Upsert Silver layer to MinIO using Apache Iceberg MERGE INTO"""
     catalog_name = "silver"
     table_name = f"{catalog_name}.orders"
+
+    if df.count() == 0:
+        print(f"No records to upsert to {table_name}. Skipping.")
+        return
 
     # 1. Create table if not exists (first run)
     if not spark.catalog.tableExists(table_name):

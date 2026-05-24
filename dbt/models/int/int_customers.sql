@@ -18,6 +18,5 @@ SELECT
     state,
     zip_code,
     created_at,
-    updated_at,
-    CURRENT_TIMESTAMP AS dbt_updated_at
+    updated_at
 FROM raw_customers

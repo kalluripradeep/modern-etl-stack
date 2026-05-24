@@ -31,7 +31,7 @@ TABLES_CONFIG = {
         'columns': ['order_id', 'customer_id', 'order_date', 'total_amount', 'status', 'created_at', 'updated_at'],
         'update_cols': ['total_amount', 'status', 'updated_at'],
         'ddl': """
-            CREATE TABLE IF NOT EXISTS public.orders (
+            CREATE TABLE IF NOT EXISTS raw.orders (
                 order_id     BIGINT PRIMARY KEY,
                 customer_id  BIGINT,
                 order_date   TIMESTAMP,
@@ -47,7 +47,7 @@ TABLES_CONFIG = {
         'columns': ['customer_id', 'first_name', 'last_name', 'email', 'address', 'city', 'state', 'zip_code', 'created_at', 'updated_at'],
         'update_cols': ['first_name', 'last_name', 'email', 'address', 'city', 'state', 'zip_code', 'updated_at'],
         'ddl': """
-            CREATE TABLE IF NOT EXISTS public.customers (
+            CREATE TABLE IF NOT EXISTS raw.customers (
                 customer_id  BIGINT PRIMARY KEY,
                 first_name   TEXT,
                 last_name    TEXT,
@@ -66,7 +66,7 @@ TABLES_CONFIG = {
         'columns': ['product_id', 'name', 'description', 'price', 'category', 'stock_quantity', 'created_at', 'updated_at'],
         'update_cols': ['name', 'description', 'price', 'category', 'stock_quantity', 'updated_at'],
         'ddl': """
-            CREATE TABLE IF NOT EXISTS public.products (
+            CREATE TABLE IF NOT EXISTS raw.products (
                 product_id     BIGINT PRIMARY KEY,
                 name           TEXT,
                 description    TEXT,
@@ -83,7 +83,7 @@ TABLES_CONFIG = {
         'columns': ['item_id', 'order_id', 'product_id', 'quantity', 'unit_price', 'created_at', 'updated_at'],
         'update_cols': ['quantity', 'unit_price', 'updated_at'],
         'ddl': """
-            CREATE TABLE IF NOT EXISTS public.order_items (
+            CREATE TABLE IF NOT EXISTS raw.order_items (
                 item_id    BIGINT PRIMARY KEY,
                 order_id   BIGINT,
                 product_id BIGINT,
@@ -119,7 +119,7 @@ profile_config = ProfileConfig(
     target_name="dev",
     profile_mapping=PostgresUserPasswordProfileMapping(
         conn_id="dest_postgres",
-        profile_args={"schema": "public"},
+        profile_args={"schema": "int"},
     ),
 )
 
@@ -152,6 +152,7 @@ def extract_and_load_table(table_name, **kwargs):
         s3_hook.create_bucket(bucket_name=bucket_name)
 
     # 1. Ensure target table exists in DWH
+    dest_hook.run("CREATE SCHEMA IF NOT EXISTS raw;")
     dest_hook.run(config['ddl'])
 
     # 2. Extract from Source (Incremental CDC Logic)
@@ -160,7 +161,7 @@ def extract_and_load_table(table_name, **kwargs):
     # 2a. Fetch the high-water mark (MAX updated_at) from the Destination staging DB
     max_date = None
     try:
-        records = dest_hook.get_records(f"SELECT MAX(updated_at) FROM public.{table_name}")
+        records = dest_hook.get_records(f"SELECT MAX(updated_at) FROM raw.{table_name}")
         if records and records[0] and records[0][0]:
             max_date = records[0][0]
     except Exception as e:
@@ -213,14 +214,14 @@ def extract_and_load_table(table_name, **kwargs):
                     buffer.seek(0)
 
                     stage_table = f"{table_name}_stage"
-                    pg_cursor.execute(f"CREATE TEMP TABLE IF NOT EXISTS {stage_table} (LIKE public.{table_name}) ON COMMIT PRESERVE ROWS")
+                    pg_cursor.execute(f"CREATE TEMP TABLE IF NOT EXISTS {stage_table} (LIKE raw.{table_name}) ON COMMIT PRESERVE ROWS")
                     pg_cursor.execute(f"TRUNCATE {stage_table}")
                     
                     pg_cursor.copy_expert(f"COPY {stage_table} ({cols_str}) FROM STDIN WITH CSV", buffer)
                     
                     update_set = ", ".join([f"{c} = EXCLUDED.{c}" for c in config['update_cols']])
                     upsert_sql = f"""
-                        INSERT INTO public.{table_name}
+                        INSERT INTO raw.{table_name}
                         SELECT * FROM {stage_table}
                         ON CONFLICT ({config['pk']}) DO UPDATE SET
                             {update_set}

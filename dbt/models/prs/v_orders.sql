@@ -1,14 +1,13 @@
 {{ config(
-    materialized='table',
-    unique_key='item_id'
+    materialized='view'
 ) }}
 
-WITH silver_orders AS (
-    SELECT * FROM {{ source('raw', 'orders') }}
+WITH int_orders AS (
+    SELECT * FROM {{ ref('int_orders') }}
 ),
 
-silver_order_items AS (
-    SELECT * FROM {{ source('raw', 'order_items') }}
+int_order_items AS (
+    SELECT * FROM {{ ref('int_order_items') }}
 )
 
 SELECT
@@ -25,5 +24,5 @@ SELECT
     o.created_at AS order_created_at,
     o.updated_at AS order_updated_at,
     CURRENT_TIMESTAMP AS dbt_updated_at
-FROM silver_order_items oi
-JOIN silver_orders o ON oi.order_id = o.order_id
+FROM int_order_items oi
+JOIN int_orders o ON oi.order_id = o.order_id

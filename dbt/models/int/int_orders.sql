@@ -1,10 +1,7 @@
--- Silver Layer: Cleaned and validated orders
--- Removes duplicates, nulls, and invalid data
-
 {{ config(
-    materialized='incremental',
+    materialized='table',
     unique_key='order_id',
-    tags=['silver', 'orders']
+    tags=['int', 'orders']
 ) }}
 
 WITH cleaned_orders AS (
@@ -16,19 +13,13 @@ WITH cleaned_orders AS (
         status,
         created_at,
         updated_at,
-        -- Add data quality flags
         CASE 
             WHEN total_amount <= 0 THEN 'invalid_amount'
             WHEN status IS NULL THEN 'missing_status'
             WHEN order_date IS NULL THEN 'missing_date'
             ELSE 'valid'
         END as quality_flag
-    FROM {{ ref('bronze_orders') }}
-    
-    {% if is_incremental() %}
-    -- CDC filtering: only fetch records modernized since the last run
-    WHERE updated_at > (SELECT MAX(updated_at) FROM {{ this }})
-    {% endif %}
+    FROM {{ source('raw', 'orders') }}
 )
 
 SELECT 
@@ -40,6 +31,6 @@ SELECT
     created_at,
     updated_at
 FROM cleaned_orders
-WHERE quality_flag = 'valid'  -- Only keep valid records
-    AND order_id IS NOT NULL   -- No null IDs
-    AND total_amount > 0       -- Positive amounts only
+WHERE quality_flag = 'valid'
+    AND order_id IS NOT NULL
+    AND total_amount > 0
