@@ -15,4 +15,4 @@ SELECT
     created_at,
     updated_at,
     CURRENT_TIMESTAMP AS dbt_updated_at
-FROM {{ ref('int_customers') }}
+FROM {{ ref('customers_clean') }}

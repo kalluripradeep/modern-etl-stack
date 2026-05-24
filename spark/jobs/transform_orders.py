@@ -24,7 +24,7 @@ def read_from_minio(spark, date):
     bronze_bucket = os.environ.get('BRONZE_BUCKET', 'bronze')
     # date format: YYYYMMDD → convert to YYYY/MM/DD partition path
     year, month, day = date[:4], date[4:6], date[6:]
-    path = f"s3a://{bronze_bucket}/orders/{year}/{month}/{day}/"
+    path = f"s3a://{bronze_bucket}/orders_source/{year}/{month}/{day}/"
 
     print(f"Reading Bronze layer from: {path}")
     df = spark.read.parquet(path)

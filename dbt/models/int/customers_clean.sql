@@ -4,7 +4,7 @@
 ) }}
 
 WITH raw_customers AS (
-    SELECT * FROM {{ source('raw', 'customers') }}
+    SELECT * FROM {{ source('raw', 'customers_source') }}
 )
 
 SELECT

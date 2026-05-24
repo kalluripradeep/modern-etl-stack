@@ -6,7 +6,7 @@ sources:
     database: destdb
     schema: raw
     tables:
-      - name: orders
+      - name: orders_source
         description: Raw orders from PostgreSQL source
         columns:
           - name: order_id
@@ -25,7 +25,7 @@ sources:
               - accepted_values:
                   values: ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
 
-      - name: customers
+      - name: customers_source
         description: Raw customer data
         columns:
           - name: customer_id
@@ -37,7 +37,7 @@ sources:
               - unique
               - not_null
 
-      - name: products
+      - name: products_source
         description: Raw product inventory
         columns:
           - name: product_id
@@ -48,7 +48,7 @@ sources:
             tests:
               - not_null
 
-      - name: order_items
+      - name: order_items_source
         description: Line items for every order
         columns:
           - name: item_id

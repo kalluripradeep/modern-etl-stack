@@ -11,6 +11,6 @@ SELECT
     MIN(total_amount) as min_order_value,
     MAX(total_amount) as max_order_value,
     CURRENT_TIMESTAMP as calculated_at
-FROM {{ ref('int_orders') }}
+FROM {{ ref('orders_clean') }}
 GROUP BY DATE(order_date), status
 ORDER BY order_date DESC, status

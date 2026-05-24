@@ -19,7 +19,7 @@ WITH cleaned_orders AS (
             WHEN order_date IS NULL THEN 'missing_date'
             ELSE 'valid'
         END as quality_flag
-    FROM {{ source('raw', 'orders') }}
+    FROM {{ source('raw', 'orders_source') }}
 )
 
 SELECT 

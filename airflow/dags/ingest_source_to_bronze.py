@@ -31,7 +31,7 @@ TABLES_CONFIG = {
         'columns': ['order_id', 'customer_id', 'order_date', 'total_amount', 'status', 'created_at', 'updated_at'],
         'update_cols': ['total_amount', 'status', 'updated_at'],
         'ddl': """
-            CREATE TABLE IF NOT EXISTS raw.orders (
+            CREATE TABLE IF NOT EXISTS raw.orders_source (
                 order_id     BIGINT PRIMARY KEY,
                 customer_id  BIGINT,
                 order_date   TIMESTAMP,
@@ -47,7 +47,7 @@ TABLES_CONFIG = {
         'columns': ['customer_id', 'first_name', 'last_name', 'email', 'address', 'city', 'state', 'zip_code', 'created_at', 'updated_at'],
         'update_cols': ['first_name', 'last_name', 'email', 'address', 'city', 'state', 'zip_code', 'updated_at'],
         'ddl': """
-            CREATE TABLE IF NOT EXISTS raw.customers (
+            CREATE TABLE IF NOT EXISTS raw.customers_source (
                 customer_id  BIGINT PRIMARY KEY,
                 first_name   TEXT,
                 last_name    TEXT,
@@ -66,7 +66,7 @@ TABLES_CONFIG = {
         'columns': ['product_id', 'name', 'description', 'price', 'category', 'stock_quantity', 'created_at', 'updated_at'],
         'update_cols': ['name', 'description', 'price', 'category', 'stock_quantity', 'updated_at'],
         'ddl': """
-            CREATE TABLE IF NOT EXISTS raw.products (
+            CREATE TABLE IF NOT EXISTS raw.products_source (
                 product_id     BIGINT PRIMARY KEY,
                 name           TEXT,
                 description    TEXT,
@@ -83,7 +83,7 @@ TABLES_CONFIG = {
         'columns': ['item_id', 'order_id', 'product_id', 'quantity', 'unit_price', 'created_at', 'updated_at'],
         'update_cols': ['quantity', 'unit_price', 'updated_at'],
         'ddl': """
-            CREATE TABLE IF NOT EXISTS raw.order_items (
+            CREATE TABLE IF NOT EXISTS raw.order_items_source (
                 item_id    BIGINT PRIMARY KEY,
                 order_id   BIGINT,
                 product_id BIGINT,
@@ -161,7 +161,7 @@ def extract_and_load_table(table_name, **kwargs):
     # 2a. Fetch the high-water mark (MAX updated_at) from the Destination staging DB
     max_date = None
     try:
-        records = dest_hook.get_records(f"SELECT MAX(updated_at) FROM raw.{table_name}")
+        records = dest_hook.get_records(f"SELECT MAX(updated_at) FROM raw.{table_name}_source")
         if records and records[0] and records[0][0]:
             max_date = records[0][0]
     except Exception as e:
@@ -205,7 +205,7 @@ def extract_and_load_table(table_name, **kwargs):
                         raise ValueError(f"Data quality error: Null PKs in {table_name} at {file_path}")
 
                     # Upload to MinIO
-                    object_name = f'{table_name}/{date_prefix}/part-{idx:05d}.parquet'
+                    object_name = f'{table_name}_source/{date_prefix}/part-{idx:05d}.parquet'
                     s3_hook.load_file(filename=file_path, key=object_name, bucket_name=bucket_name, replace=True)
 
                     # Upsert into DWH
@@ -214,14 +214,14 @@ def extract_and_load_table(table_name, **kwargs):
                     buffer.seek(0)
 
                     stage_table = f"{table_name}_stage"
-                    pg_cursor.execute(f"CREATE TEMP TABLE IF NOT EXISTS {stage_table} (LIKE raw.{table_name}) ON COMMIT PRESERVE ROWS")
+                    pg_cursor.execute(f"CREATE TEMP TABLE IF NOT EXISTS {stage_table} (LIKE raw.{table_name}_source) ON COMMIT PRESERVE ROWS")
                     pg_cursor.execute(f"TRUNCATE {stage_table}")
                     
                     pg_cursor.copy_expert(f"COPY {stage_table} ({cols_str}) FROM STDIN WITH CSV", buffer)
                     
                     update_set = ", ".join([f"{c} = EXCLUDED.{c}" for c in config['update_cols']])
                     upsert_sql = f"""
-                        INSERT INTO raw.{table_name}
+                        INSERT INTO raw.{table_name}_source
                         SELECT * FROM {stage_table}
                         ON CONFLICT ({config['pk']}) DO UPDATE SET
                             {update_set}

@@ -3,11 +3,11 @@
 ) }}
 
 WITH int_orders AS (
-    SELECT * FROM {{ ref('int_orders') }}
+    SELECT * FROM {{ ref('orders_clean') }}
 ),
 
 int_order_items AS (
-    SELECT * FROM {{ ref('int_order_items') }}
+    SELECT * FROM {{ ref('order_items_clean') }}
 )
 
 SELECT

@@ -4,7 +4,7 @@
 ) }}
 
 WITH raw_products AS (
-    SELECT * FROM {{ source('raw', 'products') }}
+    SELECT * FROM {{ source('raw', 'products_source') }}
 )
 
 SELECT

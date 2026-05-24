@@ -4,7 +4,7 @@
 ) }}
 
 WITH raw_order_items AS (
-    SELECT * FROM {{ source('raw', 'order_items') }}
+    SELECT * FROM {{ source('raw', 'order_items_source') }}
 )
 
 SELECT
