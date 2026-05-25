@@ -123,6 +123,7 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_PROMETHEUS_AUTH_TYPE: public
     command: server /data --console-address ":9001"
     volumes:
       - minio-data:/data
@@ -317,6 +318,9 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
       SPARK_HOME: /home/airflow/.local/lib/python3.11/site-packages/pyspark
       AIRFLOW_CONN_SPARK_DEFAULT: spark://spark-master:7077
+      AIRFLOW__METRICS__STATSD_ON: 'True'
+      AIRFLOW__METRICS__STATSD_HOST: statsd-exporter
+      AIRFLOW__METRICS__STATSD_PORT: 8125
     ports:
       - "8080:8080"
     volumes:
@@ -356,6 +360,9 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
       SPARK_HOME: /home/airflow/.local/lib/python3.11/site-packages/pyspark
       AIRFLOW_CONN_SPARK_DEFAULT: spark://spark-master:7077
+      AIRFLOW__METRICS__STATSD_ON: 'True'
+      AIRFLOW__METRICS__STATSD_HOST: statsd-exporter
+      AIRFLOW__METRICS__STATSD_PORT: 8125
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
@@ -365,8 +372,29 @@ services:
     command: scheduler
     networks:
       - etl-network
+  # Metabase Business Intelligence
+  metabase:
+    image: metabase/metabase:latest
+    container_name: metabase
+    ports:
+      - "3030:3000"
+    volumes:
+      - metabase-data:/metabase-data
+    networks:
+      - etl-network
+
+  # StatsD Exporter for Airflow Metrics
+  statsd-exporter:
+    image: prom/statsd-exporter:latest
+    container_name: statsd-exporter
+    ports:
+      - "9102:9102"
+      - "8125:8125/udp"
+    networks:
+      - etl-network
 
 volumes:
+  metabase-data:
   postgres-source-data:
   postgres-dest-data:
   zookeeper-data:
