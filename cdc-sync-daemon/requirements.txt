@@ -1,0 +1,2 @@
+psycopg2-binary==2.9.9
+kafka-python==2.0.2

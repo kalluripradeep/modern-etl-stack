@@ -393,6 +393,34 @@ services:
     networks:
       - etl-network
 
+  # Real-Time Operational CDC Sync Daemon
+  cdc-sync-daemon:
+    build:
+      context: ./cdc-sync-daemon
+    container_name: cdc-sync-daemon
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres-source:
+        condition: service_healthy
+      postgres-dest:
+        condition: service_healthy
+    environment:
+      - KAFKA_BOOTSTRAP=kafka:9092
+      - SOURCE_DB_HOST=postgres-source
+      - SOURCE_DB_PORT=5432
+      - SOURCE_DB_NAME=${SOURCE_DB_NAME:-sourcedb}
+      - SOURCE_DB_USER=${SOURCE_DB_USER:-sourceuser}
+      - SOURCE_DB_PASSWORD=${SOURCE_DB_PASSWORD:-sourcepass}
+      - DEST_DB_HOST=postgres-dest
+      - DEST_DB_PORT=5432
+      - DEST_DB_NAME=${DEST_DB_NAME:-destdb}
+      - DEST_DB_USER=${DEST_DB_USER:-destuser}
+      - DEST_DB_PASSWORD=${DEST_DB_PASSWORD:-destpass}
+    networks:
+      - etl-network
+    restart: always
+
 volumes:
   metabase-data:
   postgres-source-data:
