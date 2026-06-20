@@ -42,7 +42,7 @@ curl -X POST "${CONNECT_URL}/connectors" \
       \"database.password\": \"${SOURCE_DB_PASSWORD}\",
       \"database.dbname\": \"${SOURCE_DB_NAME}\",
       \"topic.prefix\": \"cdc\",
-      \"table.include.list\": \"public.orders\",
+      \"table.include.list\": \"public.customers,public.products,public.orders,public.order_items\",
       \"plugin.name\": \"pgoutput\",
       \"slot.name\": \"debezium_orders_slot\",
       \"publication.name\": \"debezium_orders_pub\",
