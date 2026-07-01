@@ -137,14 +137,20 @@ kubectl exec -n $NAMESPACE "$MINIO_POD" -- sh -c "
 " || warn "Could not create buckets automatically — create them manually in the MinIO console"
 ok "MinIO buckets ready"
 
-# ─── Step 5: Kafka (KRaft mode) ───────────────────────────────────────────────
+# ─── Step 5: Strimzi Kafka Operator & Kafka Cluster ───────────────────────────
 echo ""
 
-info "Deploying Kafka..."
-kubectl apply -f "$TMP_K8S/kafka/"
-info "Waiting for Kafka to be ready (this takes ~60s)..."
-kubectl rollout status statefulset/kafka -n $NAMESPACE --timeout=300s
-ok "Kafka is ready"
+info "Deploying Strimzi Kafka Operator..."
+kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f 'https://strimzi.io/install/latest?namespace=etl' -n $NAMESPACE
+kubectl rollout status deployment/strimzi-cluster-operator -n $NAMESPACE --timeout=300s
+ok "Strimzi Kafka Operator is ready"
+
+info "Deploying Kafka cluster via Strimzi..."
+kubectl apply -f "$TMP_K8S/kafka/kafka-cluster.yaml"
+info "Waiting for Kafka cluster to be ready (this takes ~3-4 mins)..."
+kubectl wait kafka/etl-kafka --for=condition=Ready --timeout=300s -n $NAMESPACE
+ok "Kafka cluster is ready"
 
 info "Deploying Kafka UI..."
 kubectl apply -f "$TMP_K8S/kafka-ui/"

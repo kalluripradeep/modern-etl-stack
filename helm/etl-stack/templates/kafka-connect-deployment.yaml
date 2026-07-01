@@ -23,7 +23,7 @@ spec:
             - sh
             - -c
             - |
-              until nc -z kafka.{{ .Release.Namespace }}.svc.cluster.local 9092; do
+              until nc -z etl-kafka-kafka-bootstrap.{{ .Release.Namespace }}.svc.cluster.local 9092; do
                 echo "Waiting for Kafka..."
                 sleep 5
               done
@@ -34,7 +34,7 @@ spec:
             - containerPort: 8083
           env:
             - name: BOOTSTRAP_SERVERS
-              value: "kafka.{{ .Release.Namespace }}.svc.cluster.local:9092"
+              value: "etl-kafka-kafka-bootstrap.{{ .Release.Namespace }}.svc.cluster.local:9092"
             - name: GROUP_ID
               value: "debezium-connect-cluster"
             - name: CONFIG_STORAGE_TOPIC

@@ -11,7 +11,7 @@ data:
   DEST_DB_HOST: "postgres-dest.{{ .Release.Namespace }}.svc.cluster.local"
   DEST_DB_PORT: "5432"
   MINIO_ENDPOINT: "http://minio.{{ .Release.Namespace }}.svc.cluster.local:9000"
-  KAFKA_BOOTSTRAP: "kafka.{{ .Release.Namespace }}.svc.cluster.local:9092"
+  KAFKA_BOOTSTRAP: "etl-kafka-kafka-bootstrap.{{ .Release.Namespace }}.svc.cluster.local:9092"
   SPARK_MASTER_URL: "spark://spark-master.{{ .Release.Namespace }}.svc.cluster.local:7077"
   KAFKA_CONNECT_URL: "http://kafka-connect.{{ .Release.Namespace }}.svc.cluster.local:8083"
   BRONZE_BUCKET: {{ .Values.etl.bronzeBucket | quote }}

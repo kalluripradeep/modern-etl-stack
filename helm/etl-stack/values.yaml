@@ -44,12 +44,11 @@ postgresDest:
       memory: 2Gi
       cpu: "1"
 
-# ─── Kafka ────────────────────────────────────────────────────────────────────
+# ─── Kafka (Strimzi Operator) ─────────────────────────────────────────────────
 kafka:
-  image: confluentinc/cp-kafka:7.5.0
-  storage: 20Gi
-  logRetentionHours: "168"
-  heapOpts: "-Xmx1G -Xms512M"
+  version: "3.5.0"
+  replicas: 1
+  interBrokerProtocolVersion: "3.5"
   resources:
     requests:
       memory: 512Mi
