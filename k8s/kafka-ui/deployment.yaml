@@ -22,7 +22,7 @@ spec:
         - name: KAFKA_CLUSTERS_0_NAME
           value: "local"
         - name: KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS
-          value: "kafka-0.kafka.etl.svc.cluster.local:9092"
+          value: "etl-kafka-kafka-bootstrap.etl.svc.cluster.local:9092"
         resources:
           requests:
             memory: "256Mi"
