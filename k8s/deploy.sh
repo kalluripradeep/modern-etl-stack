@@ -137,12 +137,8 @@ kubectl exec -n $NAMESPACE "$MINIO_POD" -- sh -c "
 " || warn "Could not create buckets automatically — create them manually in the MinIO console"
 ok "MinIO buckets ready"
 
-# ─── Step 5: Zookeeper + Kafka ────────────────────────────────────────────────
+# ─── Step 5: Kafka (KRaft mode) ───────────────────────────────────────────────
 echo ""
-info "Deploying Zookeeper..."
-kubectl apply -f "$TMP_K8S/zookeeper/"
-kubectl rollout status statefulset/zookeeper -n $NAMESPACE --timeout=300s
-ok "Zookeeper is ready"
 
 info "Deploying Kafka..."
 kubectl apply -f "$TMP_K8S/kafka/"

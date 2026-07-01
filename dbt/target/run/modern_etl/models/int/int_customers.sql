@@ -1,0 +1,31 @@
+
+  
+    
+
+  create  table "destdb"."int"."int_customers__dbt_tmp"
+  
+  
+    as
+  
+  (
+    
+
+WITH raw_customers AS (
+    SELECT * FROM "destdb"."raw"."customers"
+)
+
+SELECT
+    customer_id,
+    first_name,
+    last_name,
+    first_name || ' ' || last_name AS full_name,
+    email,
+    address,
+    city,
+    state,
+    zip_code,
+    created_at,
+    updated_at
+FROM raw_customers
+  );
+  

@@ -44,18 +44,6 @@ postgresDest:
       memory: 2Gi
       cpu: "1"
 
-# ─── Zookeeper ────────────────────────────────────────────────────────────────
-zookeeper:
-  image: confluentinc/cp-zookeeper:7.5.0
-  storage: 5Gi
-  resources:
-    requests:
-      memory: 256Mi
-      cpu: 100m
-    limits:
-      memory: 512Mi
-      cpu: 500m
-
 # ─── Kafka ────────────────────────────────────────────────────────────────────
 kafka:
   image: confluentinc/cp-kafka:7.5.0

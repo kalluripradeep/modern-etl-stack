@@ -46,7 +46,8 @@ curl -X POST "${CONNECT_URL}/connectors" \
       \"plugin.name\": \"pgoutput\",
       \"slot.name\": \"debezium_orders_slot\",
       \"publication.name\": \"debezium_orders_pub\",
-      \"snapshot.mode\": \"initial\"
+      \"snapshot.mode\": \"initial\",
+      \"decimal.handling.mode\": \"double\"
     }
   }"
 

@@ -23,8 +23,6 @@ spec:
           value: "local"
         - name: KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS
           value: "kafka-0.kafka.etl.svc.cluster.local:9092"
-        - name: KAFKA_CLUSTERS_0_ZOOKEEPER
-          value: "zookeeper-0.zookeeper.etl.svc.cluster.local:2181"
         resources:
           requests:
             memory: "256Mi"
