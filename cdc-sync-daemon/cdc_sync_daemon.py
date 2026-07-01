@@ -123,7 +123,6 @@ def ensure_destination_table(source_conn, dest_conn, table_name, metadata):
         
         # Build dynamic CREATE TABLE DDL
         with source_conn.cursor() as s_cur:
-            s_cur.execute(f"SELECT pg_get_ddl FROM (SELECT NULL) AS dummy LIMIT 0") # Dummy check
             # Instead of pg_dump, let's query the specific columns and reconstruct the DDL
             s_cur.execute("""
                 SELECT column_name, data_type, character_maximum_length, is_nullable
