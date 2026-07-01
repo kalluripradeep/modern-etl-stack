@@ -8,11 +8,20 @@ The system utilizes a **Definitive "Three-Track" Architecture**. This design sep
 
 ![Architecture Diagram](docs/images/architecture.png)
 
-### The Dual-Engine & Streaming Strategy
+## Data Pipelines
 
-1. **#1 Analytical Warehouse (Batch Analysis):** Managed by **Airflow** and **dbt**. Staged data is loaded into the destination warehouse (`postgres-dest`). **dbt** applies modular SQL transforms to structure the raw data into integrated and presentation schemas. Integrating the **dbt MCP Server** exposes compiled queries and metadata to Agentic AI assistants for natural-language dashboard querying.
-2. **#2 Lakehouse (Multiple Query Engines):** Managed by **Airflow** and **Spark**. Airflow orchestrates delta loads of parquet logs to **MinIO S3** (Bronze layer). **Apache Spark** transforms raw files into **Apache Iceberg** tables (Silver/Gold catalog) to allow high-scale historical data analysis and time-travel querying across multiple query engines.
-3. **#3 Operational DB Hot Mirror (Real-Time Analysis):** Captured in real-time by **Debezium CDC** and streamed through **Kafka Connect** (coordinated by **Zookeeper**) directly into the target database. This offers a sub-second, transactional row-store mirror of the source database changes for live downstream event-driven microservices.
+Pipelines use proven modern infrastructures (refer to figure): Airflow for complex orchestration, Spark for large datasets processing, DBT for transformations, Kafka for messaging, and MCP server for natural language queries. Business Intelligence (BI) tools for humans and agentic AI tools can be hooked up but will be covered in future work.
+
+### 1. Data Pipe #1: Analytical Warehouse - Batch Analysis
+Ideal for lower data urgency and relative operational simplicity. The objective is to off-load data from operational databases to analytics databases, thereby maintaining the performance SLAs of the operational database. This data transfer is managed by Airflow. Snapshots are extracted periodically from destination Postgres and DBT transforms into an analytics schema (Gold layer). This provides high data quality for analytics reporting, business intelligence tools, training AI models, and inference AI models. It also applies when processing large historical volumes but data transfer resources are minimal. Advantages are simpler architecture for deployment and debugging and lower infrastructure resource consumption.
+
+### 2. Data Pipe #2: Lakehouse - Multiple sources and Multiple Query Engines
+Apache Iceberg is used as a lakehouse for ingesting data from operational Postgres. This pipeline is ideal when ingesting data from multiple operational databases, via streaming or batch, as well as data from asynchronous events that affect decisions. Second, multiple groups need to query the lakehouse for analytics via diverse query engines. A lakehouse maintains data integrity and hence the quality of data. Supporting multiple input sources simultaneously while making data available for multiple agents addresses data urgency without blocking any specific entity.
+
+This pipe transfers data in chunked micro-batches from operational Postgres to Apache Iceberg lakehouse. This transfer is managed by Airflow and chunking saves memory. Spark processes data in Apache Iceberg tables (Silver layer) in MinIO. This pipe is designed to handle billions of rows that would be too expensive to store and process for analytics in an operational database. Apache Iceberg offers a balance of data urgency while maintaining high data access by multiple entities.
+
+### 3. Data Pipe #3: Operational Hot Mirror - Real-Time Analysis
+Captures real-time data changes using change data capture (CDC) with Debezium and Kafka. This provides a sub-second mirror of the source data in Postgres column store for live dashboards and operational monitoring while reducing performance impact on the operational database. Moreover near-real time data feeds to AI inference models allows for high urgency decisions and actions by humans and AI agents.
 
 ## Database Schema Structure
 
@@ -60,7 +69,7 @@ make register-connector
 | **Spark Master** | http://localhost:8081 | — |
 | **Kafka Connect** | http://localhost:8083 | — |
 
-## Data Pipelines
+## Orchestration & Pipeline Details
 
 ### Airflow DAGs
 
