@@ -6,57 +6,13 @@ A comprehensive ETL stack demonstrating the integration of open-source data engi
 
 The system utilizes a **Definitive "Three-Track" Architecture**. This design separates highspeed operational mirrors, business-critical analytics, and massive historical archives into independent, parallel tracks.
 
-```text
-           ┌──────────────┐
-           │  PostgreSQL  │  (Source Transactional Database)
-           │   (source)   │
-           └──────┬───────┘
-                  │
-      ┌───────────┼───────────┐
-      ▼           ▼           ▼
-  TRACK B:      TRACK A:    TRACK C:
- OPERATIONAL   ANALYTICAL   BIG DATA
-  (Mirror)    (Warehouse)  (Lakehouse)
-      │           │           │
-┌─────▼─────┐     │     ┌─────▼─────┐
-│ Debezium  │     │     │  Airflow  │ (The Orchestrator)
-└─────┬─────┘     │     └─────┬─────┘
-      │           │           │
-┌─────▼─────┐     │     ┌─────▼─────┐
-│   Kafka   │     │     │  MinIO    │ (Bronze Bucket)
-└─────┬─────┘     │     └─────┬─────┘
-      │      ┌────▼────┐      │
-┌─────▼─────┐│ Airflow │┌─────▼─────┐
-│ Real-Time │└────┬────┘│  Spark    │ (PySpark)
-│   Apps    │     │     └─────┬─────┘
-└───────────┘     │           │
-            ┌─────▼─────┐ ┌───▼───────┐
-            │    raw    │ │  Silver   │ (Iceberg Catalog)
-            │ (_source) │ └───────────┘
-            └─────┬─────┘
-                  │
-            ┌─────▼─────┐
-            │    dbt    │ (The Transformation Brain)
-            └─────┬─────┘
-                  ▼
-            ┌────────────┐
-            │    int     │ (Integration Layer: _clean)
-            └─────┬──────┘
-                  ▼
-            ┌────────────┐
-            │    prs     │ (Presentation Layer: v_*)
-            └─────┬──────┘
-                  │
-            ┌─────▼─────┐
-            │ Metabase  │ (BI Dashboard)
-            └───────────┘
-```
+![Architecture Diagram](docs/images/architecture.png)
 
-### The Triple-Track Strategy
+### The Dual-Engine & Streaming Strategy
 
-1.  **Track A: Analytical Warehouse (BI / Reporting):** Managed by **Airflow** and **dbt**. Snapshots are extracted daily and upserted into the `raw` schema. dbt cleans the data into the `int` schema, and aggregates it into the `prs` schema. This provides the "Cleaned Truth" for financial and business reporting via Metabase.
-2.  **Track B: Operational Streaming (Real-Time CDC):** Captured in real-time by **Debezium** and **Kafka**. This provides a sub-second mirror of the source database changes for live downstream event-driven microservices.
-3.  **Track C: Big Data Lakehouse (Scale):** Managed by **Airflow**, **MinIO**, and **Spark**. Raw Parquet files are processed into **Apache Iceberg** tables (Silver catalog). This track is designed to handle massive-scale analytical workloads using distributed computing.
+1. **#1 Analytical Warehouse (Batch Analysis):** Managed by **Airflow** and **dbt**. Staged data is loaded into the destination warehouse (`postgres-dest`). **dbt** applies modular SQL transforms to structure the raw data into integrated and presentation schemas. Integrating the **dbt MCP Server** exposes compiled queries and metadata to Agentic AI assistants for natural-language dashboard querying.
+2. **#2 Lakehouse (Multiple Query Engines):** Managed by **Airflow** and **Spark**. Airflow orchestrates delta loads of parquet logs to **MinIO S3** (Bronze layer). **Apache Spark** transforms raw files into **Apache Iceberg** tables (Silver/Gold catalog) to allow high-scale historical data analysis and time-travel querying across multiple query engines.
+3. **#3 Operational DB Hot Mirror (Real-Time Analysis):** Captured in real-time by **Debezium CDC** and streamed through **Kafka Connect** (coordinated by **Zookeeper**) directly into the target database. This offers a sub-second, transactional row-store mirror of the source database changes for live downstream event-driven microservices.
 
 ## Database Schema Structure
 
