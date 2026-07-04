@@ -14,6 +14,18 @@ MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT', 'http://minio:9000')
 MINIO_USER = os.getenv('MINIO_ROOT_USER', 'minioadmin')
 MINIO_PASSWORD = os.getenv('MINIO_ROOT_PASSWORD', 'minioadmin')
 
+# Iceberg JDBC catalog lives in postgres-dest (schema iceberg_catalog) so
+# Trino can query the same tables Spark writes.
+DEST_DB_HOST = os.getenv('DEST_DB_HOST', 'postgres-dest')
+DEST_DB_PORT = os.getenv('DEST_DB_PORT', '5432')
+DEST_DB_NAME = os.getenv('DEST_DB_NAME', 'destdb')
+DEST_DB_USER = os.getenv('DEST_DB_USER', 'destuser')
+DEST_DB_PASSWORD = os.getenv('DEST_DB_PASSWORD', 'destpass')
+ICEBERG_CATALOG_URI = (
+    f"jdbc:postgresql://{DEST_DB_HOST}:{DEST_DB_PORT}/{DEST_DB_NAME}"
+    "?currentSchema=iceberg_catalog"
+)
+
 default_args = {
     'owner': 'data_engineering',
     'depends_on_past': False,
@@ -44,10 +56,13 @@ with DAG(
         --conf spark.hadoop.fs.s3a.secret.key={MINIO_PASSWORD} \
         --conf spark.hadoop.fs.s3a.path.style.access=true \
         --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
-        --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.4.2,org.apache.hadoop:hadoop-aws:3.3.4 \
+        --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.4.2,org.apache.hadoop:hadoop-aws:3.3.4,org.postgresql:postgresql:42.7.4 \
         --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions \
         --conf spark.sql.catalog.silver=org.apache.iceberg.spark.SparkCatalog \
-        --conf spark.sql.catalog.silver.catalog-impl=org.apache.iceberg.hadoop.HadoopCatalog \
+        --conf spark.sql.catalog.silver.catalog-impl=org.apache.iceberg.jdbc.JdbcCatalog \
+        --conf spark.sql.catalog.silver.uri={ICEBERG_CATALOG_URI} \
+        --conf spark.sql.catalog.silver.jdbc.user={DEST_DB_USER} \
+        --conf spark.sql.catalog.silver.jdbc.password={DEST_DB_PASSWORD} \
         --conf spark.sql.catalog.silver.warehouse=s3a://silver/ \
         --name {job_name} {script_path} {additional_args}
     """

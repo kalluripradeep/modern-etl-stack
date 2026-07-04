@@ -50,6 +50,8 @@ stringData:
   KAFKA_UI_PASSWORD: $(rand)
   DASHBOARD_AUTH_USER: admin
   DASHBOARD_AUTH_PASSWORD: $(rand)
+  CLICKHOUSE_USER: chuser
+  CLICKHOUSE_PASSWORD: $(rand)
 EOF
 
 chmod 600 "$OUT"

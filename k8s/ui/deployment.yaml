@@ -50,6 +50,20 @@ spec:
             secretKeyRef:
               name: etl-secrets
               key: DASHBOARD_AUTH_PASSWORD
+        - name: TRINO_URL
+          value: "http://trino.etl.svc.cluster.local:8080"
+        - name: CLICKHOUSE_URL
+          value: "http://clickhouse.etl.svc.cluster.local:8123"
+        - name: CLICKHOUSE_USER
+          valueFrom:
+            secretKeyRef:
+              name: etl-secrets
+              key: CLICKHOUSE_USER
+        - name: CLICKHOUSE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: etl-secrets
+              key: CLICKHOUSE_PASSWORD
         # Optional: set ANTHROPIC_API_KEY in etl-secrets to enable the real AI
         # assistant. Without it the dashboard runs in demo mode.
         resources:
