@@ -29,16 +29,17 @@ spec:
             secretKeyRef:
               name: etl-secrets
               key: DEST_DB_NAME
+        # Read-only role — the dashboard never needs write access
         - name: DEST_DB_USER
           valueFrom:
             secretKeyRef:
               name: etl-secrets
-              key: DEST_DB_USER
+              key: DASHBOARD_DB_USER
         - name: DEST_DB_PASSWORD
           valueFrom:
             secretKeyRef:
               name: etl-secrets
-              key: DEST_DB_PASSWORD
+              key: DASHBOARD_DB_PASSWORD
         # Optional: set ANTHROPIC_API_KEY in etl-secrets to enable the real AI
         # assistant. Without it the dashboard runs in demo mode.
         resources:
