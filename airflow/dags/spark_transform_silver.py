@@ -6,7 +6,7 @@ Parallelized transformation tasks with NEW Weekly Iceberg Maintenance.
 import os
 from datetime import datetime, timedelta
 from airflow import DAG
-from airflow.operators.bash import BashOperator
+from airflow.providers.standard.operators.bash import BashOperator
 
 # Fetch cluster-specific configurations from environment (set via Docker or Helm)
 SPARK_MASTER_URL = os.getenv('SPARK_MASTER_URL', 'spark://spark-master:7077')
