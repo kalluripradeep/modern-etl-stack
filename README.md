@@ -1,100 +1,127 @@
 # Modern ETL Infrastructure
 
-A comprehensive ETL stack demonstrating the integration of open-source data engineering tools. This project features both **real-time CDC (Change Data Capture)** via Kafka/Debezium and **high-scale batch processing** pipelines orchestrating data movement between a staging relational database, a data lake, and a destination database.
+A comprehensive ETL stack demonstrating the integration of open-source data engineering tools. One operational source database feeds **three independent, parallel pipelines**: a real-time CDC mirror, a batch analytical warehouse, and an Iceberg lakehouse — topped with an AI data assistant that answers natural-language questions against all of them.
 
 ## Architecture
 
-The system utilizes a **Definitive "Three-Track" Architecture**. This design separates highspeed operational mirrors, business-critical analytics, and massive historical archives into independent, parallel tracks.
-
 ![Architecture Diagram](docs/images/architecture.png)
+
+```
+                         ┌──► PIPE 3 · Operational Hot Mirror (seconds)
+                         │     WAL → Debezium → Kafka ─┬─► postgres-dest public.*  (row store)
+                         │                             └─► ClickHouse mirror.*     (column store)
+ postgres-source ────────┼──► PIPE 1 · Analytical Warehouse (batch)
+  (operational DB)       │     Airflow ingest → postgres-dest raw.* → dbt → int.* → prs.v_*
+                         │                   └─► MinIO bronze/ (parquet)
+                         │                              │
+                         └──────────────────────────────┴──► PIPE 2 · Lakehouse (batch, big data)
+                                                             Spark → Iceberg tables (silver, MinIO)
+                                                             queried via Trino
+```
+
+All three pipelines run in parallel from the same source. Pipes 1 and 3 are fully independent; Pipe 2 consumes the bronze parquet produced by Pipe 1's ingestion DAG.
 
 ## Data Pipelines
 
-Pipelines use proven modern infrastructures (refer to figure): Airflow for complex orchestration, Spark for large datasets processing, DBT for transformations, Kafka for messaging, and MCP server for natural language queries. Business Intelligence (BI) tools for humans and agentic AI tools can be hooked up but will be covered in future work.
+### 1. Analytical Warehouse — Batch Analysis
+Airflow extracts snapshots from the operational database in chunked micro-batches, lands them in the `raw` schema of the destination warehouse, and dbt transforms them into cleaned (`int`) and presentation (`prs`) layers. Best for business reporting, BI tools, and any workload where daily freshness is enough. Simple to deploy and debug, minimal infrastructure.
 
-### 1. Data Pipe #1: Analytical Warehouse - Batch Analysis
-Ideal for lower data urgency and relative operational simplicity. The objective is to off-load data from operational databases to analytics databases, thereby maintaining the performance SLAs of the operational database. This data transfer is managed by Airflow. Snapshots are extracted periodically from destination Postgres and DBT transforms into an analytics schema (Gold layer). This provides high data quality for analytics reporting, business intelligence tools, training AI models, and inference AI models. It also applies when processing large historical volumes but data transfer resources are minimal. Advantages are simpler architecture for deployment and debugging and lower infrastructure resource consumption.
+### 2. Lakehouse — Big Historical Data, Many Query Engines
+The same ingestion run writes parquet files to MinIO (bronze). Spark jobs clean and MERGE them into **Apache Iceberg** tables (silver), and **Trino** exposes those tables over ANSI SQL (`iceberg.lake.*`) to BI tools, notebooks, and the AI assistant. The Iceberg catalog is a JDBC catalog stored in the destination Postgres, so Spark and Trino always see the same tables. Designed for data volumes that would be too expensive to keep in an operational database.
 
-### 2. Data Pipe #2: Lakehouse - Multiple sources and Multiple Query Engines
-Apache Iceberg is used as a lakehouse for ingesting data from operational Postgres. This pipeline is ideal when ingesting data from multiple operational databases, via streaming or batch, as well as data from asynchronous events that affect decisions. Second, multiple groups need to query the lakehouse for analytics via diverse query engines. A lakehouse maintains data integrity and hence the quality of data. Supporting multiple input sources simultaneously while making data available for multiple agents addresses data urgency without blocking any specific entity.
+### 3. Operational Hot Mirror — Real-Time Analysis
+Debezium captures every insert/update/delete from the source WAL into Kafka. Two consumers apply the stream:
+- a **row-store mirror** in destination Postgres (`public.*`) — used for point lookups and the live dashboard,
+- a **column-store mirror** in **ClickHouse** (`mirror.*_current` views) — used for fast aggregations over the live data.
 
-This pipe transfers data in chunked micro-batches from operational Postgres to Apache Iceberg lakehouse. This transfer is managed by Airflow and chunking saves memory. Spark processes data in Apache Iceberg tables (Silver layer) in MinIO. This pipe is designed to handle billions of rows that would be too expensive to store and process for analytics in an operational database. Apache Iceberg offers a balance of data urgency while maintaining high data access by multiple entities.
+Sub-second-to-seconds freshness for live dashboards and operational monitoring, without touching the source database's performance.
 
-### 3. Data Pipe #3: Operational Hot Mirror - Real-Time Analysis
-Captures real-time data changes using change data capture (CDC) with Debezium and Kafka. This provides a sub-second mirror of the source data in Postgres column store for live dashboards and operational monitoring while reducing performance impact on the operational database. Moreover near-real time data feeds to AI inference models allows for high urgency decisions and actions by humans and AI agents.
+### AI Data Assistant
+A Next.js dashboard with an agentic analyst: it introspects the schemas of all three stores, decides which engine fits the question (warehouse, lakehouse via Trino, or the ClickHouse mirror), runs read-only SQL with automatic error-retry, and answers in plain language. Runs in demo mode without an API key; add an Anthropic API key to enable it, and set `DASHBOARD_AUTH_PASSWORD` to require a login.
 
 ## Database Schema Structure
 
-The Destination Data Warehouse (`destdb`) is strictly organized to ensure data quality and clear governance:
-- **`raw` Schema:** Receives raw, messy data directly from the source system. Tables strictly follow the `_source` suffix (e.g., `raw.orders_source`).
-- **`int` Schema:** The integration layer where data is cleaned, filtered, and deduplicated. Tables strictly follow the `_clean` suffix (e.g., `int.orders_clean`).
-- **`prs` Schema:** The presentation layer exposing final, aggregated business views (e.g., `prs.v_daily_revenue`). Only this schema is exposed to BI tools.
+The destination warehouse (`destdb`) is strictly organized:
+- **`public`:** live CDC row mirror of the source tables.
+- **`raw`:** batch snapshots straight from the source (`*_source` tables).
+- **`int`:** cleaned, deduplicated integration layer (`*_clean` tables).
+- **`prs`:** presentation views for BI (`prs.v_daily_revenue`, …). Only this schema is exposed to BI tools.
+- **`iceberg_catalog`:** Iceberg JDBC catalog metadata (managed by Spark/Trino — do not touch).
 
 ## Technology Stack
 
 | Layer | Component |
 |---|---|
-| **Orchestration** | Apache Airflow 2.8 |
-| **CDC / Streaming** | Debezium 2.5 & Confluent Kafka 7.5 |
+| **Orchestration** | Apache Airflow 3.2 |
+| **CDC / Streaming** | Debezium 2.5 & Apache Kafka (KRaft) |
 | **Object Storage** | MinIO (S3-compatible) |
-| **Transformation** | dbt-core 1.7 (Incremental Models) |
+| **Warehouse Transformation** | dbt-core (incremental models + tests) |
 | **Batch Compute** | Apache Spark 3.5 & Apache Iceberg 1.4 |
-| **Data Warehouse** | PostgreSQL 15 |
+| **Lakehouse Query Engine** | Trino |
+| **Row Warehouse / Mirror** | PostgreSQL 15 |
+| **Columnar Mirror** | ClickHouse 24.8 |
+| **AI Assistant** | Next.js + Claude (agentic SQL over all stores) |
 | **BI / Dashboards** | Metabase |
+| **Monitoring** | Prometheus & Grafana |
 
 ## Quick Start
 
 ```bash
-# 1. Clone repository and initialize environment variables
-cp .env.example .env 
+# 1. Initialize environment variables (edit passwords as needed)
+cp .env.example .env
 
 # 2. Spin up containers
 make up
 
-# 3. Wait ~60 seconds for services to reach healthy state, then seed database
+# 3. Wait ~60 seconds for services to become healthy, then seed data
 make seed
 
 # 4. Register the Debezium CDC connector
 make register-connector
 ```
 
+Kubernetes: `bash k8s/generate-secrets.sh && bash k8s/deploy.sh` (see [DEPLOY_GUIDE.md](DEPLOY_GUIDE.md)).
+
 ## Service Access URLs
 
-| Service | Local URL | Credentials (Default) |
+| Service | Local URL | Credentials (from `.env`) |
 |---|---|---|
 | **Airflow UI** | http://localhost:8080 | admin / admin |
-| **MinIO Console** | http://localhost:9001 | minioadmin / minioadmin |
-| **Kafka UI** | http://localhost:8001 | — |
-| **Metabase** | http://localhost:3030 | (Setup Required) |
+| **AI Dashboard** | http://localhost:3000 *(run `npm run dev` in `ui/`)* | open unless `DASHBOARD_AUTH_PASSWORD` set |
+| **Trino UI** | http://localhost:8082 | any username |
+| **ClickHouse** | http://localhost:8123 | `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` |
+| **MinIO Console** | http://localhost:9001 | `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` |
+| **Kafka UI** | http://localhost:8001 | `KAFKA_UI_USER` / `KAFKA_UI_PASSWORD` |
+| **Metabase** | http://localhost:3030 | (setup required) |
 | **Spark Master** | http://localhost:8081 | — |
-| **Kafka Connect** | http://localhost:8083 | — |
+| **Grafana** | http://localhost:3000 *(compose)* | `GRAFANA_ADMIN_USER` / password |
 
 ## Orchestration & Pipeline Details
 
 ### Airflow DAGs
 
 1. **`ingest_source_to_bronze`** *(The Ingestion Engine)*
-   - Parallel flow: Simultaneously extracts data to **MinIO Bronze** (for the Lakehouse) and **Postgres `raw`** (for the Warehouse).
-   - Once ingestion is complete, it directly triggers the `dbt_transformations` task group.
-2. **`dbt_transformations`** *(The Transformation Engine)*
-   - Automatically cleans raw data into the `int` schema, and builds presentation views in the `prs` schema.
+   - Extracts every source table in chunks; loads **Postgres `raw`** (warehouse) and **MinIO `bronze`** (lakehouse) in the same pass.
+   - Triggers the dbt task group and the Spark DAG when done.
+2. **`dbt_transformations`** *(Cosmos task group)*
+   - Cleans `raw` into `int`, builds `prs` views, runs all dbt tests.
 3. **`spark_transform_silver`** *(The Lakehouse Engine)*
-   - High-scale Spark jobs that process raw Parquet files from Bronze into **Apache Iceberg** tables.
+   - Spark MERGEs bronze parquet into Iceberg tables (`iceberg.lake.*`), plus weekly compaction/maintenance.
 
-### dbt Modeling Structure
+### Querying the lakehouse
 
-```text
-dbt/models/
-├── int/
-│   ├── customers_clean.sql
-│   ├── order_items_clean.sql
-│   ├── orders_clean.sql
-│   └── products_clean.sql
-└── prs/
-    ├── v_customers.sql
-    ├── v_daily_revenue.sql
-    ├── v_orders.sql
-    └── v_products.sql
+```sql
+-- via Trino (http://localhost:8082, any user)
+SELECT status, count(*), sum(total_amount)
+FROM iceberg.lake.orders
+GROUP BY status;
+```
+
+### Querying the columnar mirror
+
+```sql
+-- via ClickHouse (http://localhost:8123)
+SELECT status, count() FROM mirror.orders_current GROUP BY status;
 ```
 
 ## Project Operations
@@ -107,3 +134,9 @@ make ps                  # Service health check
 make seed                # Generate sample source data
 make register-connector  # Initialize Debezium CDC connector
 ```
+
+## Security Notes
+
+- The AI dashboard executes only single read-only SELECT statements, over a SELECT-only database role, behind optional HTTP Basic Auth.
+- Kafka UI and Grafana require logins; MinIO and ClickHouse use credentials from `.env` / `etl-secrets`.
+- For Kubernetes, generate non-default credentials with `bash k8s/generate-secrets.sh` before deploying.
