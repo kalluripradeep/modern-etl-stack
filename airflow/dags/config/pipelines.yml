@@ -1,0 +1,79 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Pipeline manifest — the single source of truth for which tables flow
+# through the platform.
+#
+# Consumed directly by:
+#   - airflow/dags/ingest_source_to_bronze.py   (raw DDL, extract queries)
+# Consumed via generated artifacts (run `make generate` after editing):
+#   - docker/clickhouse/initdb/01_mirror_schema.sql
+#   - scripts/register_debezium_connector.sh
+#   - cdc-sync-daemon/cdc_tables.py
+#
+# CI fails if the generated artifacts are out of sync with this file.
+#
+# Column types use PostgreSQL names; the generator maps them to
+# ClickHouse types automatically.
+# ─────────────────────────────────────────────────────────────────────────────
+
+source_schema: public
+topic_prefix: cdc
+
+tables:
+  customers:
+    primary_key: customer_id
+    cursor_column: updated_at        # incremental extract high-water mark
+    columns:
+      customer_id: BIGINT
+      first_name: TEXT
+      last_name: TEXT
+      email: TEXT
+      address: TEXT
+      city: TEXT
+      state: TEXT
+      zip_code: TEXT
+      created_at: TIMESTAMP
+      updated_at: TIMESTAMP
+    update_columns: [first_name, last_name, email, address, city, state, zip_code, updated_at]
+    unique_columns: [email]
+
+  products:
+    primary_key: product_id
+    cursor_column: updated_at
+    columns:
+      product_id: BIGINT
+      name: TEXT
+      description: TEXT
+      price: NUMERIC(18,2)
+      category: TEXT
+      stock_quantity: INTEGER
+      created_at: TIMESTAMP
+      updated_at: TIMESTAMP
+    update_columns: [name, description, price, category, stock_quantity, updated_at]
+    low_cardinality: [category, status]
+
+  orders:
+    primary_key: order_id
+    cursor_column: updated_at
+    columns:
+      order_id: BIGINT
+      customer_id: BIGINT
+      order_date: TIMESTAMP
+      total_amount: NUMERIC(18,2)
+      status: TEXT
+      created_at: TIMESTAMP
+      updated_at: TIMESTAMP
+    update_columns: [total_amount, status, updated_at]
+    low_cardinality: [status]
+
+  order_items:
+    primary_key: item_id
+    cursor_column: updated_at
+    columns:
+      item_id: BIGINT
+      order_id: BIGINT
+      product_id: BIGINT
+      quantity: INTEGER
+      unit_price: NUMERIC(18,2)
+      created_at: TIMESTAMP
+      updated_at: TIMESTAMP
+    update_columns: [quantity, unit_price, updated_at]

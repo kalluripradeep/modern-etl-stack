@@ -22,79 +22,13 @@ from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from cosmos import DbtTaskGroup, ProjectConfig, ProfileConfig, ExecutionConfig
 from cosmos.profiles import PostgresUserPasswordProfileMapping
 
+from pipeline_config import load_manifest, raw_ddl
+
 log = logging.getLogger(__name__)
 
-# --- Configuration for Source Tables ---
-TABLES_CONFIG = {
-    'orders': {
-        'pk': 'order_id',
-        'columns': ['order_id', 'customer_id', 'order_date', 'total_amount', 'status', 'created_at', 'updated_at'],
-        'update_cols': ['total_amount', 'status', 'updated_at'],
-        'ddl': """
-            CREATE TABLE IF NOT EXISTS raw.orders_source (
-                order_id     BIGINT PRIMARY KEY,
-                customer_id  BIGINT,
-                order_date   TIMESTAMP,
-                total_amount NUMERIC(18,2),
-                status       TEXT,
-                created_at   TIMESTAMP,
-                updated_at   TIMESTAMP
-            )
-        """
-    },
-    'customers': {
-        'pk': 'customer_id',
-        'columns': ['customer_id', 'first_name', 'last_name', 'email', 'address', 'city', 'state', 'zip_code', 'created_at', 'updated_at'],
-        'update_cols': ['first_name', 'last_name', 'email', 'address', 'city', 'state', 'zip_code', 'updated_at'],
-        'ddl': """
-            CREATE TABLE IF NOT EXISTS raw.customers_source (
-                customer_id  BIGINT PRIMARY KEY,
-                first_name   TEXT,
-                last_name    TEXT,
-                email        TEXT UNIQUE,
-                address      TEXT,
-                city         TEXT,
-                state        TEXT,
-                zip_code     TEXT,
-                created_at   TIMESTAMP,
-                updated_at   TIMESTAMP
-            )
-        """
-    },
-    'products': {
-        'pk': 'product_id',
-        'columns': ['product_id', 'name', 'description', 'price', 'category', 'stock_quantity', 'created_at', 'updated_at'],
-        'update_cols': ['name', 'description', 'price', 'category', 'stock_quantity', 'updated_at'],
-        'ddl': """
-            CREATE TABLE IF NOT EXISTS raw.products_source (
-                product_id     BIGINT PRIMARY KEY,
-                name           TEXT,
-                description    TEXT,
-                price          NUMERIC(18,2),
-                category       TEXT,
-                stock_quantity INTEGER,
-                created_at     TIMESTAMP,
-                updated_at     TIMESTAMP
-            )
-        """
-    },
-    'order_items': {
-        'pk': 'item_id',
-        'columns': ['item_id', 'order_id', 'product_id', 'quantity', 'unit_price', 'created_at', 'updated_at'],
-        'update_cols': ['quantity', 'unit_price', 'updated_at'],
-        'ddl': """
-            CREATE TABLE IF NOT EXISTS raw.order_items_source (
-                item_id    BIGINT PRIMARY KEY,
-                order_id   BIGINT,
-                product_id BIGINT,
-                quantity   INTEGER,
-                unit_price NUMERIC(18,2),
-                created_at TIMESTAMP,
-                updated_at TIMESTAMP
-            )
-        """
-    }
-}
+# Single source of truth for tables: airflow/dags/config/pipelines.yml
+MANIFEST = load_manifest()
+TABLES_CONFIG = MANIFEST['tables']
 
 default_args = {
     'owner': 'data_engineering',
@@ -138,9 +72,12 @@ def extract_and_load_table(table_name, **kwargs):
     Generic extraction and loading function for any source table.
     """
     config = TABLES_CONFIG[table_name]
+    pk = config['primary_key']
+    columns = list(config['columns'].keys())
+    cursor_col = config.get('cursor_column')
     logical_date = kwargs.get('logical_date', datetime.now())
     date_prefix = logical_date.strftime("%Y/%m/%d")
-    
+
     chunk_size = int(os.environ.get('ETL_CHUNK_SIZE', 10000))
     bucket_name = 'bronze'
 
@@ -153,29 +90,32 @@ def extract_and_load_table(table_name, **kwargs):
 
     # 1. Ensure target table exists in DWH
     dest_hook.run("CREATE SCHEMA IF NOT EXISTS raw;")
-    dest_hook.run(config['ddl'])
+    dest_hook.run(raw_ddl(table_name, config))
 
     # 2. Extract from Source (Incremental CDC Logic)
-    cols_str = ",".join(config['columns'])
-    
-    # 2a. Fetch the high-water mark (MAX updated_at) from the Destination staging DB
+    cols_str = ",".join(columns)
+
+    # 2a. Fetch the high-water mark (MAX cursor) from the Destination staging DB
     max_date = None
-    try:
-        # table_name comes from TABLES_CONFIG keys, never from user input
-        records = dest_hook.get_records(f"SELECT MAX(updated_at) FROM raw.{table_name}_source")  # nosec B608
-        if records and records[0] and records[0][0]:
-            max_date = records[0][0]
-    except Exception as e:
-        log.warning(f"Could not fetch high-water mark for {table_name}, doing full refresh. Error: {e}")
+    if cursor_col:
+        try:
+            # identifiers come from the manifest, never from user input
+            records = dest_hook.get_records(
+                f"SELECT MAX({cursor_col}) FROM raw.{table_name}_source"  # nosec B608
+            )
+            if records and records[0] and records[0][0]:
+                max_date = records[0][0]
+        except Exception as e:
+            log.warning(f"Could not fetch high-water mark for {table_name}, doing full refresh. Error: {e}")
 
     # 2b. Build dynamic Source query
     if max_date:
-        log.info(f"CDC Active: Extracting {table_name} where updated_at > '{max_date}'")
+        log.info(f"CDC Active: Extracting {table_name} where {cursor_col} > '{max_date}'")
         formatted_date = max_date.strftime('%Y-%m-%d %H:%M:%S.%f')
-        query = f"SELECT {cols_str} FROM {table_name} WHERE updated_at > '{formatted_date}' ORDER BY {config['pk']}"  # nosec B608
+        query = f"SELECT {cols_str} FROM {table_name} WHERE {cursor_col} > '{formatted_date}' ORDER BY {pk}"  # nosec B608
     else:
         log.info(f"CDC Inactive: Performing full extraction for {table_name}")
-        query = f"SELECT {cols_str} FROM {table_name} ORDER BY {config['pk']}"  # nosec B608
+        query = f"SELECT {cols_str} FROM {table_name} ORDER BY {pk}"  # nosec B608
     source_engine = source_hook.get_sqlalchemy_engine()
 
     with tempfile.TemporaryDirectory() as tmpdirname:
@@ -202,7 +142,7 @@ def extract_and_load_table(table_name, **kwargs):
                     df_chunk = pd.read_parquet(file_path)
                     
                     # Basic validation
-                    if df_chunk[config['pk']].isnull().any():
+                    if df_chunk[pk].isnull().any():
                         raise ValueError(f"Data quality error: Null PKs in {table_name} at {file_path}")
 
                     # Upload to MinIO
@@ -220,12 +160,12 @@ def extract_and_load_table(table_name, **kwargs):
                     
                     pg_cursor.copy_expert(f"COPY {stage_table} ({cols_str}) FROM STDIN WITH CSV", buffer)
                     
-                    update_set = ", ".join([f"{c} = EXCLUDED.{c}" for c in config['update_cols']])
-                    # all identifiers come from TABLES_CONFIG, never from user input
+                    update_set = ", ".join([f"{c} = EXCLUDED.{c}" for c in config['update_columns']])
+                    # all identifiers come from the manifest, never from user input
                     upsert_sql = f"""
                         INSERT INTO raw.{table_name}_source
                         SELECT * FROM {stage_table}
-                        ON CONFLICT ({config['pk']}) DO UPDATE SET
+                        ON CONFLICT ({pk}) DO UPDATE SET
                             {update_set}
                     """  # nosec B608
                     pg_cursor.execute(upsert_sql)
@@ -233,6 +173,65 @@ def extract_and_load_table(table_name, **kwargs):
                     total_loaded += len(df_chunk)
                 
         log.info(f"Successfully synced {total_loaded} rows for {table_name}")
+
+    _emit_metric(f'etl.rows_synced.{table_name}', total_loaded)
+
+
+def _emit_metric(name, value):
+    """Best-effort statsd gauge, scraped by Prometheus via statsd-exporter.
+    Metrics are optional — never fail a task because monitoring is down."""
+    try:
+        try:
+            from airflow.sdk.observability.stats import Stats
+        except ImportError:  # older Airflow
+            from airflow.stats import Stats
+        Stats.gauge(name, value)
+    except Exception as e:  # pragma: no cover - monitoring must not break ETL
+        log.warning(f"Could not emit metric {name}: {e}")
+
+
+def emit_data_quality_metrics(**kwargs):
+    """Publish source-freshness and revenue-anomaly signals for alerting."""
+    from datetime import timezone
+
+    dest_hook = PostgresHook(postgres_conn_id='dest_postgres')
+
+    # Freshness: seconds since the newest row per table (cursor column)
+    for name, table in TABLES_CONFIG.items():
+        cursor_col = table.get('cursor_column')
+        if not cursor_col:
+            continue
+        try:
+            rec = dest_hook.get_first(
+                f"SELECT EXTRACT(EPOCH FROM (now() - MAX({cursor_col}))) "  # nosec B608
+                f"FROM raw.{name}_source"
+            )
+            if rec and rec[0] is not None:
+                _emit_metric(f'etl.freshness.{name}', float(rec[0]))
+        except Exception as e:
+            log.warning(f"Freshness metric failed for {name}: {e}")
+
+    # Revenue anomaly: z-score of the latest completed day vs the prior 30
+    try:
+        rows = dest_hook.get_records("""
+            SELECT order_date::date AS d, SUM(total_amount) AS revenue
+            FROM raw.orders_source
+            WHERE status <> 'cancelled'
+            GROUP BY 1 ORDER BY 1 DESC LIMIT 31
+        """)
+        if rows and len(rows) >= 8:
+            values = [float(r[1]) for r in rows if r[1] is not None]
+            latest, history = values[0], values[1:]
+            mean = sum(history) / len(history)
+            var = sum((x - mean) ** 2 for x in history) / len(history)
+            std = var ** 0.5
+            z = (latest - mean) / std if std > 0 else 0.0
+            _emit_metric('etl.revenue_anomaly_z', z)
+            log.info(f"Revenue anomaly z-score: {z:.2f} (latest={latest:.2f}, mean={mean:.2f})")
+    except Exception as e:
+        log.warning(f"Revenue anomaly metric failed: {e}")
+
+    _ = kwargs, timezone  # reserved for future per-run labelling
 
 
 with dag:
@@ -262,5 +261,12 @@ with dag:
         wait_for_completion=False,
     )
 
+    # Data-quality signals for Grafana / alerting
+    data_quality_metrics = PythonOperator(
+        task_id="emit_data_quality_metrics",
+        python_callable=emit_data_quality_metrics,
+    )
+
     ingestion_tasks >> dbt_transformations
     ingestion_tasks >> trigger_spark
+    ingestion_tasks >> data_quality_metrics
