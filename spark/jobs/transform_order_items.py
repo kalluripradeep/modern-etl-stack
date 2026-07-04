@@ -38,7 +38,8 @@ def transform_order_items(df):
 def upsert_to_iceberg(spark, df):
     """Upsert OrderItems to Silver Iceberg table"""
     catalog_name = "silver"
-    table_name = f"{catalog_name}.order_items"
+    table_name = f"{catalog_name}.lake.order_items"
+    spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {catalog_name}.lake")
 
     # 1. Create table if not exists (first run)
     if not spark.catalog.tableExists(table_name):

@@ -9,12 +9,12 @@ def main():
     print("\n--- Querying Silver Iceberg Catalog ---")
     try:
         # Querying Iceberg Silver Table
-        orders_df = spark.sql("SELECT * FROM silver.orders")
+        orders_df = spark.sql("SELECT * FROM silver.lake.orders")
         record_count = orders_df.count()
-        print(f"Total records in Iceberg 'silver.orders': {record_count}")
+        print(f"Total records in Iceberg 'silver.lake.orders': {record_count}")
         
         print("\nTop 5 latest orders in the Data Lake:")
-        spark.sql("SELECT order_id, customer_id, total_amount, status, updated_at FROM silver.orders ORDER BY updated_at DESC LIMIT 5").show(truncate=False)
+        spark.sql("SELECT order_id, customer_id, total_amount, status, updated_at FROM silver.lake.orders ORDER BY updated_at DESC LIMIT 5").show(truncate=False)
         
     except Exception as e:
         print(f"Error querying Silver Iceberg table: {e}")

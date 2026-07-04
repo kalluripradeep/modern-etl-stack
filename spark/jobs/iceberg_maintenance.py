@@ -54,10 +54,10 @@ def main():
     
     # Target our primary analytical tables
     tables_to_optimize = [
-        ("silver.orders", "order_date"),
-        ("silver.customers", "customer_id"),
-        ("silver.order_items", "order_id"),
-        ("silver.products", "product_id")
+        ("silver.lake.orders", "order_date"),
+        ("silver.lake.customers", "customer_id"),
+        ("silver.lake.order_items", "order_id"),
+        ("silver.lake.products", "product_id")
     ]
     
     try:
