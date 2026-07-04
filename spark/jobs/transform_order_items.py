@@ -6,7 +6,7 @@ Uses Iceberg MERGE INTO for high-performance incremental transaction line-item u
 import os
 import sys
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, lit, current_timestamp
+from pyspark.sql.functions import col, current_timestamp
 
 
 def create_spark_session():

@@ -5,7 +5,6 @@ Copies Parquet file to Spark data directory
 
 import pandas as pd
 from datetime import datetime
-import shutil
 import os
 
 
