@@ -108,13 +108,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: pip-audit (report only until the dependency refresh)
-        # The pinned Airflow provider versions predate Airflow 3 and pull in
-        # packages with known CVEs. Blocking this requires upgrading the pins
-        # in requirements.txt / requirements-airflow.txt first.
+      - name: pip-audit
         run: |
           pip install pip-audit
-          pip-audit -r requirements.txt || true
+          pip-audit -r requirements.txt
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -223,6 +220,10 @@ jobs:
           python-version: '3.11'
       - name: Install dbt
         run: pip install dbt-core dbt-postgres
+      - name: Seed raw source tables
+        env:
+          PGPASSWORD: destpass
+        run: psql -h localhost -U destuser -d destdb -v ON_ERROR_STOP=1 -f scripts/ci/seed_dbt_ci.sql
       - name: Run dbt
         env:
           DEST_DB_HOST: localhost
@@ -230,11 +231,9 @@ jobs:
           DEST_DB_PASSWORD: destpass
           DEST_DB_NAME: destdb
           DEST_DB_PORT: '5432'
-        # dbt run/test stay soft until CI seeds the raw source tables the
-        # models select from; debug and deps are hard requirements.
         run: |
           cd dbt
           dbt debug
           dbt deps
-          dbt run || true
-          dbt test || true
+          dbt run
+          dbt test
