@@ -2,7 +2,7 @@
     materialized='view'
 ) }}
 
-SELECT
+select
     product_id,
     name,
     description,
@@ -11,5 +11,5 @@ SELECT
     stock_quantity,
     created_at,
     updated_at,
-    CURRENT_TIMESTAMP AS dbt_updated_at
-FROM {{ ref('products_clean') }}
+    CURRENT_TIMESTAMP as dbt_updated_at
+from {{ ref('products_clean') }}

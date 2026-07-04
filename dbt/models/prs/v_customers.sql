@@ -2,7 +2,7 @@
     materialized='view'
 ) }}
 
-SELECT
+select
     customer_id,
     first_name,
     last_name,
@@ -14,5 +14,5 @@ SELECT
     zip_code,
     created_at,
     updated_at,
-    CURRENT_TIMESTAMP AS dbt_updated_at
-FROM {{ ref('customers_clean') }}
+    CURRENT_TIMESTAMP as dbt_updated_at
+from {{ ref('customers_clean') }}

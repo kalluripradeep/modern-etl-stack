@@ -2,15 +2,15 @@
     materialized='view'
 ) }}
 
-WITH int_orders AS (
-    SELECT * FROM {{ ref('orders_clean') }}
+with int_orders as (
+    select * from {{ ref('orders_clean') }}
 ),
 
-int_order_items AS (
-    SELECT * FROM {{ ref('order_items_clean') }}
+int_order_items as (
+    select * from {{ ref('order_items_clean') }}
 )
 
-SELECT
+select
     oi.item_id,
     o.order_id,
     o.customer_id,
@@ -18,11 +18,11 @@ SELECT
     o.order_date,
     oi.quantity,
     oi.unit_price,
-    (oi.quantity * oi.unit_price) AS item_total_price,
-    o.total_amount AS order_total_amount,
-    o.status AS order_status,
-    o.created_at AS order_created_at,
-    o.updated_at AS order_updated_at,
-    CURRENT_TIMESTAMP AS dbt_updated_at
-FROM int_order_items oi
-JOIN int_orders o ON oi.order_id = o.order_id
+    o.total_amount as order_total_amount,
+    o.status as order_status,
+    o.created_at as order_created_at,
+    o.updated_at as order_updated_at,
+    (oi.quantity * oi.unit_price) as item_total_price,
+    CURRENT_TIMESTAMP as dbt_updated_at
+from int_order_items as oi
+inner join int_orders as o on oi.order_id = o.order_id

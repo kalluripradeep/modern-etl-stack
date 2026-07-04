@@ -3,11 +3,11 @@
     unique_key='product_id'
 ) }}
 
-WITH raw_products AS (
-    SELECT * FROM {{ source('raw', 'products_source') }}
+with raw_products as (
+    select * from {{ source('raw', 'products_source') }}
 )
 
-SELECT
+select
     product_id,
     name,
     description,
@@ -16,5 +16,5 @@ SELECT
     stock_quantity,
     created_at,
     updated_at
-FROM raw_products
-WHERE price >= 0
+from raw_products
+where price >= 0
