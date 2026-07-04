@@ -28,6 +28,7 @@ import json
 import os
 import random
 import sys
+import tempfile
 import time
 from datetime import datetime, timedelta
 
@@ -56,7 +57,7 @@ CONNECT_URL     = os.environ.get("KAFKA_CONNECT_URL", "http://localhost:8083")
 MINIO_ENDPOINT  = os.environ.get("MINIO_ENDPOINT", "http://localhost:9000")
 MINIO_USER      = os.environ.get("MINIO_ROOT_USER", "minioadmin")
 MINIO_PASSWORD  = os.environ.get("MINIO_ROOT_PASSWORD", "minioadmin123")
-CHUNK_DIR       = "/tmp/etl_test_chunks"
+CHUNK_DIR       = os.path.join(tempfile.gettempdir(), "etl_test_chunks")
 
 STATUSES  = ["pending", "processing", "shipped", "delivered", "cancelled"]
 fake = Faker()

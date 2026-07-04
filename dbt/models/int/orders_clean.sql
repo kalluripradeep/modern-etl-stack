@@ -4,8 +4,8 @@
     tags=['int', 'orders']
 ) }}
 
-WITH cleaned_orders AS (
-    SELECT 
+with cleaned_orders as (
+    select
         order_id,
         customer_id,
         order_date,
@@ -13,16 +13,16 @@ WITH cleaned_orders AS (
         status,
         created_at,
         updated_at,
-        CASE 
-            WHEN total_amount <= 0 THEN 'invalid_amount'
-            WHEN status IS NULL THEN 'missing_status'
-            WHEN order_date IS NULL THEN 'missing_date'
-            ELSE 'valid'
-        END as quality_flag
-    FROM {{ source('raw', 'orders_source') }}
+        case
+            when total_amount <= 0 then 'invalid_amount'
+            when status is NULL then 'missing_status'
+            when order_date is NULL then 'missing_date'
+            else 'valid'
+        end as quality_flag
+    from {{ source('raw', 'orders_source') }}
 )
 
-SELECT 
+select
     order_id,
     customer_id,
     order_date,
@@ -30,7 +30,8 @@ SELECT
     status,
     created_at,
     updated_at
-FROM cleaned_orders
-WHERE quality_flag = 'valid'
-    AND order_id IS NOT NULL
-    AND total_amount > 0
+from cleaned_orders
+where
+    quality_flag = 'valid'
+    and order_id is not NULL
+    and total_amount > 0

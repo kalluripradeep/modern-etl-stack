@@ -35,6 +35,16 @@ spec:
             secretKeyRef:
               name: etl-secrets
               key: DEST_DB_NAME
+        - name: DASHBOARD_DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: etl-secrets
+              key: DASHBOARD_DB_USER
+        - name: DASHBOARD_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: etl-secrets
+              key: DASHBOARD_DB_PASSWORD
         # Tuned for bulk loads (COPY) and dbt transformations
         args:
         - postgres
@@ -58,6 +68,8 @@ spec:
         volumeMounts:
         - name: postgres-dest-data
           mountPath: /var/lib/postgresql/data
+        - name: init-scripts
+          mountPath: /docker-entrypoint-initdb.d
         readinessProbe:
           exec:
             command: ["pg_isready", "-U", "destuser"]
@@ -68,6 +80,11 @@ spec:
             command: ["pg_isready", "-U", "destuser"]
           initialDelaySeconds: 30
           periodSeconds: 10
+      volumes:
+      - name: init-scripts
+        configMap:
+          name: postgres-dest-init
+          defaultMode: 0755
   volumeClaimTemplates:
   - metadata:
       name: postgres-dest-data

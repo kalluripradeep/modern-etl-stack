@@ -3,20 +3,20 @@
     unique_key='customer_id'
 ) }}
 
-WITH raw_customers AS (
-    SELECT * FROM {{ source('raw', 'customers_source') }}
+with raw_customers as (
+    select * from {{ source('raw', 'customers_source') }}
 )
 
-SELECT
+select
     customer_id,
     first_name,
     last_name,
-    first_name || ' ' || last_name AS full_name,
     email,
     address,
     city,
     state,
     zip_code,
     created_at,
-    updated_at
-FROM raw_customers
+    updated_at,
+    first_name || ' ' || last_name as full_name
+from raw_customers

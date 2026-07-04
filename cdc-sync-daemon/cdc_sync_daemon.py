@@ -4,7 +4,7 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 import psycopg2
 from psycopg2 import sql
 from kafka import KafkaConsumer
@@ -36,6 +36,8 @@ DEST_DB_CONFIG = {
 
 KAFKA_BOOTSTRAP = os.environ.get('KAFKA_BOOTSTRAP', 'kafka:9092')
 KAFKA_GROUP_ID = os.environ.get('KAFKA_GROUP_ID', 'cdc-sync-daemon-group')
+# Max records fetched per poll; offsets are committed only after the batch is applied
+CDC_MAX_MESSAGES = int(os.environ.get('CDC_MAX_MESSAGES', 100))
 
 # List of topics we are interested in
 CDC_TOPICS = [
@@ -159,13 +161,16 @@ def format_value(val, col_type):
         
     # Debezium represents timestamps as epoch microseconds or milliseconds (integers)
     if "timestamp" in col_type.lower() and isinstance(val, int):
+        def _utc_naive(seconds):
+            return datetime.fromtimestamp(seconds, tz=timezone.utc).replace(tzinfo=None)
+
         # Microseconds vs Milliseconds heuristic
         if val > 1e12: # Milliseconds or Microseconds
             if val > 1e15: # Microseconds
-                return datetime.utcfromtimestamp(val / 1_000_000.0)
+                return _utc_naive(val / 1_000_000.0)
             else: # Milliseconds
-                return datetime.utcfromtimestamp(val / 1000.0)
-        return datetime.utcfromtimestamp(val)
+                return _utc_naive(val / 1000.0)
+        return _utc_naive(val)
         
     return val
 
@@ -283,7 +288,10 @@ def main():
                 bootstrap_servers=[KAFKA_BOOTSTRAP],
                 group_id=KAFKA_GROUP_ID,
                 auto_offset_reset='earliest',
-                enable_auto_commit=True,
+                # Offsets are committed manually after each batch has been
+                # applied to the destination, so a crash never skips events.
+                # Events are idempotent (upserts/deletes), so redelivery is safe.
+                enable_auto_commit=False,
                 value_deserializer=lambda x: json.loads(x.decode('utf-8'))
             )
             break
@@ -302,46 +310,55 @@ def main():
     logger.info("CDC Sync Daemon is listening for events...")
     
     try:
-        for msg in consumer:
-            # Topic format: cdc.public.<table_name>
-            topic_parts = msg.topic.split('.')
-            if len(topic_parts) < 3:
+        while True:
+            batch = consumer.poll(timeout_ms=1000, max_records=CDC_MAX_MESSAGES)
+            if not batch:
                 continue
-                
-            table_name = topic_parts[-1]
-            event = msg.value
-            
-            if not event:
-                continue
-                
-            payload = event.get('payload', event)
-            if not payload:
-                continue
-                
-            # Dynamic schema refresh if table schema isn't cached yet
-            if table_name not in schema_cache:
-                logger.info(f"New table seen: {table_name}. Fetching metadata...")
-                metadata = fetch_table_metadata(source_conn, table_name)
-                if metadata:
-                    schema_cache[table_name] = metadata
-                    ensure_destination_table(source_conn, dest_conn, table_name, metadata)
-                else:
-                    logger.error(f"Cannot process event for table {table_name} - schema not found.")
-                    continue
-                    
-            metadata = schema_cache[table_name]
-            
-            try:
-                process_cdc_event(dest_conn, table_name, payload, metadata)
-            except psycopg2.InterfaceError:
-                logger.warning("Database connection closed. Reconnecting...")
-                dest_conn = get_db_connection(DEST_DB_CONFIG)
-                source_conn = get_db_connection(SOURCE_DB_CONFIG)
-                process_cdc_event(dest_conn, table_name, payload, metadata)
-            except Exception as e:
-                logger.error(f"Error processing event for table {table_name}: {e}")
-                dest_conn.rollback()
-                
+
+            for tp_msgs in batch.values():
+                for msg in tp_msgs:
+                    # Topic format: cdc.public.<table_name>
+                    topic_parts = msg.topic.split('.')
+                    if len(topic_parts) < 3:
+                        continue
+
+                    table_name = topic_parts[-1]
+                    event = msg.value
+
+                    if not event:
+                        continue
+
+                    payload = event.get('payload', event)
+                    if not payload:
+                        continue
+
+                    # Dynamic schema refresh if table schema isn't cached yet
+                    if table_name not in schema_cache:
+                        logger.info(f"New table seen: {table_name}. Fetching metadata...")
+                        metadata = fetch_table_metadata(source_conn, table_name)
+                        if metadata:
+                            schema_cache[table_name] = metadata
+                            ensure_destination_table(source_conn, dest_conn, table_name, metadata)
+                        else:
+                            logger.error(f"Cannot process event for table {table_name} - schema not found.")
+                            continue
+
+                    metadata = schema_cache[table_name]
+
+                    try:
+                        process_cdc_event(dest_conn, table_name, payload, metadata)
+                    except psycopg2.InterfaceError:
+                        logger.warning("Database connection closed. Reconnecting...")
+                        dest_conn = get_db_connection(DEST_DB_CONFIG)
+                        source_conn = get_db_connection(SOURCE_DB_CONFIG)
+                        process_cdc_event(dest_conn, table_name, payload, metadata)
+                    except Exception as e:
+                        logger.error(f"Error processing event for table {table_name}: {e}")
+                        dest_conn.rollback()
+
+            # Acknowledge the batch only after it has been applied to the destination
+            consumer.commit()
+
     except KeyboardInterrupt:
         logger.info("Stopping daemon...")
     finally:

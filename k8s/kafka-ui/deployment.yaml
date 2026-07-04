@@ -23,6 +23,18 @@ spec:
           value: "local"
         - name: KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS
           value: "etl-kafka-kafka-bootstrap.etl.svc.cluster.local:9092"
+        - name: AUTH_TYPE
+          value: "LOGIN_FORM"
+        - name: SPRING_SECURITY_USER_NAME
+          valueFrom:
+            secretKeyRef:
+              name: etl-secrets
+              key: KAFKA_UI_USER
+        - name: SPRING_SECURITY_USER_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: etl-secrets
+              key: KAFKA_UI_PASSWORD
         resources:
           requests:
             memory: "256Mi"

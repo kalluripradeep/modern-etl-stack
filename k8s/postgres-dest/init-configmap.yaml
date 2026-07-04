@@ -1,0 +1,34 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-dest-init
+  namespace: etl
+data:
+  # Runs on first boot of a fresh postgres-dest volume. For an existing
+  # volume, exec into the pod and run this script manually:
+  #   kubectl exec -n etl postgres-dest-0 -- bash /docker-entrypoint-initdb.d/01-create-dashboard-role.sh
+  01-create-dashboard-role.sh: |
+    #!/bin/bash
+    set -euo pipefail
+
+    DASHBOARD_DB_USER="${DASHBOARD_DB_USER:-dashboard_ro}"
+    DASHBOARD_DB_PASSWORD="${DASHBOARD_DB_PASSWORD:-dashboard_ro}"
+
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+        DO \$\$
+        BEGIN
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${DASHBOARD_DB_USER}') THEN
+                CREATE ROLE ${DASHBOARD_DB_USER} WITH LOGIN PASSWORD '${DASHBOARD_DB_PASSWORD}';
+            END IF;
+        END
+        \$\$;
+
+        GRANT CONNECT ON DATABASE ${POSTGRES_DB} TO ${DASHBOARD_DB_USER};
+        GRANT USAGE ON SCHEMA public TO ${DASHBOARD_DB_USER};
+        GRANT SELECT ON ALL TABLES IN SCHEMA public TO ${DASHBOARD_DB_USER};
+
+        ALTER DEFAULT PRIVILEGES FOR ROLE ${POSTGRES_USER} IN SCHEMA public
+            GRANT SELECT ON TABLES TO ${DASHBOARD_DB_USER};
+    EOSQL
+
+    echo "Read-only dashboard role '${DASHBOARD_DB_USER}' is ready."

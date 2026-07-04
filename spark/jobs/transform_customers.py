@@ -56,6 +56,7 @@ def upsert_to_iceberg(spark, df):
     print(f"Performing MERGE INTO for {table_name}")
     df.createOrReplaceTempView("customer_updates")
 
+    # table_name is a constant defined in this file, not user input
     merge_sql = f"""
         MERGE INTO {table_name} AS target
         USING customer_updates AS source
@@ -73,7 +74,7 @@ def upsert_to_iceberg(spark, df):
                 target.processed_at = source.processed_at
         WHEN NOT MATCHED THEN
             INSERT *
-    """
+    """  # nosec B608
     spark.sql(merge_sql)
     print(f"Successfully merged customer updates into {table_name}")
 

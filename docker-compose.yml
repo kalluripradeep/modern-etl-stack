@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # PostgreSQL Source Database
   postgres-source:
@@ -37,10 +35,13 @@ services:
       POSTGRES_USER: ${DEST_DB_USER:-destuser}
       POSTGRES_PASSWORD: ${DEST_DB_PASSWORD:-destpass}
       POSTGRES_DB: ${DEST_DB_NAME:-destdb}
+      DASHBOARD_DB_USER: ${DASHBOARD_DB_USER:-dashboard_ro}
+      DASHBOARD_DB_PASSWORD: ${DASHBOARD_DB_PASSWORD:-dashboard_ro}
     ports:
       - "5433:5432"
     volumes:
       - postgres-dest-data:/var/lib/postgresql/data
+      - ./docker/postgres-dest-init:/docker-entrypoint-initdb.d:ro
     networks:
       - etl-network
     healthcheck:
@@ -90,6 +91,9 @@ services:
     environment:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      AUTH_TYPE: LOGIN_FORM
+      SPRING_SECURITY_USER_NAME: ${KAFKA_UI_USER:-admin}
+      SPRING_SECURITY_USER_PASSWORD: ${KAFKA_UI_PASSWORD:-admin}
     networks:
       - etl-network
 

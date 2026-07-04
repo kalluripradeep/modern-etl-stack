@@ -161,7 +161,8 @@ def extract_and_load_table(table_name, **kwargs):
     # 2a. Fetch the high-water mark (MAX updated_at) from the Destination staging DB
     max_date = None
     try:
-        records = dest_hook.get_records(f"SELECT MAX(updated_at) FROM raw.{table_name}_source")
+        # table_name comes from TABLES_CONFIG keys, never from user input
+        records = dest_hook.get_records(f"SELECT MAX(updated_at) FROM raw.{table_name}_source")  # nosec B608
         if records and records[0] and records[0][0]:
             max_date = records[0][0]
     except Exception as e:
@@ -171,10 +172,10 @@ def extract_and_load_table(table_name, **kwargs):
     if max_date:
         log.info(f"CDC Active: Extracting {table_name} where updated_at > '{max_date}'")
         formatted_date = max_date.strftime('%Y-%m-%d %H:%M:%S.%f')
-        query = f"SELECT {cols_str} FROM {table_name} WHERE updated_at > '{formatted_date}' ORDER BY {config['pk']}"
+        query = f"SELECT {cols_str} FROM {table_name} WHERE updated_at > '{formatted_date}' ORDER BY {config['pk']}"  # nosec B608
     else:
         log.info(f"CDC Inactive: Performing full extraction for {table_name}")
-        query = f"SELECT {cols_str} FROM {table_name} ORDER BY {config['pk']}"
+        query = f"SELECT {cols_str} FROM {table_name} ORDER BY {config['pk']}"  # nosec B608
     source_engine = source_hook.get_sqlalchemy_engine()
 
     with tempfile.TemporaryDirectory() as tmpdirname:
@@ -220,12 +221,13 @@ def extract_and_load_table(table_name, **kwargs):
                     pg_cursor.copy_expert(f"COPY {stage_table} ({cols_str}) FROM STDIN WITH CSV", buffer)
                     
                     update_set = ", ".join([f"{c} = EXCLUDED.{c}" for c in config['update_cols']])
+                    # all identifiers come from TABLES_CONFIG, never from user input
                     upsert_sql = f"""
                         INSERT INTO raw.{table_name}_source
                         SELECT * FROM {stage_table}
                         ON CONFLICT ({config['pk']}) DO UPDATE SET
                             {update_set}
-                    """
+                    """  # nosec B608
                     pg_cursor.execute(upsert_sql)
                     dest_conn.commit()
                     total_loaded += len(df_chunk)

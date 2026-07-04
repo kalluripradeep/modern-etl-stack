@@ -1,0 +1,11 @@
+extends: relaxed
+
+rules:
+  line-length: disable
+  # Windows checkouts produce CRLF locally; git normalizes on commit
+  new-lines: disable
+
+ignore: |
+  dbt/target/
+  ui/node_modules/
+  .venv*/
