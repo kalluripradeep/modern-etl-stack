@@ -1,0 +1,17 @@
+# Alertmanager routing. By default alerts are only visible in the
+# Alertmanager UI (http://localhost:9095). To deliver them, add a real
+# receiver — example Slack config below.
+route:
+  receiver: default
+  group_by: [alertname]
+  group_wait: 30s
+  repeat_interval: 4h
+
+receivers:
+  - name: default
+    # Example Slack delivery — uncomment and set your webhook:
+    # slack_configs:
+    #   - api_url: https://hooks.slack.com/services/XXX/YYY/ZZZ
+    #     channel: '#data-alerts'
+    #     title: '{{ .CommonAnnotations.summary }}'
+    #     text: '{{ .CommonAnnotations.description }}'

@@ -1,0 +1,44 @@
+groups:
+  - name: data-platform
+    rules:
+      - alert: AirflowDagRunFailed
+        expr: increase(airflow_dagrun_duration_failed_count[30m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Airflow DAG {{ $labels.dag_id }} failed"
+          description: "A run of {{ $labels.dag_id }} failed in the last 30 minutes."
+
+      - alert: AirflowDagImportErrors
+        expr: airflow_dag_import_errors > 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Airflow has DAG import errors"
+          description: "The DAG processor cannot import one or more DAG files."
+
+      - alert: CdcConsumerLagHigh
+        expr: sum by (consumergroup) (kafka_consumergroup_lag) > 10000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CDC consumer group {{ $labels.consumergroup }} is lagging"
+          description: "Lag above 10k messages for 10 minutes — the mirror is falling behind."
+
+      - alert: SourceDataStale
+        expr: etl_source_freshness_lag_seconds > 172800
+        labels:
+          severity: warning
+        annotations:
+          summary: "Source table {{ $labels.table }} is stale"
+          description: "No new rows in over 48 hours — the batch pipeline may be broken."
+
+      - alert: RevenueAnomaly
+        expr: abs(etl_revenue_anomaly_z) > 3
+        labels:
+          severity: warning
+        annotations:
+          summary: "Daily revenue is anomalous"
+          description: "Latest daily revenue is more than 3 standard deviations from the 30-day mean (z={{ $value }})."

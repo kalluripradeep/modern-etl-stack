@@ -39,6 +39,28 @@ Sub-second-to-seconds freshness for live dashboards and operational monitoring, 
 ### AI Data Assistant
 A Next.js dashboard with an agentic analyst: it introspects the schemas of all three stores, decides which engine fits the question (warehouse, lakehouse via Trino, or the ClickHouse mirror), runs read-only SQL with automatic error-retry, and answers in plain language. Runs in demo mode without an API key; add an Anthropic API key to enable it, and set `DASHBOARD_AUTH_PASSWORD` to require a login.
 
+## Adding a Source Table
+
+Tables are defined once in [`airflow/dags/config/pipelines.yml`](airflow/dags/config/pipelines.yml) — the single source of truth. The ingestion DAG reads it directly; the ClickHouse mirror schema, Debezium connector, and CDC daemon topic list are generated from it:
+
+```bash
+# 1. Add the table to airflow/dags/config/pipelines.yml
+# 2. Regenerate the derived artifacts
+make generate
+```
+
+CI fails if the generated files drift from the manifest, so they can never silently diverge.
+
+## Observability
+
+Prometheus scrapes Airflow (via statsd), Kafka consumer lag (kafka-exporter), MinIO, and node metrics. A provisioned Grafana dashboard ("Data Platform Health") shows pipeline runs, CDC lag, source freshness, and a daily-revenue anomaly z-score. Alertmanager routes five alert rules (DAG failures, import errors, CDC lag, stale sources, revenue anomalies) — add a Slack/email receiver in `monitoring/alertmanager.yml` to deliver them.
+
+| Service | Local URL |
+|---|---|
+| Grafana dashboards | http://localhost:3000 |
+| Prometheus | http://localhost:9090 |
+| Alertmanager | http://localhost:9095 |
+
 ## Database Schema Structure
 
 The destination warehouse (`destdb`) is strictly organized:

@@ -1,3 +1,14 @@
+# Airflow connections shared by webserver, scheduler and dag-processor.
+# Provisioned via AIRFLOW_CONN_* env vars so no manual UI setup is needed.
+x-airflow-connections: &airflow-connections
+  AIRFLOW_CONN_SPARK_DEFAULT: spark://spark-master:7077
+  AIRFLOW_CONN_SOURCE_POSTGRES: >-
+    postgresql://${SOURCE_DB_USER:-sourceuser}:${SOURCE_DB_PASSWORD:-sourcepass}@postgres-source:5432/${SOURCE_DB_NAME:-sourcedb}
+  AIRFLOW_CONN_DEST_POSTGRES: >-
+    postgresql://${DEST_DB_USER:-destuser}:${DEST_DB_PASSWORD:-destpass}@postgres-dest:5432/${DEST_DB_NAME:-destdb}
+  AIRFLOW_CONN_MINIO_S3: >-
+    aws://${MINIO_ROOT_USER:-minioadmin}:${MINIO_ROOT_PASSWORD:-minioadmin}@?endpoint_url=http%3A%2F%2Fminio%3A9000
+
 services:
   # PostgreSQL Source Database
   postgres-source:
@@ -261,10 +272,35 @@ services:
       - "9090:9090"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml
       - prometheus-data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
+    networks:
+      - etl-network
+
+  # Alertmanager - routes Prometheus alerts
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: alertmanager
+    ports:
+      - "9095:9093"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+    networks:
+      - etl-network
+
+  # Kafka Exporter - CDC consumer lag and topic metrics
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    container_name: kafka-exporter
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command: ["--kafka.server=kafka:9092"]
+    ports:
+      - "9308:9308"
     networks:
       - etl-network
 
@@ -357,7 +393,7 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
       SPARK_HOME: /home/airflow/.local/lib/python3.11/site-packages/pyspark
-      AIRFLOW_CONN_SPARK_DEFAULT: spark://spark-master:7077
+      <<: *airflow-connections
       AIRFLOW__METRICS__STATSD_ON: 'True'
       AIRFLOW__METRICS__STATSD_HOST: statsd-exporter
       AIRFLOW__METRICS__STATSD_PORT: 8125
@@ -400,7 +436,7 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
       SPARK_HOME: /home/airflow/.local/lib/python3.11/site-packages/pyspark
-      AIRFLOW_CONN_SPARK_DEFAULT: spark://spark-master:7077
+      <<: *airflow-connections
       AIRFLOW__METRICS__STATSD_ON: 'True'
       AIRFLOW__METRICS__STATSD_HOST: statsd-exporter
       AIRFLOW__METRICS__STATSD_PORT: 8125
@@ -436,7 +472,7 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
       SPARK_HOME: /home/airflow/.local/lib/python3.11/site-packages/pyspark
-      AIRFLOW_CONN_SPARK_DEFAULT: spark://spark-master:7077
+      <<: *airflow-connections
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
@@ -461,9 +497,13 @@ services:
   statsd-exporter:
     image: prom/statsd-exporter:latest
     container_name: statsd-exporter
+    command:
+      - '--statsd.mapping-config=/etc/statsd/statsd_mapping.yml'
     ports:
       - "9102:9102"
       - "8125:8125/udp"
+    volumes:
+      - ./monitoring/statsd_mapping.yml:/etc/statsd/statsd_mapping.yml:ro
     networks:
       - etl-network
 
