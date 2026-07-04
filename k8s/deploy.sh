@@ -172,6 +172,17 @@ info "Waiting for Kafka Connect to be ready (this takes ~60s)..."
 kubectl rollout status statefulset/kafka-connect -n $NAMESPACE --timeout=300s
 ok "Kafka Connect is ready"
 
+info "Deploying ClickHouse columnar mirror..."
+# Reuse the compose init SQL, rewriting the broker address for in-cluster DNS
+CH_INIT_DIR=$(mktemp -d)
+sed 's|kafka:9092|etl-kafka-kafka-bootstrap.etl.svc.cluster.local:9092|g' \
+  "$REPO_ROOT/docker/clickhouse/initdb/01_mirror_schema.sql" > "$CH_INIT_DIR/01_mirror_schema.sql"
+kubectl create configmap clickhouse-init -n $NAMESPACE \
+  --from-file="$CH_INIT_DIR" --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f "$TMP_K8S/clickhouse/"
+kubectl rollout status statefulset/clickhouse -n $NAMESPACE --timeout=300s
+ok "ClickHouse is ready"
+
 info "Registering Debezium CDC connector (via in-cluster exec)..."
 (
   echo "export KAFKA_CONNECT_URL=http://localhost:8083"
@@ -188,6 +199,11 @@ kubectl apply -f "$TMP_K8S/spark/"
 kubectl rollout status statefulset/spark-master -n $NAMESPACE --timeout=300s
 kubectl rollout status deployment/spark-worker -n $NAMESPACE --timeout=300s
 ok "Spark cluster is ready"
+
+info "Deploying Trino (lakehouse query engine)..."
+kubectl apply -f "$TMP_K8S/trino/"
+kubectl rollout status deployment/trino -n $NAMESPACE --timeout=300s
+ok "Trino is ready"
 
 # ─── Step 8: Monitoring ───────────────────────────────────────────────────────
 echo ""

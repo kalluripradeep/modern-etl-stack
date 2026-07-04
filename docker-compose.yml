@@ -195,6 +195,64 @@ services:
     networks:
       - etl-network
 
+  # Trino - SQL query engine over the Iceberg lakehouse
+  trino:
+    image: trinodb/trino:474
+    container_name: trino
+    depends_on:
+      minio:
+        condition: service_healthy
+      postgres-dest:
+        condition: service_healthy
+    ports:
+      - "8082:8080"   # Trino UI + JDBC/REST
+    environment:
+      DEST_DB_HOST: postgres-dest
+      DEST_DB_PORT: 5432
+      DEST_DB_NAME: ${DEST_DB_NAME:-destdb}
+      DEST_DB_USER: ${DEST_DB_USER:-destuser}
+      DEST_DB_PASSWORD: ${DEST_DB_PASSWORD:-destpass}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - ./docker/trino/catalog:/etc/trino/catalog:ro
+    networks:
+      - etl-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/info"]
+      interval: 15s
+      retries: 10
+      start_period: 45s
+
+  # ClickHouse - columnar hot mirror fed from the CDC topics
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: clickhouse
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8123:8123"   # HTTP interface
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-chuser}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-chpass}
+      CLICKHOUSE_DB: mirror
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./docker/clickhouse/initdb:/docker-entrypoint-initdb.d:ro
+    networks:
+      - etl-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:8123/ping"]
+      interval: 15s
+      retries: 5
+      start_period: 15s
+
   # Prometheus - Metrics Collection
   prometheus:
     image: prom/prometheus:latest
@@ -438,6 +496,7 @@ services:
     restart: always
 
 volumes:
+  clickhouse-data:
   metabase-data:
   postgres-source-data:
   postgres-dest-data:
