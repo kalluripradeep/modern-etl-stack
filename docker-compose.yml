@@ -258,7 +258,7 @@ services:
 
   # Airflow Init
   airflow-init:
-    image: apache/airflow:3.2.0-python3.11
+    image: apache/airflow:3.2.2-python3.11
     container_name: airflow-init
     depends_on:
       airflow-db:
