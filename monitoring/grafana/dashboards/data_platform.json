@@ -1,0 +1,104 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "schemaVersion": 39,
+  "title": "Data Platform Health",
+  "tags": ["etl", "data-platform"],
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Pipeline Orchestration",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "type": "stat",
+      "title": "Scheduler Heartbeat (5m rate)",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 1 },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } } },
+      "targets": [ { "expr": "sum(rate(airflow_scheduler_heartbeat_total[5m]))", "refId": "A" } ]
+    },
+    {
+      "type": "stat",
+      "title": "DAG Import Errors",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 1 },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } } },
+      "targets": [ { "expr": "max(airflow_dag_import_errors)", "refId": "A" } ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Task Successes vs Failures (5m rate)",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 1 },
+      "targets": [
+        { "expr": "sum(rate(airflow_ti_successes_total[5m]))", "legendFormat": "successes", "refId": "A" },
+        { "expr": "sum(rate(airflow_ti_failures_total[5m]))", "legendFormat": "failures", "refId": "B" }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Real-Time CDC",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 7 }
+    },
+    {
+      "type": "timeseries",
+      "title": "CDC Consumer Group Lag",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
+      "targets": [ { "expr": "sum by (consumergroup) (kafka_consumergroup_lag)", "legendFormat": "{{consumergroup}}", "refId": "A" } ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Kafka Messages In (per topic, 5m rate)",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 8 },
+      "targets": [ { "expr": "sum by (topic) (rate(kafka_topic_partition_current_offset{topic=~\"cdc.*\"}[5m]))", "legendFormat": "{{topic}}", "refId": "A" } ]
+    },
+    {
+      "type": "row",
+      "title": "Data Quality",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Source Freshness Lag (seconds)",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [ { "expr": "etl_source_freshness_lag_seconds", "legendFormat": "{{table}}", "refId": "A" } ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Daily Revenue Anomaly (z-score)",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": { "defaults": { "custom": { "thresholdsStyle": { "mode": "line" } }, "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 3 }, { "color": "red", "value": 5 } ] } } },
+      "targets": [ { "expr": "etl_revenue_anomaly_z", "legendFormat": "z-score", "refId": "A" } ]
+    },
+    {
+      "type": "row",
+      "title": "Storage",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Rows Synced per Batch",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 24 },
+      "targets": [ { "expr": "etl_rows_synced", "legendFormat": "{{table}}", "refId": "A" } ]
+    },
+    {
+      "type": "timeseries",
+      "title": "MinIO Bucket Usage (bytes)",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 24 },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "targets": [ { "expr": "minio_bucket_usage_total_bytes", "legendFormat": "{{bucket}}", "refId": "A" } ]
+    }
+  ]
+}

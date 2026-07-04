@@ -1,4 +1,4 @@
-.PHONY: up down restart logs seed dbt-run dbt-test register-connector ps help
+.PHONY: up down restart logs seed dbt-run dbt-test register-connector ps help generate
 
 # Copy .env.example to .env if it doesn't exist yet
 .env:
@@ -48,6 +48,10 @@ dbt-test:
 ## Register the Debezium CDC connector (run after `make up`)
 register-connector:
 	bash scripts/register_debezium_connector.sh
+
+## Regenerate pipeline artifacts from airflow/dags/config/pipelines.yml
+generate:
+	python scripts/generate_pipeline_assets.py
 
 ## Show this help
 help:

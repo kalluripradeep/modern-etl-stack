@@ -9,6 +9,14 @@ data:
       scrape_interval: 15s
       evaluation_interval: 15s
 
+    rule_files:
+      - /etc/prometheus/alert_rules.yml
+
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: ['alertmanager.etl.svc.cluster.local:9093']
+
     scrape_configs:
       - job_name: 'prometheus'
         static_configs:
@@ -17,6 +25,10 @@ data:
       - job_name: 'node-exporter'
         static_configs:
           - targets: ['node-exporter.etl.svc.cluster.local:9100']
+
+      - job_name: 'kafka-exporter'
+        static_configs:
+          - targets: ['kafka-exporter.etl.svc.cluster.local:9308']
 
       - job_name: 'airflow'
         static_configs:
@@ -78,6 +90,35 @@ data:
         scheme: http
         static_configs:
           - targets: ['minio-0.minio.etl.svc.cluster.local:9000']
+  alert_rules.yml: |
+    groups:
+      - name: data-platform
+        rules:
+          - alert: AirflowDagRunFailed
+            expr: increase(airflow_dagrun_duration_failed_count[30m]) > 0
+            labels:
+              severity: critical
+            annotations:
+              summary: "Airflow DAG {{ $labels.dag_id }} failed"
+          - alert: CdcConsumerLagHigh
+            expr: sum by (consumergroup) (kafka_consumergroup_lag) > 10000
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "CDC consumer group {{ $labels.consumergroup }} is lagging"
+          - alert: SourceDataStale
+            expr: etl_source_freshness_lag_seconds > 172800
+            labels:
+              severity: warning
+            annotations:
+              summary: "Source table {{ $labels.table }} is stale"
+          - alert: RevenueAnomaly
+            expr: abs(etl_revenue_anomaly_z) > 3
+            labels:
+              severity: warning
+            annotations:
+              summary: "Daily revenue is anomalous (z={{ $value }})"
 ---
 apiVersion: v1
 kind: ConfigMap

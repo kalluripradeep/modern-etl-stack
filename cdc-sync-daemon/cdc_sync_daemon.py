@@ -9,6 +9,9 @@ import psycopg2
 from psycopg2 import sql
 from kafka import KafkaConsumer
 
+# Generated from airflow/dags/config/pipelines.yml — run `make generate`
+from cdc_tables import CDC_TOPICS as _GENERATED_TOPICS
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -39,13 +42,9 @@ KAFKA_GROUP_ID = os.environ.get('KAFKA_GROUP_ID', 'cdc-sync-daemon-group')
 # Max records fetched per poll; offsets are committed only after the batch is applied
 CDC_MAX_MESSAGES = int(os.environ.get('CDC_MAX_MESSAGES', 100))
 
-# List of topics we are interested in
-CDC_TOPICS = [
-    'cdc.public.customers',
-    'cdc.public.products',
-    'cdc.public.orders',
-    'cdc.public.order_items'
-]
+# The CDC_TOPICS env var overrides the generated list for ad-hoc use
+_env_topics = os.environ.get('CDC_TOPICS', '')
+CDC_TOPICS = [t.strip() for t in _env_topics.split(',') if t.strip()] or _GENERATED_TOPICS
 
 # Schema cache: maps table_name -> {'columns': [...], 'pk': 'column_name'}
 schema_cache = {}
@@ -292,7 +291,9 @@ def main():
                 # applied to the destination, so a crash never skips events.
                 # Events are idempotent (upserts/deletes), so redelivery is safe.
                 enable_auto_commit=False,
-                value_deserializer=lambda x: json.loads(x.decode('utf-8'))
+                # Debezium emits null-value tombstone messages after deletes;
+                # deserialize those to None rather than crashing.
+                value_deserializer=lambda x: json.loads(x.decode('utf-8')) if x else None
             )
             break
         except Exception as e:

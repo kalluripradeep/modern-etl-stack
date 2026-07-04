@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-exporter
+  namespace: etl
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka-exporter
+  template:
+    metadata:
+      labels:
+        app: kafka-exporter
+    spec:
+      containers:
+      - name: kafka-exporter
+        image: danielqsj/kafka-exporter:latest
+        args:
+        - "--kafka.server=etl-kafka-kafka-bootstrap.etl.svc.cluster.local:9092"
+        ports:
+        - containerPort: 9308
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "256Mi"
+            cpu: "250m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-exporter
+  namespace: etl
+spec:
+  selector:
+    app: kafka-exporter
+  ports:
+  - port: 9308
+    targetPort: 9308

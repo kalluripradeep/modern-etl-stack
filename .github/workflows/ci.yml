@@ -22,6 +22,19 @@ jobs:
       - name: Run Ruff
         run: ruff check airflow/ scripts/ cdc-sync-daemon/ spark/ sample-data/
 
+  pipeline-config-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify generated artifacts match the pipeline manifest
+        run: |
+          pip install pyyaml
+          python scripts/generate_pipeline_assets.py --check
+
   type-check:
     runs-on: ubuntu-latest
     steps:
