@@ -34,7 +34,7 @@ from datetime import datetime, timedelta
 import psycopg2
 import requests
 from faker import Faker
-from kafka import KafkaConsumer, KafkaProducer
+from kafka import KafkaConsumer
 
 # ── Connection config ──────────────────────────────────────────────────────────
 SOURCE = dict(
@@ -195,7 +195,7 @@ def seed_source():
     conn.close()
 
     if n == 200:
-        ok(f"Seeded 200 orders into postgres-source")
+        ok("Seeded 200 orders into postgres-source")
     else:
         fail(f"Expected 200 orders, got {n}")
 
@@ -271,7 +271,7 @@ def run_extract_pipeline():
         assert (df["total_amount"] >= 0).all(), f"negative amount in {f}"
         revenue += float(df["total_amount"].sum())
         del df
-    ok(f"Validation passed", f"{total_rows} rows, ${revenue:,.2f} revenue")
+    ok("Validation passed", f"{total_rows} rows, ${revenue:,.2f} revenue")
 
     # --- Load to MinIO bronze ---
     try:
@@ -376,7 +376,7 @@ def simulate_transactions():
     cur.close()
     conn.close()
 
-    ok("Transactions applied to source", f"40 updates, 10 cancellations, 5 deletes")
+    ok("Transactions applied to source", "40 updates, 10 cancellations, 5 deletes")
     return {"updated": update_ids, "cancelled": cancel_ids, "deleted": delete_ids}
 
 
@@ -427,7 +427,7 @@ def consume_cdc(expected_deleted_ids):
     cur.close()
     conn.close()
 
-    ok(f"CDC events consumed", f"snapshots/inserts={inserts}, updates={updates}, deletes={deletes}")
+    ok("CDC events consumed", f"snapshots/inserts={inserts}, updates={updates}, deletes={deletes}")
 
 
 def _upsert_order(cur, data):
@@ -467,14 +467,14 @@ def verify(txn):
 
     # Row count match
     if src_count == dst_count:
-        ok(f"Row count matches", f"{dst_count} rows in both source and dest")
+        ok("Row count matches", f"{dst_count} rows in both source and dest")
     else:
-        fail(f"Row count mismatch", f"source={src_count}, dest={dst_count}")
+        fail("Row count mismatch", f"source={src_count}, dest={dst_count}")
 
     # Deleted rows must NOT be in dest
     del_ids = txn["deleted"]
     with dst.cursor() as cur:
-        cur.execute(f"SELECT order_id FROM public.orders WHERE order_id = ANY(%s)", (del_ids,))
+        cur.execute("SELECT order_id FROM public.orders WHERE order_id = ANY(%s)", (del_ids,))
         found = [r[0] for r in cur.fetchall()]
     if not found:
         ok(f"All {len(del_ids)} deleted orders are gone from dest")
@@ -492,7 +492,7 @@ def verify(txn):
     if matched == len(cancel_ids):
         ok(f"All {len(cancel_ids)} cancellations reflected in dest")
     else:
-        fail(f"Cancellation mismatch", f"expected {len(cancel_ids)}, got {matched} in dest")
+        fail("Cancellation mismatch", f"expected {len(cancel_ids)}, got {matched} in dest")
 
     # Status distribution
     with dst.cursor() as cur:

@@ -6,7 +6,7 @@ Uses Iceberg MERGE INTO for high-performance incremental catalog updates.
 import os
 import sys
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, lit, current_timestamp, trim, lower
+from pyspark.sql.functions import col, current_timestamp, trim, lower
 
 
 def create_spark_session():

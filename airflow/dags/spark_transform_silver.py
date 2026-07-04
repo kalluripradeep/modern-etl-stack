@@ -11,6 +11,8 @@ from airflow.operators.bash import BashOperator
 # Fetch cluster-specific configurations from environment (set via Docker or Helm)
 SPARK_MASTER_URL = os.getenv('SPARK_MASTER_URL', 'spark://spark-master:7077')
 MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT', 'http://minio:9000')
+MINIO_USER = os.getenv('MINIO_ROOT_USER', 'minioadmin')
+MINIO_PASSWORD = os.getenv('MINIO_ROOT_PASSWORD', 'minioadmin')
 
 default_args = {
     'owner': 'data_engineering',
@@ -38,8 +40,8 @@ with DAG(
         --conf spark.executor.cores=2 \
         --conf spark.sql.adaptive.enabled=true \
         --conf spark.hadoop.fs.s3a.endpoint={MINIO_ENDPOINT} \
-        --conf spark.hadoop.fs.s3a.access.key=minioadmin \
-        --conf spark.hadoop.fs.s3a.secret.key=minioadmin \
+        --conf spark.hadoop.fs.s3a.access.key={MINIO_USER} \
+        --conf spark.hadoop.fs.s3a.secret.key={MINIO_PASSWORD} \
         --conf spark.hadoop.fs.s3a.path.style.access=true \
         --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
         --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.4.2,org.apache.hadoop:hadoop-aws:3.3.4 \

@@ -237,7 +237,7 @@ def process_cdc_event(dest_conn, table_name, event_payload, metadata):
             
         elif op == 'd': # Delete
             if not before:
-                logger.warning(f"CDC event has operation 'd' but no 'before' payload.")
+                logger.warning("CDC event has operation 'd' but no 'before' payload.")
                 return
                 
             pk_val = before.get(pk_col)

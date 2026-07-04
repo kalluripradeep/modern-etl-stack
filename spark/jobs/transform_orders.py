@@ -6,6 +6,7 @@ Uses Iceberg MERGE INTO for high-performance incremental upserts.
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, current_timestamp
 from pyspark.sql.types import DecimalType
+from datetime import datetime
 import os
 import sys
 
@@ -125,5 +126,4 @@ def main():
 
 
 if __name__ == "__main__":
-    from datetime import datetime
     main()

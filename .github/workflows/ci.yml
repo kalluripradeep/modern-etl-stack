@@ -18,7 +18,7 @@ jobs:
       - name: Install Ruff
         run: pip install ruff
       - name: Run Ruff
-        run: ruff check airflow/ scripts/ dbt-mcp/src/ || true
+        run: ruff check airflow/ scripts/ cdc-sync-daemon/ spark/ sample-data/
 
   lint-sql:
     runs-on: ubuntu-latest

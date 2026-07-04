@@ -5,8 +5,10 @@ __pycache__/
 *.so
 .Python
 venv/
+.venv*/
 ENV/
 *.egg-info/
+.ruff_cache/
 
 # Airflow - IMPORTANT!
 airflow/logs/
@@ -32,3 +34,13 @@ airflow/webserver_config.py
 # Logs
 *.log
 logs/
+
+# dbt artifacts
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+dbt/.user.yml
+
+# Node / Next.js
+node_modules/
+.next/

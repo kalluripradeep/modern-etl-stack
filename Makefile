@@ -26,8 +26,6 @@ ps:
 
 ## Seed the source database with sample e-commerce data
 seed:
-	docker-compose exec -e SOURCE_DB_HOST=postgres-source airflow-webserver \
-		python /opt/airflow/dbt/../../../sample-data/generate_ecommerce.py || \
 	docker run --rm \
 		--network modern-etl-stack_etl-network \
 		-e SOURCE_DB_HOST=postgres-source \
