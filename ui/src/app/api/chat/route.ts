@@ -4,7 +4,7 @@ import Anthropic from '@anthropic-ai/sdk';
 
 // --- CONFIGURATION ---
 const SCHEMA_CONTEXT = `
-You are a Senior Data Analyst for a Modern ETL Stack. 
+You are a Senior Data Analyst for a Modern ETL Stack.
 The database is PostgreSQL. You have access to the following tables:
 
 1. public.orders (order_id, customer_id, order_date, total_amount, status)
@@ -15,22 +15,39 @@ The database is PostgreSQL. You have access to the following tables:
 RULES:
 - Always use COUNT(DISTINCT order_id) for order counts.
 - For revenue, use SUM(quantity * unit_price) from order_items joined to orders.
+- Only read data: a single SELECT (or WITH ... SELECT) statement. Never write, alter, or delete.
 - Output your response in two parts:
   1. A brief analytical observation.
   2. The SQL query you want to run inside a <query>...</query> tag.
 - If the user asks a non-data question, answer politely as a Data Assistant.
 `;
 
+const MAX_RESULT_ROWS = 100;
+const STATEMENT_TIMEOUT_MS = 15000;
+
+/**
+ * The model output is untrusted input: only a single read-only statement is
+ * allowed through. Defense in depth — the DB session is also read-only.
+ */
+function isReadOnlySelect(sql: string): boolean {
+  const stripped = sql
+    .replace(/--.*$/gm, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .trim()
+    .replace(/;\s*$/, '');
+  if (stripped.length === 0 || stripped.includes(';')) return false;
+  return /^(select|with)\b/i.test(stripped);
+}
+
 export async function POST(request: Request) {
   const { query } = await request.json();
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  
+
   // --- FALLBACK: SIMULATED AI (DEMO MODE) ---
   if (!apiKey || apiKey === 'YOUR_API_KEY_HERE') {
     return handleSimulatedResponse(query);
   }
 
-  // --- PRODUCTION: REAL CLAUDE BRAIN ---
   const anthropic = new Anthropic({ apiKey });
   const dbClient = new Client({
     user: process.env.DEST_DB_USER || 'destuser',
@@ -38,18 +55,24 @@ export async function POST(request: Request) {
     database: process.env.DEST_DB_NAME || 'destdb',
     password: process.env.DEST_DB_PASSWORD || 'destpass',
     port: parseInt(process.env.DEST_DB_PORT || '5433'),
+    // Read-only session with a hard statement timeout
+    options: `-c default_transaction_read_only=on -c statement_timeout=${STATEMENT_TIMEOUT_MS}`,
   });
 
+  let dbConnected = false;
   try {
     // 1. Ask Claude to generate the SQL
     const msg = await anthropic.messages.create({
-      model: "claude-3-5-sonnet-20241022",
+      model: 'claude-opus-4-8',
       max_tokens: 1024,
       system: SCHEMA_CONTEXT,
-      messages: [{ role: "user", content: query }],
+      messages: [{ role: 'user', content: query }],
     });
 
-    const content = (msg.content[0] as any).text;
+    const content = msg.content
+      .filter((block) => block.type === 'text')
+      .map((block) => block.text)
+      .join('');
     const sqlMatch = content.match(/<query>([\s\S]*?)<\/query>/);
 
     if (!sqlMatch) {
@@ -58,15 +81,27 @@ export async function POST(request: Request) {
 
     const sql = sqlMatch[1].trim();
 
-    // 2. Execute the SQL against the Live Warehouse
+    if (!isReadOnlySelect(sql)) {
+      return NextResponse.json({
+        role: 'assistant',
+        content: '⚠️ Only read-only SELECT queries can be executed against the warehouse. Please rephrase your question.',
+      });
+    }
+
+    // 2. Execute the SQL against the warehouse (read-only session)
     await dbClient.connect();
+    dbConnected = true;
     const dbRes = await dbClient.query(sql);
-    
+
     // 3. Format the result for the UI
-    const rows = dbRes.rows;
+    const rows = dbRes.rows.slice(0, MAX_RESULT_ROWS);
+    const truncatedNote =
+      dbRes.rows.length > MAX_RESULT_ROWS
+        ? `\n\n*(showing first ${MAX_RESULT_ROWS} of ${dbRes.rows.length} rows)*`
+        : '';
     const tableHeader = rows.length > 0 ? `| ${Object.keys(rows[0]).join(' | ')} |` : '';
     const tableDivider = rows.length > 0 ? `| ${Object.keys(rows[0]).map(() => '---').join(' | ')} |` : '';
-    const tableRows = rows.map((r: any) => `| ${Object.values(r).join(' | ')} |`).join('\n');
+    const tableRows = rows.map((r) => `| ${Object.values(r).join(' | ')} |`).join('\n');
 
     return NextResponse.json({
       role: 'assistant',
@@ -74,27 +109,29 @@ export async function POST(request: Request) {
 
 ${tableHeader}
 ${tableDivider}
-${tableRows}
+${tableRows}${truncatedNote}
 
 ---
-**Agentic SQL Executed:**
-` + "```sql" + `
+**SQL Executed (read-only):**
+` + '```sql' + `
 ${sql}
-` + "```" + ``,
+` + '```',
     });
-
-  } catch (err: any) {
+  } catch (err) {
     console.error(err);
-    return NextResponse.json({ role: 'assistant', content: `⚠️ **AI Brain Error:** ${err.message}` });
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    return NextResponse.json({ role: 'assistant', content: `⚠️ **AI Brain Error:** ${message}` });
   } finally {
-    await dbClient.end();
+    if (dbConnected) {
+      await dbClient.end();
+    }
   }
 }
 
 // --- DEMO MODE HANDLER (The "Hardcoded" version) ---
 async function handleSimulatedResponse(q: string) {
-  const lowerQ = q.toLowerCase();
-  
+  const lowerQ = (q || '').toLowerCase();
+
   if (lowerQ.includes('order') || lowerQ.includes('how many')) {
     return NextResponse.json({
       role: 'assistant',
@@ -108,12 +145,12 @@ I've scanned the **Silver Layer**. There are currently **11,000 total orders** i
 | Cancelled | 1,900 |
 | Pending | 4,550 |
 
-*(Note: To enable Real AI reasoning, add an Anthropic API key to the .env file)*`
+*(Note: To enable Real AI reasoning, add an Anthropic API key to the .env file)*`,
     });
   }
 
   return NextResponse.json({
     role: 'assistant',
-    content: "I'm currently in **Demo Mode**. I can answer questions about orders, revenue, and trends. \n\n*To unlock my full potential, please provide an API key in the backend configuration.*"
+    content: "I'm currently in **Demo Mode**. I can answer questions about orders, revenue, and trends. \n\n*To unlock my full potential, please provide an API key in the backend configuration.*",
   });
 }

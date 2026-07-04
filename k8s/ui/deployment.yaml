@@ -20,10 +20,27 @@ spec:
         ports:
         - containerPort: 3000
         env:
-        - name: NEXT_PUBLIC_API_URL
-          value: "http://data-dashboard.etl.svc.cluster.local:3000"
-        - name: DBT_MCP_URL
-          value: "http://dbt-mcp.etl.svc.cluster.local:8000"
+        - name: DEST_DB_HOST
+          value: "postgres-dest.etl.svc.cluster.local"
+        - name: DEST_DB_PORT
+          value: "5432"
+        - name: DEST_DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: etl-secrets
+              key: DEST_DB_NAME
+        - name: DEST_DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: etl-secrets
+              key: DEST_DB_USER
+        - name: DEST_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: etl-secrets
+              key: DEST_DB_PASSWORD
+        # Optional: set ANTHROPIC_API_KEY in etl-secrets to enable the real AI
+        # assistant. Without it the dashboard runs in demo mode.
         resources:
           requests:
             memory: "256Mi"
