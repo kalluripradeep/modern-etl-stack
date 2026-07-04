@@ -35,9 +35,9 @@ warn "IMPORTANT: Ensure you have run 'docker login' for your registry first."
 read -rp "Enter your registry (e.g. docker.io/myuser): " REGISTRY
 
 if [ -z "$REGISTRY" ]; then
-  warn "Skipping image build — using default apache/airflow:3.2.0-python3.11"
+  warn "Skipping image build — using default apache/airflow:3.2.2-python3.11"
   warn "DAGs and deps may be missing. Re-run after building your image."
-  AIRFLOW_IMAGE="apache/airflow:3.2.0-python3.11"
+  AIRFLOW_IMAGE="apache/airflow:3.2.2-python3.11"
 
   info "Building local Data Dashboard image (data-dashboard:latest)"
   docker build -t "data-dashboard:latest" -f "$REPO_ROOT/ui/Dockerfile" "$REPO_ROOT/ui" || warn "Dashboard build failed"
@@ -104,7 +104,14 @@ find "$TMP_K8S" -type f -name "*.yaml" -exec perl -pi -e "s/storageClassName: .*
 echo ""
 info "Creating namespace, secrets, and configmaps..."
 kubectl apply -f "$TMP_K8S/00-namespace.yaml"
-kubectl apply -f "$TMP_K8S/01-secrets.yaml"
+if [ -f "$REPO_ROOT/k8s/01-secrets.generated.yaml" ]; then
+  info "Using generated secrets (k8s/01-secrets.generated.yaml)"
+  kubectl apply -f "$REPO_ROOT/k8s/01-secrets.generated.yaml"
+else
+  warn "Using DEFAULT credentials from k8s/01-secrets.yaml."
+  warn "For anything beyond a throwaway cluster, run: bash k8s/generate-secrets.sh"
+  kubectl apply -f "$TMP_K8S/01-secrets.yaml"
+fi
 kubectl apply -f "$TMP_K8S/02-configmaps.yaml"
 ok "Namespace, secrets, configmaps applied"
 
