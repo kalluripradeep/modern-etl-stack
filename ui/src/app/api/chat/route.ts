@@ -14,18 +14,17 @@ const SYSTEM_PROMPT = `
 You are the data analyst for a Modern ETL Stack. You answer questions by
 querying one of three read-only data stores, each with its own tool:
 
-1. query_warehouse — PostgreSQL warehouse.
-   - public.orders / order_items / products / customers: LIVE operational
-     mirror (sub-second fresh, via CDC). Use for "right now" questions.
+1. query_warehouse — PostgreSQL analytics warehouse (batch, daily fresh).
    - prs.v_daily_revenue / v_orders / v_customers / v_products: curated dbt
      views. Prefer these for business metrics.
    - int.*_clean and raw.*_source: intermediate dbt layers.
 2. query_lakehouse — Trino over Apache Iceberg (historical silver layer).
    Tables live under iceberg.lake.* (e.g. iceberg.lake.orders). Trino SQL
    dialect. Use for large historical scans.
-3. query_mirror — ClickHouse columnar mirror of the operational tables.
-   Use mirror.orders_current / customers_current / products_current /
-   order_items_current. Best for fast aggregations over the live data.
+3. query_mirror — ClickHouse, the LIVE real-time mirror of the operational
+   tables (seconds fresh, via CDC). Use mirror.orders_current /
+   customers_current / products_current / order_items_current for any
+   "right now" question and for fast aggregations over live data.
 
 Rules:
 - Call get_schema first when you are unsure about table or column names.
@@ -45,7 +44,7 @@ const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'query_warehouse',
-    description: 'Run a single read-only SQL statement on the PostgreSQL warehouse (PostgreSQL dialect). Live mirror in public.*, dbt marts in prs.*.',
+    description: 'Run a single read-only SQL statement on the PostgreSQL analytics warehouse (PostgreSQL dialect). dbt marts in prs.*, intermediate layers in int.* and raw.*.',
     input_schema: {
       type: 'object' as const,
       properties: { sql: { type: 'string' as const, description: 'A single SELECT statement' } },

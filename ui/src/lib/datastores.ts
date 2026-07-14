@@ -2,9 +2,9 @@ import { Client } from 'pg';
 
 /**
  * Read-only clients for the three data stores the assistant can query:
- *  - warehouse:  PostgreSQL (live CDC mirror in public.*, dbt marts in int/prs)
+ *  - warehouse:  PostgreSQL (batch analytics: raw/int/prs dbt layers)
  *  - lakehouse:  Trino over Iceberg (silver layer, schema `lake`)
- *  - mirror:     ClickHouse columnar CDC mirror (database `mirror`)
+ *  - mirror:     ClickHouse real-time CDC mirror (database `mirror`)
  */
 
 export interface SqlResult {
@@ -157,11 +157,11 @@ export async function getSchemaOverview(): Promise<string> {
       SELECT table_schema || '.' || table_name AS tbl,
              string_agg(column_name || ' ' || data_type, ', ' ORDER BY ordinal_position) AS cols
       FROM information_schema.columns
-      WHERE table_schema IN ('public', 'raw', 'int', 'prs')
+      WHERE table_schema IN ('raw', 'int', 'prs')
       GROUP BY 1 ORDER BY 1
     `);
     parts.push(
-      'WAREHOUSE (PostgreSQL — query_warehouse; public.* = live CDC mirror, raw/int/prs = dbt layers):\n' +
+      'WAREHOUSE (PostgreSQL — query_warehouse; raw/int/prs = dbt layers, batch fresh):\n' +
       pg.rows.map(([t, c]) => `  ${t}: ${c}`).join('\n'),
     );
   } catch (e) {

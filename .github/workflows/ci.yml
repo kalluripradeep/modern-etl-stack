@@ -20,7 +20,7 @@ jobs:
       - name: Install Ruff
         run: pip install ruff
       - name: Run Ruff
-        run: ruff check airflow/ scripts/ cdc-sync-daemon/ spark/ sample-data/
+        run: ruff check airflow/ scripts/ spark/ sample-data/
 
   pipeline-config-sync:
     runs-on: ubuntu-latest
@@ -100,7 +100,7 @@ jobs:
       - name: Install Bandit
         run: pip install bandit
       - name: Run Bandit (medium severity and above)
-        run: bandit -r airflow scripts cdc-sync-daemon spark sample-data -ll
+        run: bandit -r airflow scripts spark sample-data -ll
 
   secret-scan:
     runs-on: ubuntu-latest
@@ -153,8 +153,6 @@ jobs:
         # Context must be the repo root — the Dockerfile copies
         # docker/airflow/requirements-airflow.txt and spark/jobs/
         run: docker build -t test-airflow -f docker/airflow/Dockerfile .
-      - name: Build CDC Sync Daemon Image
-        run: docker build -t test-cdc-daemon cdc-sync-daemon/
 
   compose-validate:
     runs-on: ubuntu-latest

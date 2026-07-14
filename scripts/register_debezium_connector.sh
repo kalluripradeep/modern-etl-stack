@@ -55,28 +55,5 @@ curl -X POST "${CONNECT_URL}/connectors" \
   }"
 
 echo ""
-echo "Registering Postgres JDBC Sink connector..."
-
-curl -X POST "${CONNECT_URL}/connectors" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"name\": \"orders-jdbc-sink\",
-    \"config\": {
-      \"connector.class\": \"io.debezium.connector.jdbc.JdbcSinkConnector\",
-      \"tasks.max\": \"1\",
-      \"topics\": \"cdc.public.customers\",
-      \"connection.url\": \"jdbc:postgresql://${DEST_DB_HOST:-postgres-dest}:${DEST_DB_PORT:-5432}/${DEST_DB_NAME:-destdb}\",
-      \"connection.username\": \"${DEST_DB_USER:-destuser}\",
-      \"connection.password\": \"${DEST_DB_PASSWORD:-destpass}\",
-      \"insert.mode\": \"upsert\",
-      \"delete.enabled\": \"true\",
-      \"primary.key.mode\": \"record_key\",
-      \"primary.key.fields\": \"customer_id\",
-      \"table.name.format\": \"public.customers\"
-    }
-  }"
-
-echo ""
-echo "Connectors registered. Check status with:"
+echo "Connector registered. Check status with:"
 echo "  curl ${CONNECT_URL}/connectors/orders-cdc-connector/status | jq ."
-echo "  curl ${CONNECT_URL}/connectors/orders-jdbc-sink/status | jq ."

@@ -17,7 +17,5 @@ data:
   BRONZE_BUCKET: {{ .Values.etl.bronzeBucket | quote }}
   SILVER_BUCKET: {{ .Values.etl.silverBucket | quote }}
   ETL_CHUNK_SIZE: {{ .Values.etl.chunkSize | quote }}
-  CDC_MAX_MESSAGES: {{ .Values.etl.cdcMaxMessages | quote }}
-  CDC_COMMIT_EVERY: {{ .Values.etl.cdcCommitEvery | quote }}
   SPARK_EXECUTOR_MEMORY: {{ .Values.etl.sparkExecutorMemory | quote }}
   SPARK_EXECUTOR_CORES: {{ .Values.etl.sparkExecutorCores | quote }}
