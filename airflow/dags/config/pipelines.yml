@@ -7,7 +7,6 @@
 # Consumed via generated artifacts (run `make generate` after editing):
 #   - docker/clickhouse/initdb/01_mirror_schema.sql
 #   - scripts/register_debezium_connector.sh
-#   - cdc-sync-daemon/cdc_tables.py
 #
 # CI fails if the generated artifacts are out of sync with this file.
 #

@@ -138,7 +138,5 @@ data:
   SILVER_BUCKET: "silver"
   # Scale these up for large datasets (50GB+)
   ETL_CHUNK_SIZE: "10000"
-  CDC_MAX_MESSAGES: "100"
-  CDC_COMMIT_EVERY: "100"
   SPARK_EXECUTOR_MEMORY: "2g"
   SPARK_EXECUTOR_CORES: "2"

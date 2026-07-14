@@ -146,8 +146,6 @@ etl:
   bronzeBucket: bronze
   silverBucket: silver
   chunkSize: "10000"
-  cdcMaxMessages: "100"
-  cdcCommitEvery: "100"
   sparkExecutorMemory: 2g
   sparkExecutorCores: "2"
 

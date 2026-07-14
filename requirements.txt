@@ -1,7 +1,7 @@
 # Standardized dependencies for Modern ETL Stack
 # Kept in sync with docker/airflow/requirements-airflow.txt
 
-apache-airflow==3.2.2
+apache-airflow==3.3.0
 pandas>=2.1.4
 psycopg2-binary>=2.9.9
 pyarrow>=14.0.1

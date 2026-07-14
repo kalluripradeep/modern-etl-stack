@@ -7,17 +7,19 @@ A comprehensive ETL stack demonstrating the integration of open-source data engi
 ![Architecture Diagram](docs/images/architecture.png)
 
 ```
-                         ┌──► PIPE 3 · Operational Hot Mirror (seconds)
-                         │     WAL → Debezium → Kafka ─┬─► postgres-dest public.*  (row store)
-                         │                             └─► ClickHouse mirror.*     (column store)
+                         ┌──► PIPE 3 · Real-Time Analytics (seconds)
+                         │     WAL → Debezium → Kafka → ClickHouse mirror.* (column store)
+                         │
  postgres-source ────────┼──► PIPE 1 · Analytical Warehouse (batch)
-  (operational DB)       │     Airflow ingest → postgres-dest raw.* → dbt → int.* → prs.v_*
-                         │                   └─► MinIO bronze/ (parquet)
+  (operational DB,       │     Airflow ingest → postgres-dest raw.* → dbt → int.* → prs.v_*
+   transactions)         │                   └─► MinIO bronze/ (parquet)
                          │                              │
                          └──────────────────────────────┴──► PIPE 2 · Lakehouse (batch, big data)
                                                              Spark → Iceberg tables (silver, MinIO)
                                                              queried via Trino
 ```
+
+One destination per pipeline, each matched to an access pattern: the source Postgres stays the transactional system of record; Pipe 1 delivers tested batch marts in Postgres; Pipe 2 delivers big historical data in Iceberg via Trino; Pipe 3 delivers real-time analytics in ClickHouse.
 
 All three pipelines run in parallel from the same source. Pipes 1 and 3 are fully independent; Pipe 2 consumes the bronze parquet produced by Pipe 1's ingestion DAG.
 
@@ -29,19 +31,15 @@ Airflow extracts snapshots from the operational database in chunked micro-batche
 ### 2. Lakehouse — Big Historical Data, Many Query Engines
 The same ingestion run writes parquet files to MinIO (bronze). Spark jobs clean and MERGE them into **Apache Iceberg** tables (silver), and **Trino** exposes those tables over ANSI SQL (`iceberg.lake.*`) to BI tools, notebooks, and the AI assistant. The Iceberg catalog is a JDBC catalog stored in the destination Postgres, so Spark and Trino always see the same tables. Designed for data volumes that would be too expensive to keep in an operational database.
 
-### 3. Operational Hot Mirror — Real-Time Analysis
-Debezium captures every insert/update/delete from the source WAL into Kafka. Two consumers apply the stream:
-- a **row-store mirror** in destination Postgres (`public.*`) — used for point lookups and the live dashboard,
-- a **column-store mirror** in **ClickHouse** (`mirror.*_current` views) — used for fast aggregations over the live data.
-
-Sub-second-to-seconds freshness for live dashboards and operational monitoring, without touching the source database's performance.
+### 3. Real-Time Analytics — Streaming CDC into ClickHouse
+Debezium captures every insert/update/delete from the source WAL into Kafka, and **ClickHouse** consumes the topics with its built-in Kafka engine, materializing them into columnar tables (query the `mirror.*_current` views). Seconds-level freshness for live dashboards and operational monitoring, without touching the source database's performance. Kafka in the middle buys durability and replay — the mirror can be rebuilt from the retained log — and lets future consumers subscribe to the same change stream without adding replication slots on the source.
 
 ### AI Data Assistant
 A Next.js dashboard with an agentic analyst: it introspects the schemas of all three stores, decides which engine fits the question (warehouse, lakehouse via Trino, or the ClickHouse mirror), runs read-only SQL with automatic error-retry, and answers in plain language. Runs in demo mode without an API key; add an Anthropic API key to enable it, and set `DASHBOARD_AUTH_PASSWORD` to require a login.
 
 ## Adding a Source Table
 
-Tables are defined once in [`airflow/dags/config/pipelines.yml`](airflow/dags/config/pipelines.yml) — the single source of truth. The ingestion DAG reads it directly; the ClickHouse mirror schema, Debezium connector, and CDC daemon topic list are generated from it:
+Tables are defined once in [`airflow/dags/config/pipelines.yml`](airflow/dags/config/pipelines.yml) — the single source of truth. The ingestion DAG reads it directly; the ClickHouse mirror schema and Debezium connector are generated from it:
 
 ```bash
 # 1. Add the table to airflow/dags/config/pipelines.yml
@@ -64,7 +62,6 @@ Prometheus scrapes Airflow (via statsd), Kafka consumer lag (kafka-exporter), Mi
 ## Database Schema Structure
 
 The destination warehouse (`destdb`) is strictly organized:
-- **`public`:** live CDC row mirror of the source tables.
 - **`raw`:** batch snapshots straight from the source (`*_source` tables).
 - **`int`:** cleaned, deduplicated integration layer (`*_clean` tables).
 - **`prs`:** presentation views for BI (`prs.v_daily_revenue`, …). Only this schema is exposed to BI tools.

@@ -86,16 +86,6 @@ extraEnv: |
       configMapKeyRef:
         name: etl-env
         key: ETL_CHUNK_SIZE
-  - name: CDC_MAX_MESSAGES
-    valueFrom:
-      configMapKeyRef:
-        name: etl-env
-        key: CDC_MAX_MESSAGES
-  - name: CDC_COMMIT_EVERY
-    valueFrom:
-      configMapKeyRef:
-        name: etl-env
-        key: CDC_COMMIT_EVERY
   - name: SPARK_EXECUTOR_MEMORY
     valueFrom:
       configMapKeyRef:

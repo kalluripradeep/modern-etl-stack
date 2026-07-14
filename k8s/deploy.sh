@@ -35,18 +35,15 @@ warn "IMPORTANT: Ensure you have run 'docker login' for your registry first."
 read -rp "Enter your registry (e.g. docker.io/myuser): " REGISTRY
 
 if [ -z "$REGISTRY" ]; then
-  warn "Skipping image build — using default apache/airflow:3.2.2-python3.11"
+  warn "Skipping image build — using default apache/airflow:3.3.0-python3.11"
   warn "DAGs and deps may be missing. Re-run after building your image."
-  AIRFLOW_IMAGE="apache/airflow:3.2.2-python3.11"
+  AIRFLOW_IMAGE="apache/airflow:3.3.0-python3.11"
 
   info "Building local Data Dashboard image (data-dashboard:latest)"
   docker build -t "data-dashboard:latest" -f "$REPO_ROOT/ui/Dockerfile" "$REPO_ROOT/ui" || warn "Dashboard build failed"
-  info "Building local CDC Sync Daemon image (cdc-sync-daemon:latest)"
-  docker build -t "cdc-sync-daemon:latest" -f "$REPO_ROOT/cdc-sync-daemon/Dockerfile" "$REPO_ROOT/cdc-sync-daemon" || warn "CDC Sync Daemon build failed"
 else
   AIRFLOW_IMAGE="${REGISTRY}/airflow-etl:latest"
   DASHBOARD_IMAGE="${REGISTRY}/data-dashboard:latest"
-  DAEMON_IMAGE="${REGISTRY}/cdc-sync-daemon:latest"
 
   info "Building Airflow image: $AIRFLOW_IMAGE"
   docker build -t "$AIRFLOW_IMAGE" -f "$REPO_ROOT/docker/airflow/Dockerfile" "$REPO_ROOT"
@@ -59,12 +56,6 @@ else
   info "Pushing $DASHBOARD_IMAGE..."
   docker push "$DASHBOARD_IMAGE" || warn "Push failed for dashboard"
   ok "Image pushed: $DASHBOARD_IMAGE"
-
-  info "Building CDC Sync Daemon image: $DAEMON_IMAGE"
-  docker build -t "$DAEMON_IMAGE" -f "$REPO_ROOT/cdc-sync-daemon/Dockerfile" "$REPO_ROOT/cdc-sync-daemon"
-  info "Pushing $DAEMON_IMAGE..."
-  docker push "$DAEMON_IMAGE" || warn "Push failed for CDC Sync Daemon"
-  ok "Image pushed: $DAEMON_IMAGE"
 
   # Patch the helm values with actual image in the temporary directory (created later)
   # We'll defer this until TMP_K8S is created.
@@ -94,7 +85,6 @@ if [ -n "${REGISTRY_FOR_REPLACE:-}" ]; then
   # Apply the registry change to the temporary file
   sed -i "s|YOUR_REGISTRY/airflow-etl|${REGISTRY_FOR_REPLACE}/airflow-etl|g" "$TMP_K8S/airflow/helm-values.yaml" 2>/dev/null || perl -pi -e "s|YOUR_REGISTRY/airflow-etl|${REGISTRY_FOR_REPLACE}/airflow-etl|g" "$TMP_K8S/airflow/helm-values.yaml"
   sed -i "s|image: data-dashboard:latest|image: ${REGISTRY_FOR_REPLACE}/data-dashboard:latest|g" "$TMP_K8S/ui/deployment.yaml" 2>/dev/null || perl -pi -e "s|image: data-dashboard:latest|image: ${REGISTRY_FOR_REPLACE}/data-dashboard:latest|g" "$TMP_K8S/ui/deployment.yaml"
-  sed -i "s|image: cdc-sync-daemon:latest|image: ${REGISTRY_FOR_REPLACE}/cdc-sync-daemon:latest|g" "$TMP_K8S/cdc-sync-daemon/deployment.yaml" 2>/dev/null || perl -pi -e "s|image: cdc-sync-daemon:latest|image: ${REGISTRY_FOR_REPLACE}/cdc-sync-daemon:latest|g" "$TMP_K8S/cdc-sync-daemon/deployment.yaml"
 fi
 
 # Replace any hardcoded storageClassName values with the chosen one
@@ -263,14 +253,6 @@ kubectl apply -f "$TMP_K8S/ui/"
 kubectl rollout status deployment/data-dashboard -n $NAMESPACE --timeout=300s
 ok "AI Dashboard is ready"
 
-# ─── Step 12: Real-Time Operational CDC Sync Daemon ────────────────────────────
-echo ""
-info "Deploying Operational CDC Sync Daemon..."
-kubectl apply -f "$TMP_K8S/cdc-sync-daemon/"
-kubectl rollout status deployment/cdc-sync-daemon -n $NAMESPACE --timeout=300s
-ok "Operational CDC Sync Daemon is ready"
-
-
 # ─── Done ─────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}============================================================${NC}"
@@ -290,8 +272,6 @@ echo "  Spark UI           http://${NODE_IP}:30808"
 echo ""
 echo "  To scale for 50GB+ datasets, update k8s/02-configmaps.yaml:"
 echo "    ETL_CHUNK_SIZE:      500000"
-echo "    CDC_MAX_MESSAGES:    50000"
-echo "    CDC_COMMIT_EVERY:    10000"
 echo "    SPARK_EXECUTOR_MEMORY: 8g"
 echo ""
 echo "  Then: kubectl apply -f k8s/02-configmaps.yaml"
