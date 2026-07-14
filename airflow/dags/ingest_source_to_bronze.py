@@ -5,6 +5,7 @@ Generic ingestion for all source tables into the Bronze Lakehouse layer.
 
 import io
 import os
+import sys
 import glob
 import tempfile
 import logging
@@ -22,7 +23,9 @@ from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from cosmos import DbtTaskGroup, ProjectConfig, ProfileConfig, ExecutionConfig
 from cosmos.profiles import PostgresUserPasswordProfileMapping
 
-from pipeline_config import load_manifest, raw_ddl
+# Airflow 3.3+ no longer puts the dags folder on sys.path during parsing
+sys.path.insert(0, str(Path(__file__).parent))
+from pipeline_config import load_manifest, raw_ddl  # noqa: E402
 
 log = logging.getLogger(__name__)
 
