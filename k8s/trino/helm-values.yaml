@@ -1,0 +1,92 @@
+# Values for the official Trino Helm chart (https://trinodb.github.io/charts)
+# Installed by k8s/deploy.sh:
+#   helm upgrade --install trino trino/trino -n etl -f k8s/trino/helm-values.yaml
+# Scale query capacity by raising server.workers.
+
+fullnameOverride: trino
+
+image:
+  tag: "474"   # kept in sync with docker-compose.yml
+
+server:
+  workers: 2
+
+# Same Iceberg catalog Spark writes to: metadata pointers in postgres-dest
+# (schema iceberg_catalog), data files in MinIO. ${ENV:...} placeholders are
+# resolved by Trino at startup from the pod environment below.
+catalogs:
+  iceberg: |
+    connector.name=iceberg
+    iceberg.catalog.type=jdbc
+    iceberg.jdbc-catalog.driver-class=org.postgresql.Driver
+    iceberg.jdbc-catalog.connection-url=jdbc:postgresql://${ENV:DEST_DB_HOST}:${ENV:DEST_DB_PORT}/${ENV:DEST_DB_NAME}?currentSchema=iceberg_catalog
+    iceberg.jdbc-catalog.connection-user=${ENV:DEST_DB_USER}
+    iceberg.jdbc-catalog.connection-password=${ENV:DEST_DB_PASSWORD}
+    iceberg.jdbc-catalog.catalog-name=silver
+    iceberg.jdbc-catalog.default-warehouse-dir=s3a://silver/
+    fs.native-s3.enabled=true
+    s3.endpoint=${ENV:MINIO_ENDPOINT}
+    s3.region=us-east-1
+    s3.path-style-access=true
+    s3.aws-access-key=${ENV:MINIO_ROOT_USER}
+    s3.aws-secret-key=${ENV:MINIO_ROOT_PASSWORD}
+
+env:
+  - name: DEST_DB_HOST
+    valueFrom:
+      configMapKeyRef:
+        name: etl-env
+        key: DEST_DB_HOST
+  - name: DEST_DB_PORT
+    valueFrom:
+      configMapKeyRef:
+        name: etl-env
+        key: DEST_DB_PORT
+  - name: MINIO_ENDPOINT
+    valueFrom:
+      configMapKeyRef:
+        name: etl-env
+        key: MINIO_ENDPOINT
+  - name: DEST_DB_NAME
+    valueFrom:
+      secretKeyRef:
+        name: etl-secrets
+        key: DEST_DB_NAME
+  - name: DEST_DB_USER
+    valueFrom:
+      secretKeyRef:
+        name: etl-secrets
+        key: DEST_DB_USER
+  - name: DEST_DB_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: etl-secrets
+        key: DEST_DB_PASSWORD
+  - name: MINIO_ROOT_USER
+    valueFrom:
+      secretKeyRef:
+        name: etl-secrets
+        key: MINIO_ROOT_USER
+  - name: MINIO_ROOT_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: etl-secrets
+        key: MINIO_ROOT_PASSWORD
+
+coordinator:
+  resources:
+    requests:
+      memory: 1Gi
+      cpu: 500m
+    limits:
+      memory: 4Gi
+      cpu: "2"
+
+worker:
+  resources:
+    requests:
+      memory: 1Gi
+      cpu: 500m
+    limits:
+      memory: 4Gi
+      cpu: "2"
