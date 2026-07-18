@@ -1,5 +1,7 @@
-# Standardized dependencies for Modern ETL Stack
-# Kept in sync with docker/airflow/requirements-airflow.txt
+# Full dependency set for pip-audit (CI) and local dev.
+# docker/airflow/requirements-airflow.txt is a deliberate subset for the
+# runtime image — it omits faker, which is only used by the standalone
+# seed script (make seed), never inside the Airflow container.
 
 apache-airflow==3.3.0
 pandas>=2.1.4
