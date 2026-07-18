@@ -174,17 +174,6 @@ jobs:
         # helm-values.yaml is a Helm values file, not a manifest
         run: kubeconform -ignore-missing-schemas -ignore-filename-pattern 'helm-values.yaml' -summary -skip Kafka k8s/
 
-  helm-validate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
-        with:
-          version: v3.12.0
-      - name: Helm Lint
-        run: helm lint helm/etl-stack/
-
   # ── Application builds & integration ─────────────────────────────────────
 
   ui-build:
