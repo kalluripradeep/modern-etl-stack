@@ -190,10 +190,18 @@ kubectl rollout status statefulset/spark-master -n $NAMESPACE --timeout=300s
 kubectl rollout status deployment/spark-worker -n $NAMESPACE --timeout=300s
 ok "Spark cluster is ready"
 
-info "Deploying Trino (lakehouse query engine)..."
-kubectl apply -f "$TMP_K8S/trino/"
-kubectl rollout status deployment/trino -n $NAMESPACE --timeout=300s
-ok "Trino is ready"
+info "Deploying Trino (lakehouse query engine) via the official Helm chart..."
+# One-time migration: remove the previous raw-manifest deployment if present
+kubectl delete deployment/trino service/trino configmap/trino-catalog \
+  -n $NAMESPACE --ignore-not-found
+helm repo add trino https://trinodb.github.io/charts --force-update
+helm upgrade --install trino trino/trino \
+  --namespace $NAMESPACE \
+  --values "$TMP_K8S/trino/helm-values.yaml" \
+  --timeout 10m
+kubectl rollout status deployment/trino-coordinator -n $NAMESPACE --timeout=300s
+kubectl rollout status deployment/trino-worker -n $NAMESPACE --timeout=300s
+ok "Trino is ready (coordinator + workers; scale with server.workers in k8s/trino/helm-values.yaml)"
 
 # ─── Step 8: Monitoring ───────────────────────────────────────────────────────
 echo ""
