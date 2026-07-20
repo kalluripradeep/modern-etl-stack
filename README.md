@@ -6,7 +6,7 @@ A comprehensive ETL stack demonstrating the integration of open-source data engi
 
 ![Architecture Diagram](docs/images/architecture.png)
 
-📄 The full design rationale is in the accompanying paper: [Data to Analytics Pipeline — Proof of Concept](docs/Data-to-Analytics-Pipeline-POC.pdf)
+📄 The full design rationale is in the accompanying paper: [Data to Analytics Pipeline — Proof of Concept](https://github.com/kalluripradeep/modern-etl-stack/raw/main/docs/Data-to-Analytics-Pipeline-POC.pdf) (downloads the PDF)
 
 ```
                          ┌──► PIPE 3 · Real-Time Analytics (seconds)
