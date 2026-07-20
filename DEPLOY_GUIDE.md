@@ -86,6 +86,12 @@ bash k8s/generate-secrets.sh
 ```
 This writes `k8s/01-secrets.generated.yaml` (gitignored) with random passwords, and the deploy script picks it up automatically. **Save the printed passwords** — you need them for the dashboards in Step 6. Skipping this deploys well-known default credentials, acceptable only for a throwaway cluster.
 
+**Optional — enable the real AI assistant:** the AI dashboard runs in demo mode unless it has an Anthropic API key. Add it to the secret at any time (before or after deploying):
+```bash
+kubectl -n etl patch secret etl-secrets -p '{"stringData":{"ANTHROPIC_API_KEY":"sk-ant-..."}}'
+kubectl -n etl rollout restart deployment/data-dashboard
+```
+
 ### Step 3 — Run the deploy script
 ```bash
 bash k8s/deploy.sh
