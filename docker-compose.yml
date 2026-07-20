@@ -132,9 +132,9 @@ services:
 
   # Kafka Connect (Debezium)
   kafka-connect:
-    build:
-      context: .
-      dockerfile: docker/kafka-connect/Dockerfile
+    # Stock Debezium image, same as K8s — the old custom build only added the
+    # retired JDBC sink connector
+    image: quay.io/debezium/connect:2.5
     container_name: kafka-connect
     depends_on:
       kafka:

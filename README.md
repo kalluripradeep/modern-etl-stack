@@ -108,7 +108,7 @@ Kubernetes: `bash k8s/generate-secrets.sh && bash k8s/deploy.sh` (see [DEPLOY_GU
 | Service | Local URL | Credentials (from `.env`) |
 |---|---|---|
 | **Airflow UI** | http://localhost:8080 | admin / admin |
-| **AI Dashboard** | http://localhost:3000 *(run `npm run dev` in `ui/`)* | open unless `DASHBOARD_AUTH_PASSWORD` set |
+| **AI Dashboard** | http://localhost:3001 *(run `npm run dev -- -p 3001` in `ui/`; 3000 is Grafana's)* | open unless `DASHBOARD_AUTH_PASSWORD` set |
 | **Trino UI** | http://localhost:8082 | any username |
 | **ClickHouse** | http://localhost:8123 | `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` |
 | **MinIO Console** | http://localhost:9001 | `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` |

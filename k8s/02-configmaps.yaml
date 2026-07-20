@@ -30,10 +30,11 @@ data:
         static_configs:
           - targets: ['kafka-exporter.etl.svc.cluster.local:9308']
 
-      - job_name: 'airflow'
+      # Airflow metrics flow through the Helm chart's statsd-exporter
+      # (mappings defined in k8s/airflow/helm-values.yaml)
+      - job_name: 'airflow-statsd'
         static_configs:
-          - targets: ['airflow-webserver.etl.svc.cluster.local:8080']
-        metrics_path: '/admin/metrics'
+          - targets: ['airflow-statsd.etl.svc.cluster.local:9102']
 
       - job_name: 'postgres-source'
         static_configs:

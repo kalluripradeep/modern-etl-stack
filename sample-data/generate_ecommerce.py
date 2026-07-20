@@ -48,7 +48,7 @@ def create_tables(conn):
                 product_id SERIAL PRIMARY KEY,
                 name VARCHAR(200),
                 description TEXT,
-                price DECIMAL(10, 2),
+                price DECIMAL(18, 2),
                 category VARCHAR(50),
                 stock_quantity INT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -62,7 +62,7 @@ def create_tables(conn):
                 order_id SERIAL PRIMARY KEY,
                 customer_id INT REFERENCES customers(customer_id),
                 order_date TIMESTAMP,
-                total_amount DECIMAL(10, 2),
+                total_amount DECIMAL(18, 2),
                 status VARCHAR(20),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -76,7 +76,7 @@ def create_tables(conn):
                 order_id INT REFERENCES orders(order_id),
                 product_id INT REFERENCES products(product_id),
                 quantity INT,
-                unit_price DECIMAL(10, 2),
+                unit_price DECIMAL(18, 2),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -217,7 +217,7 @@ def print_stats(conn):
         cur.execute("SELECT COUNT(*) FROM order_items")
         print(f"  📝 Order Items: {cur.fetchone()[0]}")
 
-        cur.execute("SELECT COALESCE(SUM(total_amount), 0)::numeric(10,2) FROM orders")
+        cur.execute("SELECT COALESCE(SUM(total_amount), 0)::numeric(18,2) FROM orders")
         total_revenue = cur.fetchone()[0]
         print(f"  💰 Total Revenue: ${total_revenue}")
 

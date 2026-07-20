@@ -217,6 +217,10 @@ ok "Trino is ready (coordinator + workers; scale with server.workers in k8s/trin
 # ─── Step 8: Monitoring ───────────────────────────────────────────────────────
 echo ""
 info "Deploying Prometheus and Grafana..."
+# Provision the same Grafana dashboards compose uses (Data Platform Health)
+kubectl create configmap grafana-dashboards -n $NAMESPACE \
+  --from-file="$REPO_ROOT/monitoring/grafana/dashboards/data_platform.json" \
+  --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -f "$TMP_K8S/monitoring/"
 kubectl rollout status deployment/prometheus -n $NAMESPACE --timeout=300s
 kubectl rollout status deployment/grafana    -n $NAMESPACE --timeout=300s
