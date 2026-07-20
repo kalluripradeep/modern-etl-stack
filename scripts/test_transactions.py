@@ -5,26 +5,27 @@ End-to-end transactional test for the ETL pipeline.
 What this tests:
   Step 1  Seed 50 customers, 20 products, 200 orders into postgres-source
   Step 2  Register the Debezium CDC connector (if not already registered)
-  Step 3  Run the full extract → validate → load pipeline (DAG functions directly)
+  Step 3  Run the extract → validate → load pipeline (bronze parquet to
+          MinIO, staged COPY upsert into raw.orders_source — the same
+          targets the real ingestion DAG writes)
   Step 4  Simulate live transactions: UPDATE status, CANCEL orders, DELETE rows
-  Step 5  Consume CDC events from Kafka and apply to postgres-dest
-  Step 6  Verify postgres-dest matches expected final state
-  Step 7  Print pass / fail report
+  Step 5  Verify the ClickHouse mirror (Pipe 3's real consumer) reflects
+          every change: counts, deletes gone, cancellations applied
+  Step 6  Print pass / fail report
 
 Usage (local docker-compose):
-  python scripts/test_transactions.py
+  DEST_DB_PORT=5433 MINIO_ROOT_PASSWORD=minioadmin python scripts/test_transactions.py
 
 Usage (Kubernetes — port-forward first):
   kubectl port-forward svc/postgres-source 5433:5432 -n etl &
   kubectl port-forward svc/postgres-dest   5434:5432 -n etl &
-  kubectl port-forward svc/kafka           9093:9092 -n etl &
   kubectl port-forward svc/kafka-connect   8083:8083 -n etl &
   kubectl port-forward svc/minio           9000:9000 -n etl &
-  SOURCE_DB_PORT=5433 DEST_DB_PORT=5434 KAFKA_PORT=9093 python scripts/test_transactions.py
+  kubectl port-forward svc/clickhouse      8123:8123 -n etl &
+  SOURCE_DB_PORT=5433 DEST_DB_PORT=5434 python scripts/test_transactions.py
 """
 
 import io
-import json
 import os
 import random
 import sys
@@ -35,7 +36,6 @@ from datetime import datetime, timedelta
 import psycopg2
 import requests
 from faker import Faker
-from kafka import KafkaConsumer
 
 # ── Connection config ──────────────────────────────────────────────────────────
 SOURCE = dict(
@@ -52,11 +52,13 @@ DEST = dict(
     user=os.environ.get("DEST_DB_USER", "destuser"),
     password=os.environ.get("DEST_DB_PASSWORD", "destpass"),
 )
-KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", f"localhost:{os.environ.get('KAFKA_PORT', 9092)}")
 CONNECT_URL     = os.environ.get("KAFKA_CONNECT_URL", "http://localhost:8083")
 MINIO_ENDPOINT  = os.environ.get("MINIO_ENDPOINT", "http://localhost:9000")
 MINIO_USER      = os.environ.get("MINIO_ROOT_USER", "minioadmin")
 MINIO_PASSWORD  = os.environ.get("MINIO_ROOT_PASSWORD", "minioadmin123")
+CLICKHOUSE_URL  = os.environ.get("CLICKHOUSE_URL", "http://localhost:8123")
+CLICKHOUSE_USER = os.environ.get("CLICKHOUSE_USER", "chuser")
+CLICKHOUSE_PASSWORD = os.environ.get("CLICKHOUSE_PASSWORD", "chpass")
 CHUNK_DIR       = os.path.join(tempfile.gettempdir(), "etl_test_chunks")
 
 STATUSES  = ["pending", "processing", "shipped", "delivered", "cancelled"]
@@ -292,11 +294,12 @@ def run_extract_pipeline():
         fail("MinIO upload failed", str(e))
         print("  → Make sure MinIO is running and port-forwarded if using K8s")
 
-    # --- Load to postgres-dest via COPY ---
+    # --- Load to the warehouse raw layer via COPY (same target as the DAG) ---
     conn = psycopg2.connect(**DEST)
     cur = conn.cursor()
+    cur.execute("CREATE SCHEMA IF NOT EXISTS raw")
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS public.orders (
+        CREATE TABLE IF NOT EXISTS raw.orders_source (
             order_id     BIGINT PRIMARY KEY,
             customer_id  BIGINT,
             order_date   TIMESTAMP,
@@ -314,11 +317,11 @@ def run_extract_pipeline():
         buf = io.StringIO()
         df.to_csv(buf, index=False, header=False)
         buf.seek(0)
-        cur.execute("CREATE TEMP TABLE IF NOT EXISTS orders_stage (LIKE public.orders) ON COMMIT PRESERVE ROWS")
+        cur.execute("CREATE TEMP TABLE IF NOT EXISTS orders_stage (LIKE raw.orders_source) ON COMMIT PRESERVE ROWS")
         cur.execute("TRUNCATE orders_stage")
         cur.copy_expert("COPY orders_stage (order_id,customer_id,order_date,total_amount,status,created_at,updated_at) FROM STDIN WITH CSV", buf)
         cur.execute("""
-            INSERT INTO public.orders SELECT * FROM orders_stage
+            INSERT INTO raw.orders_source SELECT * FROM orders_stage
             ON CONFLICT (order_id) DO UPDATE SET
                 total_amount = EXCLUDED.total_amount,
                 status       = EXCLUDED.status,
@@ -329,7 +332,7 @@ def run_extract_pipeline():
         del df
     cur.close()
     conn.close()
-    ok(f"Loaded {loaded} rows into postgres-dest via COPY (staging upsert)")
+    ok(f"Loaded {loaded} rows into raw.orders_source via COPY (staging upsert)")
 
 
 # ── Step 4: Simulate live transactions ────────────────────────────────────────
@@ -381,138 +384,78 @@ def simulate_transactions():
     return {"updated": update_ids, "cancelled": cancel_ids, "deleted": delete_ids}
 
 
-# ── Step 5: Consume CDC events ────────────────────────────────────────────────
-def consume_cdc(expected_deleted_ids):
-    step("STEP 5 — Consume CDC events from Kafka → postgres-dest")
-
-    try:
-        consumer = KafkaConsumer(
-            "cdc.public.orders",
-            bootstrap_servers=[KAFKA_BOOTSTRAP],
-            auto_offset_reset="earliest",
-            enable_auto_commit=True,
-            group_id="etl-test-consumer",
-            value_deserializer=lambda x: json.loads(x.decode("utf-8")),
-            consumer_timeout_ms=15000,   # wait up to 15s for messages
-        )
-    except Exception as e:
-        fail("Cannot connect to Kafka", str(e))
-        print("  → Make sure Kafka is running and port-forwarded if using K8s")
-        return
-
-    conn = psycopg2.connect(**DEST)
-    cur = conn.cursor()
-
-    inserts = updates = deletes = 0
-    for msg in consumer:
-        payload = msg.value.get("payload", msg.value)
-        op = payload.get("op")
-        if op in ("r", "c"):
-            after = payload.get("after")
-            if after:
-                _upsert_order(cur, after)
-                inserts += 1
-        elif op == "u":
-            after = payload.get("after")
-            if after:
-                _upsert_order(cur, after)
-                updates += 1
-        elif op == "d":
-            before = payload.get("before")
-            if before:
-                cur.execute("DELETE FROM public.orders WHERE order_id=%s", (before["order_id"],))
-                deletes += 1
-
-    conn.commit()
-    consumer.close()
-    cur.close()
-    conn.close()
-
-    ok("CDC events consumed", f"snapshots/inserts={inserts}, updates={updates}, deletes={deletes}")
+# ── Step 5: Verify the ClickHouse mirror (Pipe 3's real consumer) ─────────────
+def ch_query(sql):
+    """Run a read-only query against ClickHouse, return list of rows."""
+    r = requests.post(
+        f"{CLICKHOUSE_URL}/?default_format=JSONCompact&readonly=1",
+        headers={"X-ClickHouse-User": CLICKHOUSE_USER, "X-ClickHouse-Key": CLICKHOUSE_PASSWORD},
+        data=sql,
+        timeout=15,
+    )
+    r.raise_for_status()
+    return r.json().get("data", [])
 
 
-def _upsert_order(cur, data):
-    def _ts(v):
-        if isinstance(v, int):
-            return datetime.utcfromtimestamp(v / 1_000_000.0)
-        return v
-
-    cur.execute("""
-        INSERT INTO public.orders (order_id,customer_id,order_date,total_amount,status,created_at,updated_at)
-        VALUES (%s,%s,%s,%s,%s,%s,%s)
-        ON CONFLICT (order_id) DO UPDATE SET
-            total_amount = EXCLUDED.total_amount,
-            status       = EXCLUDED.status,
-            updated_at   = EXCLUDED.updated_at
-    """, (
-        data["order_id"], data["customer_id"],
-        _ts(data.get("order_date")), data["total_amount"], data["status"],
-        _ts(data.get("created_at")), _ts(data.get("updated_at")),
-    ))
-
-
-# ── Step 6: Verify final state ────────────────────────────────────────────────
-def verify(txn):
-    step("STEP 6 — Verify postgres-dest reflects all transactions")
+def verify_clickhouse(txn, max_order_id):
+    step("STEP 5 — Verify ClickHouse mirror reflects all transactions")
 
     src = psycopg2.connect(**SOURCE)
-    dst = psycopg2.connect(**DEST)
-
     with src.cursor() as cur:
         cur.execute("SELECT COUNT(*) FROM orders")
         src_count = cur.fetchone()[0]
+    src.close()
 
-    with dst.cursor() as cur:
-        cur.execute("SELECT COUNT(*) FROM public.orders")
-        dst_count = cur.fetchone()[0]
+    # The mirror retains rows from earlier seeds (dropped source tables emit
+    # no CDC deletes), so every check is scoped to this run's order_id range.
+    scope = f"order_id <= {max_order_id}"
 
-    # Row count match
-    if src_count == dst_count:
-        ok("Row count matches", f"{dst_count} rows in both source and dest")
+    # Kafka -> ClickHouse ingestion is asynchronous; poll until counts settle
+    deadline = time.time() + 90
+    ch_count = -1
+    while time.time() < deadline:
+        try:
+            ch_count = int(ch_query(f"SELECT count() FROM mirror.orders_current WHERE {scope}")[0][0])
+            if ch_count == src_count:
+                break
+        except Exception as e:
+            print(f"  waiting for ClickHouse… ({e})")
+        time.sleep(5)
+
+    if ch_count == src_count:
+        ok("Row count matches", f"{ch_count} rows in both source and ClickHouse mirror")
     else:
-        fail("Row count mismatch", f"source={src_count}, dest={dst_count}")
+        fail("Row count mismatch", f"source={src_count}, clickhouse={ch_count}")
 
-    # Deleted rows must NOT be in dest
-    del_ids = txn["deleted"]
-    with dst.cursor() as cur:
-        cur.execute("SELECT order_id FROM public.orders WHERE order_id = ANY(%s)", (del_ids,))
-        found = [r[0] for r in cur.fetchall()]
-    if not found:
-        ok(f"All {len(del_ids)} deleted orders are gone from dest")
+    del_ids = ",".join(str(i) for i in txn["deleted"])
+    found = int(ch_query(f"SELECT count() FROM mirror.orders_current WHERE order_id IN ({del_ids})")[0][0])
+    if found == 0:
+        ok(f"All {len(txn['deleted'])} deleted orders are gone from the mirror")
     else:
-        fail(f"{len(found)} deleted orders still present in dest", str(found))
+        fail(f"{found} deleted orders still present in the mirror")
 
-    # Cancelled orders should have status='cancelled' in dest
-    cancel_ids = txn["cancelled"]
-    with dst.cursor() as cur:
-        cur.execute(
-            "SELECT COUNT(*) FROM public.orders WHERE order_id = ANY(%s) AND status='cancelled'",
-            (cancel_ids,),
-        )
-        matched = cur.fetchone()[0]
-    if matched == len(cancel_ids):
-        ok(f"All {len(cancel_ids)} cancellations reflected in dest")
+    cancel_ids = ",".join(str(i) for i in txn["cancelled"])
+    matched = int(ch_query(
+        f"SELECT count() FROM mirror.orders_current WHERE order_id IN ({cancel_ids}) AND status='cancelled'"
+    )[0][0])
+    if matched == len(txn["cancelled"]):
+        ok(f"All {len(txn['cancelled'])} cancellations reflected in the mirror")
     else:
-        fail("Cancellation mismatch", f"expected {len(cancel_ids)}, got {matched} in dest")
+        fail("Cancellation mismatch", f"expected {len(txn['cancelled'])}, got {matched}")
 
-    # Status distribution
-    with dst.cursor() as cur:
-        cur.execute("SELECT status, COUNT(*) FROM public.orders GROUP BY status ORDER BY COUNT(*) DESC")
-        rows = cur.fetchall()
-
-    print("\n  Status distribution in postgres-dest:")
+    rows = ch_query(
+        f"SELECT status, count() FROM mirror.orders_current WHERE {scope} GROUP BY status ORDER BY count() DESC"
+    )
+    print("\n  Status distribution in ClickHouse mirror:")
     print(f"  {'Status':<15} {'Count':>6}")
     print(f"  {'-'*22}")
     for status, count in rows:
         print(f"  {status:<15} {count:>6}")
 
-    src.close()
-    dst.close()
 
-
-# ── Step 7: Summary ───────────────────────────────────────────────────────────
+# ── Step 6: Summary ───────────────────────────────────────────────────────────
 def summary():
-    step("STEP 7 — Test Summary")
+    step("STEP 6 — Test Summary")
     passed = sum(1 for r in results if r[0] == "PASS")
     failed = sum(1 for r in results if r[0] == "FAIL")
     for status, msg in results:
@@ -542,10 +485,5 @@ if __name__ == "__main__":
     run_extract_pipeline()
     txn = simulate_transactions()
 
-    # Give Debezium ~5s to capture the change events
-    print("\n  Waiting 5s for CDC events to appear in Kafka…")
-    time.sleep(5)
-
-    consume_cdc(txn["deleted"])
-    verify(txn)
+    verify_clickhouse(txn, max_order_id=200)
     summary()

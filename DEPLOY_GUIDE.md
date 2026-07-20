@@ -6,20 +6,23 @@ This guide walks you through deploying the full ETL stack on your Kubernetes clu
 
 ## What you are deploying
 
-A production-grade ETL pipeline that handles 500M+ records with:
+One source database feeding three parallel pipelines, plus a query layer:
 
-- **PostgreSQL** — source and destination databases
-- **Kafka + Debezium** — real-time change data capture (CDC)
+- **PostgreSQL** — source (transactions) and destination (batch analytics warehouse)
+- **Kafka (Strimzi) + Debezium** — real-time change data capture (CDC)
+- **ClickHouse** — columnar real-time mirror fed from the CDC stream
 - **MinIO** — S3-compatible object storage (bronze + silver layers)
-- **Apache Spark** — large-scale data transformation
-- **Apache Airflow** — pipeline orchestration
-- **Prometheus + Grafana** — monitoring and dashboards
+- **Apache Spark + Iceberg** — large-scale lakehouse transformation
+- **Trino** — SQL query engine over the Iceberg lakehouse (official Helm chart)
+- **Apache Airflow** — pipeline orchestration (official Helm chart)
+- **AI Dashboard** — natural-language assistant over all three stores
+- **Prometheus + Grafana + Alertmanager** — monitoring, dashboards, alerting
 
 ---
 
 ## Prerequisites
 
-Install these three tools on your machine before starting.
+Install these tools on your machine before starting.
 
 ### 1. kubectl
 ```bash
@@ -34,10 +37,7 @@ curl -LO "https://dl.k8s.io/release/$(curl -s https://dl.k8s.io/release/stable.t
 chmod +x kubectl && sudo mv kubectl /usr/local/bin/
 ```
 
-Verify:
-```bash
-kubectl version --client
-```
+Verify: `kubectl version --client`
 
 ### 2. Helm
 ```bash
@@ -51,36 +51,24 @@ choco install kubernetes-helm
 curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 ```
 
-Verify:
-```bash
-helm version
-```
+Verify: `helm version`
 
 ### 3. Docker
 Download and install from: **https://docs.docker.com/get-docker/**
 
-Verify:
-```bash
-docker --version
-```
+Verify: `docker --version`
 
 ### 4. Docker Hub account (free)
-You need this to push the custom Airflow image.
-Sign up at: **https://hub.docker.com**
-
-After signing up, log in on your machine:
+Needed to push the custom Airflow and dashboard images. Sign up at **https://hub.docker.com**, then:
 ```bash
 docker login
-# enter your Docker Hub username and password
 ```
 
 ### 5. Kubernetes cluster access
-Make sure kubectl is pointing at your cluster:
 ```bash
 kubectl cluster-info
 ```
-You should see your cluster URL, not an error.
-If this fails, contact whoever gave you cluster access and ask for the kubeconfig file.
+You should see your cluster URL, not an error. If this fails, ask whoever manages your cluster for the kubeconfig file.
 
 ---
 
@@ -92,198 +80,118 @@ git clone https://github.com/kalluripradeep/modern-etl-stack.git
 cd modern-etl-stack
 ```
 
-### Step 2 — Configure Storage Class
-Before deploying, you must ensure your stateful pods know what hard drive type to request, or else your pods will be stuck in a `Pending` state.
-
-Find your cluster's storage class:
+### Step 2 — Generate credentials (recommended)
 ```bash
-kubectl get storageclass
+bash k8s/generate-secrets.sh
 ```
-
-Then open these files and replace `standard` with the name you found:
-- `k8s/postgres-source/statefulset.yaml`
-- `k8s/postgres-dest/statefulset.yaml`
-- `k8s/kafka/statefulset.yaml`
-- `k8s/zookeeper/statefulset.yaml`
-- `k8s/minio/statefulset.yaml`
-
-*Common values:*
-- AWS → `gp3`
-- GCP → `standard` or `pd-ssd`
-- Azure → `default`
-- Minikube/Kind → `standard`
+This writes `k8s/01-secrets.generated.yaml` (gitignored) with random passwords, and the deploy script picks it up automatically. **Save the printed passwords** — you need them for the dashboards in Step 6. Skipping this deploys well-known default credentials, acceptable only for a throwaway cluster.
 
 ### Step 3 — Run the deploy script
 ```bash
 bash k8s/deploy.sh
 ```
 
-The script will ask you one question:
-```
-Enter your registry (e.g. docker.io/myuser):
-```
-Type your Docker Hub username like this and press Enter:
-```
-docker.io/yourname
-```
+The script asks three questions:
 
-The script will then automatically:
-- Build and push the Airflow Docker image
-- Create the Kubernetes namespace
-- Deploy all databases, Kafka, MinIO, Spark, Airflow, and monitoring
-- Create the MinIO bronze and silver buckets
-- Register the Debezium CDC connector
+1. **Registry** — type your Docker Hub username, e.g. `docker.io/yourname` (or press Enter to skip image builds — DAGs and dashboard will be missing).
+2. **StorageClass** — the script auto-detects your cluster's default and suggests it; press Enter to accept. No manual file editing needed.
+3. **Seed sample data?** — type `y` to load sample e-commerce data into the source database.
 
-This takes about **5-10 minutes** on first run.
+It then deploys everything: databases, Strimzi Kafka + Debezium connector, ClickHouse, MinIO (with bronze/silver buckets), Spark, Trino (Helm), Airflow (Helm), the AI dashboard, and the monitoring stack. First run takes about **10–15 minutes** (Kafka cluster startup is the slow part).
 
 ### Step 4 — Wait for all pods to be Running
 ```bash
 kubectl get pods -n etl -w
 ```
 
-Wait until every pod shows `Running`. Press `Ctrl+C` when done.
-
-It should look like this:
+Wait until every pod shows `Running`/`Completed`, then Ctrl+C. Expect roughly:
 ```
-NAME                            READY   STATUS
-kafka-0                         1/1     Running
-kafka-connect-xxx               1/1     Running
-minio-0                         1/1     Running
-postgres-dest-0                 1/1     Running
-postgres-source-0               1/1     Running
-spark-master-xxx                1/1     Running
-spark-worker-xxx                1/1     Running
-zookeeper-0                     1/1     Running
-airflow-webserver-xxx           1/1     Running
-airflow-scheduler-xxx           1/1     Running
-prometheus-xxx                  1/1     Running
-grafana-xxx                     1/1     Running
+NAME                                READY   STATUS
+airflow-api-server-xxx              1/1     Running
+airflow-scheduler-xxx               1/1     Running
+airflow-dag-processor-xxx           1/1     Running
+alertmanager-xxx                    1/1     Running
+clickhouse-0                        1/1     Running
+data-dashboard-xxx                  1/1     Running
+etl-kafka-broker-0                  1/1     Running
+grafana-xxx                         1/1     Running
+kafka-connect-0                     1/1     Running
+kafka-exporter-xxx                  1/1     Running
+kafka-ui-xxx                        1/1     Running
+minio-0                             1/1     Running
+postgres-source-0                   1/1     Running
+postgres-dest-0                     1/1     Running
+prometheus-xxx                      1/1     Running
+spark-master-0                      1/1     Running
+spark-worker-xxx                    1/1     Running
+strimzi-cluster-operator-xxx        1/1     Running
+trino-coordinator-xxx               1/1     Running
+trino-worker-xxx (x2)               1/1     Running
 ```
 
-### Step 5 — Run the test with real transactional data
+### Step 5 — Run the end-to-end test
 ```bash
 bash scripts/test_e2e.sh
 ```
 
-This automatically:
-- Seeds 200 real orders into the source database
-- Runs the full ETL pipeline (extract → MinIO → load to warehouse)
-- Fires real transactions (status updates, cancellations, hard deletes)
-- Verifies CDC captured every change correctly
-- Prints a pass/fail report
-
-Expected output at the end:
+This port-forwards the services, seeds 200 orders, runs the extract → MinIO → warehouse pipeline, fires live transactions (updates, cancellations, hard deletes), and verifies the ClickHouse mirror caught every change. Expected ending:
 ```
   ✓  Seeded 200 orders into postgres-source
   ✓  Validation passed
-  ✓  Uploaded parquet files to MinIO
-  ✓  Loaded rows into postgres-dest
-  ✓  Transactions applied (40 updates, 10 cancellations, 5 deletes)
-  ✓  CDC events consumed
+  ✓  Uploaded 4 parquet file(s) to MinIO
+  ✓  Loaded 200 rows into raw.orders_source via COPY (staging upsert)
+  ✓  Transactions applied to source
   ✓  Row count matches
-  ✓  All deleted orders are gone from dest
-  ✓  All cancellations reflected in dest
+  ✓  All 5 deleted orders are gone from the mirror
+  ✓  All 10 cancellations reflected in the mirror
 
-  Total: 10 passed, 0 failed
+  Total: 9 passed, 0 failed
   All checks passed — pipeline is healthy!
 ```
 
 ### Step 6 — Open the dashboards
 
-First get your node IP:
+Get your node IP:
 ```bash
-kubectl get nodes -o wide
-# look at the EXTERNAL-IP column
-# if EXTERNAL-IP is blank, use the INTERNAL-IP
+kubectl get nodes -o wide   # EXTERNAL-IP column; use INTERNAL-IP if blank
 ```
 
-Then open these in your browser:
+| Dashboard | URL | Credentials |
+|---|---|---|
+| Airflow (pipeline runs) | `http://NODE_IP:30880` | admin / admin |
+| AI Dashboard (ask questions in English) | `http://NODE_IP:30333` | `DASHBOARD_AUTH_*` from secrets |
+| Kafka UI (topic monitoring) | `http://NODE_IP:30801` | `KAFKA_UI_*` from secrets |
+| Grafana (metrics) | `http://NODE_IP:30300` | admin / admin123 |
+| MinIO (data files) | `http://NODE_IP:30901` | `MINIO_ROOT_*` from secrets |
+| Spark UI (job progress) | `http://NODE_IP:30808` | — |
 
-| Dashboard | URL | Username | Password |
-|---|---|---|---|
-| Airflow (pipeline runs) | `http://NODE_IP:30880` | admin | admin |
-| Kafka UI (topic monitoring) | `http://NODE_IP:30801` | — | — |
-| Grafana (metrics) | `http://NODE_IP:30300` | admin | admin123 |
-| MinIO (data files) | `http://NODE_IP:30901` | minioadmin | minioadmin123 |
-| Spark UI (job progress) | `http://NODE_IP:30808` | — | — |
+Credentials come from `k8s/01-secrets.generated.yaml` if you ran Step 2, otherwise from the defaults in `k8s/01-secrets.yaml`.
 
-Replace `NODE_IP` with the IP address you got from the command above.
+**Trino** (no NodePort — port-forward to query the lakehouse):
+```bash
+kubectl port-forward svc/trino 8080:8080 -n etl
+# then http://localhost:8080 (any username), e.g.:
+#   SELECT status, count(*) FROM iceberg.lake.orders GROUP BY status;
+```
 
-### Step 7 — Load the Node Exporter Full Dashboard in Grafana
+**ClickHouse** (query the real-time mirror):
+```bash
+kubectl exec -n etl clickhouse-0 -- clickhouse-client --user <CLICKHOUSE_USER> --password <CLICKHOUSE_PASSWORD> \
+  -q "SELECT status, count() FROM mirror.orders_current GROUP BY status"
+```
 
-The deploy script provisions a placeholder dashboard automatically. To load the **full** Node Exporter dashboard (30+ panels for CPU, memory, disk, and network):
+### Step 7 — Grafana dashboards
 
-1. Open Grafana at `http://NODE_IP:30300` and log in.
-2. Click **Dashboards → Import** in the left sidebar.
-3. In the **"Import via grafana.com"** field, enter:
-   ```
-   1860
-   ```
-4. Click **Load**.
-5. Under **"Prometheus"**, select **Prometheus** from the dropdown.
-6. Click **Import**.
+A **Data Platform Health** dashboard (pipeline runs, CDC lag, source freshness, revenue anomaly) is provisioned automatically. For deeper infrastructure views, import these community dashboards (**Dashboards → Import**, enter the ID, pick the Prometheus datasource):
 
-You should now see the full **Node Exporter Full** dashboard with live metrics from your cluster.
+| ID | Dashboard |
+|---|---|
+| 1860 | Node Exporter Full (CPU, memory, disk, network) |
+| 9628 | PostgreSQL Databases (works with postgres_exporter; 9948 needs TimescaleDB — don't use it) |
+| 315 | Kubernetes cluster monitoring |
+| 13502 | MinIO |
 
-> **Reference:** [grafana.com/grafana/dashboards/1860](https://grafana.com/grafana/dashboards/1860-node-exporter-full/)
-
-### Step 8 — Load the PostgreSQL Dashboard in Grafana
-
-The deploy script automatically starts a `postgres_exporter` sidecar for both the source and destination databases. This feeds `pg_stat_*` metrics into Prometheus so you can visualise query performance, connections, cache hit rates, and more.
-
-> **Why not dashboard 9948?** Dashboard 9948 (*PostgreSQL Infrastructure*) requires **TimescaleDB** and **collectd**, which are not installed in this stack. Use **dashboard 9628** instead — it works with standard `postgres_exporter`.
-
-To load the dashboard:
-
-1. Open Grafana at `http://NODE_IP:30300` and log in.
-2. Click **Dashboards → Import** in the left sidebar.
-3. In the **"Import via grafana.com"** field, enter:
-   ```
-   9628
-   ```
-4. Click **Load**.
-5. Under **"Prometheus"**, select **Prometheus** from the dropdown.
-6. Click **Import**.
-
-You should now see live PostgreSQL metrics for both `postgres-source` and `postgres-dest`.
-
-> **Reference:** [grafana.com/grafana/dashboards/9628](https://grafana.com/grafana/dashboards/9628-postgresql-databases/)
-
-### Step 9 — Load the Kubernetes Cluster Dashboard in Grafana
-
-Prometheus is configured to scrape Kubernetes metrics (cAdvisor, kubelet, and nodes) directly from the cluster. You can use these metrics to monitor Pod and Node resource usage across the entire namespace.
-
-1. Open Grafana at `http://NODE_IP:30300` and log in.
-2. Click **Dashboards → Import** in the left sidebar.
-3. In the **"Import via grafana.com"** field, enter:
-   ```
-   315
-   ```
-4. Click **Load**.
-5. Under **"Prometheus"**, select **Prometheus** from the dropdown.
-6. Click **Import**.
-
-You should now see the **Kubernetes cluster monitoring (via Prometheus)** dashboard displaying CPU/Memory utilization for the ETL pods.
-
-> **Reference:** [grafana.com/grafana/dashboards/315](https://grafana.com/grafana/dashboards/315-kubernetes-cluster-monitoring-via-prometheus/)
-
-### Step 10 — Load the MinIO Dashboard in Grafana
-
-The deploy script configures MinIO to expose Prometheus metrics (v2 API) on port 9000, and wires Prometheus to scrape them.
-
-1. Open Grafana at `http://NODE_IP:30300` and log in.
-2. Click **Dashboards → Import** in the left sidebar.
-3. In the **"Import via grafana.com"** field, enter:
-   ```
-   13502
-   ```
-4. Click **Load**.
-5. Under **"Prometheus"**, select **Prometheus** from the dropdown.
-6. Click **Import**.
-
-You will now see full observability into the Data Lake storage usage (buckets, object counts, traffic, and disk performance).
-
-> **Reference:** [grafana.com/grafana/dashboards/13502](https://grafana.com/grafana/dashboards/13502-minio-dashboard/)
+To deliver alerts (DAG failures, CDC lag, stale data, revenue anomalies), add a Slack/email receiver in the `alertmanager-config` ConfigMap.
 
 ---
 
@@ -291,24 +199,29 @@ You will now see full observability into the Data Lake storage usage (buckets, o
 
 ### docker push fails
 ```bash
-docker login
-# enter your Docker Hub username and password, then retry
+docker login   # then retry
 ```
 
 ### kubectl cluster-info fails
-Your kubeconfig is not configured. Ask whoever manages your cluster for the kubeconfig file and run:
 ```bash
 export KUBECONFIG=/path/to/your/kubeconfig
-kubectl cluster-info   # try again
+kubectl cluster-info
 ```
 
+### Pods stuck in Pending
+Usually storage: check `kubectl describe pod <pod> -n etl` for PVC events, and confirm the StorageClass you accepted in Step 3 exists (`kubectl get sc`).
+
 ### A test step fails
-Check the logs of the failing service:
 ```bash
 kubectl get pods -n etl           # find the pod name
 kubectl logs -n etl <pod-name>    # read the logs
 ```
-Share the output for help debugging.
+
+### Upgrading from an older deployment
+`deploy.sh` handles migrations automatically (it removes the retired cdc-sync-daemon and the old raw-manifest Trino before installing the Helm release). If you deployed before July 2026, also run once:
+```bash
+kubectl delete deployment cdc-sync-daemon -n etl --ignore-not-found
+```
 
 ---
 
@@ -317,9 +230,11 @@ Share the output for help debugging.
 ```
 INSTALL   kubectl + helm + docker + docker login
 CLONE     git clone https://github.com/kalluripradeep/modern-etl-stack.git
+SECRETS   bash k8s/generate-secrets.sh
 DEPLOY    bash k8s/deploy.sh
 WAIT      kubectl get pods -n etl -w
 TEST      bash scripts/test_e2e.sh
-OPEN      Airflow → :30880  Grafana → :30300  MinIO → :30901  Spark → :30808  Kafka UI → :30801
-GRAFANA   Import ID 1860 (Node) + 9628 (Postgres) + 315 (K8s) + 13502 (MinIO)
+OPEN      Airflow :30880 · AI Dashboard :30333 · Grafana :30300 · MinIO :30901 · Spark :30808 · Kafka UI :30801
+TRINO     kubectl port-forward svc/trino 8080:8080 -n etl
+GRAFANA   Data Platform Health is pre-loaded; import 1860 / 9628 / 315 / 13502 for infra views
 ```
