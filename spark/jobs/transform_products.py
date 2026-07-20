@@ -5,6 +5,7 @@ Uses Iceberg MERGE INTO for high-performance incremental catalog updates.
 
 import os
 import sys
+from pyspark.errors import AnalysisException
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, current_timestamp, trim, lower
 
@@ -21,7 +22,12 @@ def create_spark_session():
 def read_from_bronze(spark, date_path):
     bronze_path = f"s3a://bronze/products_source/{date_path}/"
     print(f"Reading Product Bronze layer from: {bronze_path}")
-    return spark.read.parquet(bronze_path)
+    try:
+        return spark.read.parquet(bronze_path)
+    except AnalysisException:
+        # Ingestion writes no files on days with zero new rows
+        print(f"No Bronze data at {bronze_path} — nothing to transform today.")
+        return None
 
 
 def transform_products(df):
@@ -92,6 +98,8 @@ def main():
     try:
         print(f"Starting Spark Job: Product Bronze to Silver — date: {date_str}")
         bronze_df = read_from_bronze(spark, formatted_date)
+        if bronze_df is None:
+            return
         silver_df = transform_products(bronze_df)
         upsert_to_iceberg(spark, silver_df)
         print("Incremental Product Spark Job Completed Successfully!")
