@@ -59,9 +59,9 @@ fwd() {
 
 fwd postgres-source 5433 5432
 fwd postgres-dest   5434 5432
-fwd kafka           9093 9092
 fwd kafka-connect   8084 8083
 fwd minio           9000 9000
+fwd clickhouse      8123 8123
 
 # Give port-forwards a moment to settle
 sleep 3
@@ -96,7 +96,6 @@ pip install --quiet \
   pandas \
   pyarrow \
   faker \
-  kafka-python \
   minio \
   requests
 
@@ -110,7 +109,6 @@ export SOURCE_DB_HOST=localhost
 export SOURCE_DB_PORT=5433
 export DEST_DB_HOST=localhost
 export DEST_DB_PORT=5434
-export KAFKA_BOOTSTRAP="localhost:9093"
 export KAFKA_CONNECT_URL="http://localhost:8084"
 export MINIO_ENDPOINT="http://localhost:9000"
 export SOURCE_DB_NAME=sourcedb
@@ -121,6 +119,9 @@ export DEST_DB_USER=destuser
 export DEST_DB_PASSWORD=destpass
 export MINIO_ROOT_USER=minioadmin
 export MINIO_ROOT_PASSWORD=minioadmin123
+export CLICKHOUSE_URL="http://localhost:8123"
+export CLICKHOUSE_USER=chuser
+export CLICKHOUSE_PASSWORD=chpass123
 
 set +e   # don't exit on test failure — we want the cleanup trap to run
 python3 "$REPO_ROOT/scripts/test_transactions.py"

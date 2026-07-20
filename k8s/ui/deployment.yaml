@@ -66,6 +66,12 @@ spec:
               key: CLICKHOUSE_PASSWORD
         # Optional: set ANTHROPIC_API_KEY in etl-secrets to enable the real AI
         # assistant. Without it the dashboard runs in demo mode.
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: etl-secrets
+              key: ANTHROPIC_API_KEY
+              optional: true
         resources:
           requests:
             memory: "256Mi"
