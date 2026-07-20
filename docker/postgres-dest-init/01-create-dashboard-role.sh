@@ -20,12 +20,22 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
     \$\$;
 
     GRANT CONNECT ON DATABASE ${POSTGRES_DB} TO ${DASHBOARD_DB_USER};
-    GRANT USAGE ON SCHEMA public TO ${DASHBOARD_DB_USER};
-    GRANT SELECT ON ALL TABLES IN SCHEMA public TO ${DASHBOARD_DB_USER};
 
-    -- Tables created later (by the CDC daemon or dbt as ${POSTGRES_USER})
-    -- are readable too
+    -- The dashboard queries the dbt layers (raw/int/prs), not just public.
+    -- Create the schemas up front so the grants apply on a fresh volume;
+    -- dbt reuses them. Default privileges cover tables created later.
+    CREATE SCHEMA IF NOT EXISTS raw;
+    CREATE SCHEMA IF NOT EXISTS int;
+    CREATE SCHEMA IF NOT EXISTS prs;
+    GRANT USAGE ON SCHEMA public, raw, int, prs TO ${DASHBOARD_DB_USER};
+    GRANT SELECT ON ALL TABLES IN SCHEMA public, raw, int, prs TO ${DASHBOARD_DB_USER};
     ALTER DEFAULT PRIVILEGES FOR ROLE ${POSTGRES_USER} IN SCHEMA public
+        GRANT SELECT ON TABLES TO ${DASHBOARD_DB_USER};
+    ALTER DEFAULT PRIVILEGES FOR ROLE ${POSTGRES_USER} IN SCHEMA raw
+        GRANT SELECT ON TABLES TO ${DASHBOARD_DB_USER};
+    ALTER DEFAULT PRIVILEGES FOR ROLE ${POSTGRES_USER} IN SCHEMA int
+        GRANT SELECT ON TABLES TO ${DASHBOARD_DB_USER};
+    ALTER DEFAULT PRIVILEGES FOR ROLE ${POSTGRES_USER} IN SCHEMA prs
         GRANT SELECT ON TABLES TO ${DASHBOARD_DB_USER};
 EOSQL
 

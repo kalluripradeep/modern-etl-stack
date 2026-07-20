@@ -24,8 +24,14 @@ spec:
       min.insync.replicas: 1
       inter.broker.protocol.version: "3.5"
     storage:
-      type: ephemeral
+      type: persistent-claim
+      size: 10Gi
+      deleteClaim: false
+      class: standard
   zookeeper:
     replicas: 1
     storage:
-      type: ephemeral
+      type: persistent-claim
+      size: 2Gi
+      deleteClaim: false
+      class: standard

@@ -35,9 +35,10 @@ def load_manifest(path=None):
     for name, table in manifest['tables'].items():
         if table['primary_key'] not in table['columns']:
             raise ValueError(f"{name}: primary_key {table['primary_key']} not in columns")
-        missing = [c for c in table.get('update_columns', []) if c not in table['columns']]
-        if missing:
-            raise ValueError(f"{name}: update_columns not in columns: {missing}")
+        for key in ('update_columns', 'low_cardinality'):
+            missing = [c for c in table.get(key, []) if c not in table['columns']]
+            if missing:
+                raise ValueError(f"{name}: {key} not in columns: {missing}")
     return manifest
 
 
@@ -67,11 +68,17 @@ def raw_ddl(name, table):
     return f"CREATE TABLE IF NOT EXISTS raw.{name}_source (\n{cols}\n)"
 
 
+def _numeric_scale(pg_type):
+    m = re.match(r'NUMERIC\((\d+)\s*,\s*(\d+)\)', pg_type.upper())
+    return int(m.group(2)) if m else 2
+
+
 def clickhouse_type(name, table, col):
     pg_type = table['columns'][col]
     base = re.sub(r'\(.*\)', '', pg_type).strip().upper()
     if base == 'NUMERIC':
-        ch = 'Float64'
+        # Exact decimal, not Float64 — money must aggregate without float error
+        ch = f'Decimal64({_numeric_scale(pg_type)})'
     else:
         ch = _PG_TO_CLICKHOUSE.get(base)
     if ch is None:
@@ -88,7 +95,7 @@ def clickhouse_extract(table, col):
     if base == 'TIMESTAMP':
         return f"toDateTime64(JSONExtractInt(rec, '{col}') / 1000000, 6)"
     if base == 'NUMERIC':
-        return f"JSONExtractFloat(rec, '{col}')"
+        return f"toDecimal64(JSONExtractFloat(rec, '{col}'), {_numeric_scale(pg_type)})"
     if base == 'INTEGER':
         return f"toInt32(JSONExtractInt(rec, '{col}'))"
     if base == 'BIGINT':

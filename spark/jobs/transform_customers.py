@@ -19,7 +19,7 @@ def create_spark_session():
 
 
 def read_from_bronze(spark, date_path):
-    bronze_path = f"s3a://bronze/customers/{date_path}/"
+    bronze_path = f"s3a://bronze/customers_source/{date_path}/"
     print(f"Reading Customer Bronze layer from: {bronze_path}")
     return spark.read.parquet(bronze_path)
 

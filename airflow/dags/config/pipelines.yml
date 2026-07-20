@@ -48,7 +48,7 @@ tables:
       created_at: TIMESTAMP
       updated_at: TIMESTAMP
     update_columns: [name, description, price, category, stock_quantity, updated_at]
-    low_cardinality: [category, status]
+    low_cardinality: [category]
 
   orders:
     primary_key: order_id

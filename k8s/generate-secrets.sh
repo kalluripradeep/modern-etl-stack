@@ -44,6 +44,7 @@ stringData:
   MINIO_ROOT_PASSWORD: $(rand)
   AIRFLOW_ADMIN_USER: admin
   AIRFLOW_ADMIN_PASSWORD: $(rand)
+  AIRFLOW_WEBSERVER_SECRET_KEY: $(rand)
   DASHBOARD_DB_USER: dashboard_ro
   DASHBOARD_DB_PASSWORD: $(rand)
   KAFKA_UI_USER: admin
