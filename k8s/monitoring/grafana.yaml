@@ -37,38 +37,9 @@ data:
       options:
         path: /var/lib/grafana/dashboards
 ---
-# Node Exporter Full dashboard stub (Grafana ID 1860).
-# On first boot Grafana will show this placeholder. For the full dashboard,
-# use: Dashboards → Import → ID 1860 (one-time manual step, persisted to PVC in prod).
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: grafana-dashboards
-  namespace: etl
-data:
-  node-exporter-full.json: |
-    {
-      "uid": "node-exporter-full",
-      "title": "Node Exporter Full",
-      "tags": ["node-exporter", "infrastructure"],
-      "timezone": "browser",
-      "schemaVersion": 27,
-      "version": 1,
-      "refresh": "1m",
-      "panels": [
-        {
-          "type": "text",
-          "title": "How to load the full dashboard",
-          "gridPos": { "h": 5, "w": 24, "x": 0, "y": 0 },
-          "options": {
-            "mode": "markdown",
-            "content": "## Node Exporter Full (Grafana ID 1860)\n\nThis placeholder is auto-provisioned. To load the **complete** 30-panel dashboard:\n\n1. Open **Dashboards → Import**\n2. Enter ID **`1860`** and click **Load**\n3. Select **Prometheus** as the data source\n4. Click **Import**\n\nSee [grafana.com/dashboards/1860](https://grafana.com/grafana/dashboards/1860-node-exporter-full/) for details."
-          }
-        }
-      ],
-      "templating": { "list": [] },
-      "annotations": { "list": [] }
-    }
+# The grafana-dashboards ConfigMap (mounted below) is created by deploy.sh
+# from monitoring/grafana/dashboards/*.json — the same Data Platform Health
+# dashboard compose provisions — so both environments stay identical.
 ---
 apiVersion: apps/v1
 kind: Deployment
