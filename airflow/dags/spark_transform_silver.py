@@ -90,7 +90,11 @@ with DAG(
     # Weekly Maintenance: Compaction & Z-Ordering (Essential for 1 Billion+ records)
     maintenance_task = BashOperator(
         task_id='iceberg_maintenance',
-        bash_command=get_spark_submit_command('Iceberg-Maintenance', '/opt/spark-jobs/iceberg_maintenance.py'),
+        bash_command=(
+            'if [ "$(date -d \'{{ ds }}\' +%u)" = "7" ]; then '
+            + get_spark_submit_command('Iceberg-Maintenance', '/opt/spark-jobs/iceberg_maintenance.py')
+            + '; else echo "Skipping Iceberg maintenance — runs on Sundays only"; fi'
+        ),
         # Run only on Sundays to optimize storage after weekly activity
         execution_timeout=timedelta(hours=2),
     )

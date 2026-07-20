@@ -89,6 +89,17 @@ fi
 
 # Replace any hardcoded storageClassName values with the chosen one
 find "$TMP_K8S" -type f -name "*.yaml" -exec perl -pi -e "s/storageClassName: .*/storageClassName: ${STORAGE_CLASS}/g" {} +
+# Strimzi persistent-claim storage uses `class:` instead of storageClassName
+perl -pi -e "s/^(\s*)class: .*/\${1}class: ${STORAGE_CLASS}/" "$TMP_K8S/kafka/kafka-cluster.yaml"
+
+# Use the randomized Airflow webserver secret key when generated secrets exist
+# (falls back to the placeholder in helm-values.yaml otherwise)
+if [ -f "$REPO_ROOT/k8s/01-secrets.generated.yaml" ]; then
+  WSK=$(awk '/AIRFLOW_WEBSERVER_SECRET_KEY:/ {print $2}' "$REPO_ROOT/k8s/01-secrets.generated.yaml")
+  if [ -n "$WSK" ]; then
+    perl -pi -e "s|webserverSecretKey: .*|webserverSecretKey: \"$WSK\"|" "$TMP_K8S/airflow/helm-values.yaml"
+  fi
+fi
 
 # ─── Step 2: Namespace + Secrets + ConfigMaps ─────────────────────────────────
 echo ""

@@ -6,6 +6,8 @@ A comprehensive ETL stack demonstrating the integration of open-source data engi
 
 ![Architecture Diagram](docs/images/architecture.png)
 
+📄 The full design rationale is in the accompanying paper: [Data to Analytics Pipeline — Proof of Concept](docs/Data-to-Analytics-Pipeline-POC.pdf)
+
 ```
                          ┌──► PIPE 3 · Real-Time Analytics (seconds)
                          │     WAL → Debezium → Kafka → ClickHouse mirror.* (column store)
