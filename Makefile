@@ -7,22 +7,22 @@
 
 ## Start all services
 up: .env
-	docker-compose up -d
+	docker compose up -d
 
 ## Stop all services
 down:
-	docker-compose down
+	docker compose down
 
 ## Restart all services
 restart: down up
 
 ## Tail logs for all containers (Ctrl-C to stop)
 logs:
-	docker-compose logs -f
+	docker compose logs -f
 
 ## Show container status
 ps:
-	docker-compose ps
+	docker compose ps
 
 ## Seed the source database with sample e-commerce data
 seed:
@@ -37,12 +37,12 @@ seed:
 
 ## Run dbt models
 dbt-run:
-	docker-compose exec airflow-webserver \
+	docker compose exec airflow-webserver \
 		dbt run --profiles-dir /opt/airflow/dbt --project-dir /opt/airflow/dbt
 
 ## Run dbt tests
 dbt-test:
-	docker-compose exec airflow-webserver \
+	docker compose exec airflow-webserver \
 		dbt test --profiles-dir /opt/airflow/dbt --project-dir /opt/airflow/dbt
 
 ## Register the Debezium CDC connector (run after `make up`)

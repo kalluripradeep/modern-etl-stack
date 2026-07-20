@@ -3,6 +3,7 @@ Spark Job: Transform Orders from Bronze to Silver (Elite Scalability)
 Uses Iceberg MERGE INTO for high-performance incremental upserts.
 """
 
+from pyspark.errors import AnalysisException
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, current_timestamp
 from pyspark.sql.types import DecimalType
@@ -28,7 +29,12 @@ def read_from_minio(spark, date):
     path = f"s3a://{bronze_bucket}/orders_source/{year}/{month}/{day}/"
 
     print(f"Reading Bronze layer from: {path}")
-    df = spark.read.parquet(path)
+    try:
+        df = spark.read.parquet(path)
+    except AnalysisException:
+        # Ingestion writes no files on days with zero new rows
+        print(f"No Bronze data at {path} — nothing to transform today.")
+        return None
     print(f"Loaded {df.count()} records from Bronze")
     return df
 
@@ -42,7 +48,7 @@ def transform_to_silver(df):
         .filter(col("customer_id").isNotNull()) \
         .filter(col("total_amount") > 0) \
         .filter(col("status").isNotNull()) \
-        .withColumn("total_amount", col("total_amount").cast(DecimalType(10, 2))) \
+        .withColumn("total_amount", col("total_amount").cast(DecimalType(18, 2))) \
         .withColumn("order_date", col("order_date").cast("timestamp")) \
         .withColumn("created_at", col("created_at").cast("timestamp")) \
         .withColumn("updated_at", col("updated_at").cast("timestamp")) \
@@ -114,6 +120,8 @@ def main():
 
     try:
         bronze_df = read_from_minio(spark, date)
+        if bronze_df is None:
+            return
         silver_df = transform_to_silver(bronze_df)
         upsert_to_iceberg(spark, silver_df)
         print("Incremental Spark Job Completed Successfully!")

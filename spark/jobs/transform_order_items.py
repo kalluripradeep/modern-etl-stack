@@ -5,6 +5,7 @@ Uses Iceberg MERGE INTO for high-performance incremental transaction line-item u
 
 import os
 import sys
+from pyspark.errors import AnalysisException
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, current_timestamp
 
@@ -21,7 +22,12 @@ def create_spark_session():
 def read_from_bronze(spark, date_path):
     bronze_path = f"s3a://bronze/order_items_source/{date_path}/"
     print(f"Reading OrderItems Bronze layer from: {bronze_path}")
-    return spark.read.parquet(bronze_path)
+    try:
+        return spark.read.parquet(bronze_path)
+    except AnalysisException:
+        # Ingestion writes no files on days with zero new rows
+        print(f"No Bronze data at {bronze_path} — nothing to transform today.")
+        return None
 
 
 def transform_order_items(df):
@@ -87,6 +93,8 @@ def main():
     try:
         print(f"Starting Spark Job: OrderItems Bronze to Silver — date: {date_str}")
         bronze_df = read_from_bronze(spark, formatted_date)
+        if bronze_df is None:
+            return
         silver_df = transform_order_items(bronze_df)
         upsert_to_iceberg(spark, silver_df)
         print("Incremental OrderItems Spark Job Completed Successfully!")
