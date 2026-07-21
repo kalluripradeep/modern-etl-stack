@@ -13,11 +13,23 @@ from pathlib import Path
 import yaml
 
 # PostgreSQL type -> ClickHouse type (Debezium JSON with
-# decimal.handling.mode=double, timestamps as epoch micros)
+# decimal.handling.mode=double, temporal types in adaptive precision:
+# TIMESTAMP as epoch micros, DATE as epoch days).
+# NUMERIC is handled separately (Decimal64 with the declared scale).
 _PG_TO_CLICKHOUSE = {
     'BIGINT': 'Int64',
     'INTEGER': 'Int32',
+    'SMALLINT': 'Int16',
+    'BOOLEAN': 'Bool',
+    'REAL': 'Float32',
+    'DOUBLE PRECISION': 'Float64',
+    'DATE': 'Date',
     'TEXT': 'String',
+    'VARCHAR': 'String',
+    'CHAR': 'String',
+    'UUID': 'String',       # stored as String — avoids toUUID parse errors on nulls
+    'JSON': 'String',
+    'JSONB': 'String',
     'TIMESTAMP': 'DateTime64(6)',
 }
 
@@ -94,10 +106,24 @@ def clickhouse_extract(table, col):
     base = re.sub(r'\(.*\)', '', pg_type).strip().upper()
     if base == 'TIMESTAMP':
         return f"toDateTime64(JSONExtractInt(rec, '{col}') / 1000000, 6)"
+    if base == 'DATE':
+        # Debezium encodes DATE as days since epoch
+        return f"toDate(JSONExtractInt(rec, '{col}'))"
     if base == 'NUMERIC':
-        return f"toDecimal64(JSONExtractFloat(rec, '{col}'), {_numeric_scale(pg_type)})"
+        # Parse the raw JSON number token as an exact decimal string.
+        # Going via Float64 would truncate (19.99 -> 19.98) since the double
+        # is 19.9899…; OrZero also makes nulls safe.
+        return f"toDecimal64OrZero(JSONExtractRaw(rec, '{col}'), {_numeric_scale(pg_type)})"
+    if base == 'SMALLINT':
+        return f"toInt16(JSONExtractInt(rec, '{col}'))"
     if base == 'INTEGER':
         return f"toInt32(JSONExtractInt(rec, '{col}'))"
     if base == 'BIGINT':
         return f"JSONExtractInt(rec, '{col}')"
+    if base == 'BOOLEAN':
+        return f"JSONExtractBool(rec, '{col}')"
+    if base == 'REAL':
+        return f"toFloat32(JSONExtractFloat(rec, '{col}'))"
+    if base == 'DOUBLE PRECISION':
+        return f"JSONExtractFloat(rec, '{col}')"
     return f"JSONExtractString(rec, '{col}')"
