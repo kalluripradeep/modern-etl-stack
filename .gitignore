@@ -44,3 +44,6 @@ dbt/.user.yml
 # Node / Next.js
 node_modules/
 .next/
+
+# Local dbt-mcp checkout/venv — vendored copy was removed; never re-commit it
+dbt-mcp/

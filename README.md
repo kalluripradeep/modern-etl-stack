@@ -51,6 +51,13 @@ make generate
 
 CI fails if the generated files drift from the manifest, so they can never silently diverge.
 
+### Bringing your own source tables
+
+To point the platform at tables from an existing Postgres, add a block per table to the manifest (primary key, columns with their Postgres types, and the columns an upsert overwrites), then `make generate`. Two things to know:
+
+- **Supported column types.** The generator maps `BIGINT`, `INTEGER`, `SMALLINT`, `BOOLEAN`, `REAL`, `DOUBLE PRECISION`, `NUMERIC(p,s)`, `DATE`, `TIMESTAMP`, `TEXT`, `VARCHAR`, `CHAR`, `UUID`, `JSON`, and `JSONB` to ClickHouse. `UUID`/`JSON`/`JSONB` are stored as `String` in the mirror; `NUMERIC` becomes an exact `Decimal`. An unlisted type fails fast at manifest load — add it to `_PG_TO_CLICKHOUSE` in [`pipeline_config.py`](airflow/dags/pipeline_config.py) or declare the column as `TEXT`.
+- **Incremental & real-time prerequisites.** For incremental batch loads, give each table a `cursor_column` (a monotonically increasing `updated_at`); omit it and every run does a full re-extract. For the real-time CDC mirror (Pipe 3), the source Postgres needs `wal_level=logical` plus a replication slot — the bundled `postgres-source` is already configured this way, but an existing production database must be set up for logical replication first.
+
 ## Observability
 
 Prometheus scrapes Airflow (via statsd), Kafka consumer lag (kafka-exporter), MinIO, and node metrics. A provisioned Grafana dashboard ("Data Platform Health") shows pipeline runs, CDC lag, source freshness, and a daily-revenue anomaly z-score. Alertmanager routes five alert rules (DAG failures, import errors, CDC lag, stale sources, revenue anomalies) — add a Slack/email receiver in `monitoring/alertmanager.yml` to deliver them.
