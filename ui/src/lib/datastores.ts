@@ -157,11 +157,11 @@ export async function getSchemaOverview(): Promise<string> {
       SELECT table_schema || '.' || table_name AS tbl,
              string_agg(column_name || ' ' || data_type, ', ' ORDER BY ordinal_position) AS cols
       FROM information_schema.columns
-      WHERE table_schema IN ('raw', 'int', 'prs')
+      WHERE table_schema IN ('raw', 'int', 'prs', 'gold')
       GROUP BY 1 ORDER BY 1
     `);
     parts.push(
-      'WAREHOUSE (PostgreSQL — query_warehouse; raw/int/prs = dbt layers, batch fresh):\n' +
+      'WAREHOUSE (PostgreSQL — query_warehouse; raw/int/prs/gold = dbt layers, batch fresh):\n' +
       pg.rows.map(([t, c]) => `  ${t}: ${c}`).join('\n'),
     );
   } catch (e) {

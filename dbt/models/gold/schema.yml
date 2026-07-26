@@ -1,0 +1,92 @@
+version: 2
+
+models:
+  - name: fact_order_items
+    description: >
+      Central fact table. Grain: one row per order line item. Measures are
+      additive at every level; order totals are sum(line_amount) by order_id.
+    columns:
+      - name: item_id
+        description: "Degenerate dimension — the source line-item id."
+        tests:
+          - unique
+          - not_null
+      - name: order_id
+        description: "Degenerate dimension — groups lines into an order."
+        tests:
+          - not_null
+      - name: customer_id
+        description: "Foreign key to dim_customer."
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_customer')
+              field: customer_id
+      - name: product_id
+        description: "Foreign key to dim_product."
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_product')
+              field: product_id
+      - name: order_date_day
+        description: "Foreign key to dim_date."
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_date')
+              field: date_day
+      - name: quantity
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              min_value: 1
+      - name: line_amount
+        description: "quantity * unit_price."
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              min_value: 0
+      - name: order_status
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_in_set:
+              value_set: ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
+
+  - name: dim_customer
+    description: "Conformed customer dimension, keyed on the natural customer_id."
+    columns:
+      - name: customer_id
+        tests:
+          - unique
+          - not_null
+      - name: email
+        tests:
+          - not_null
+
+  - name: dim_product
+    description: "Conformed product dimension, keyed on the natural product_id."
+    columns:
+      - name: product_id
+        tests:
+          - unique
+          - not_null
+      - name: list_price
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              min_value: 0
+
+  - name: dim_date
+    description: "Calendar dimension covering the observed order history."
+    columns:
+      - name: date_day
+        tests:
+          - unique
+          - not_null
+      - name: calendar_year
+        tests:
+          - not_null
+      - name: is_weekend
+        tests:
+          - not_null

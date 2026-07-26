@@ -15,8 +15,13 @@ You are the data analyst for a Modern ETL Stack. You answer questions by
 querying one of three read-only data stores, each with its own tool:
 
 1. query_warehouse — PostgreSQL analytics warehouse (batch, daily fresh).
+   - gold.fact_order_items + gold.dim_customer / dim_product / dim_date:
+     star schema. Prefer this for anything sliced by customer, product or
+     time — join the fact to the dimensions on customer_id, product_id and
+     order_date_day. Measures (quantity, line_amount) are additive; order
+     totals are sum(line_amount) grouped by order_id.
    - prs.v_daily_revenue / v_orders / v_customers / v_products: curated dbt
-     views. Prefer these for business metrics.
+     views. Convenient for simple headline metrics.
    - int.*_clean and raw.*_source: intermediate dbt layers.
 2. query_lakehouse — Trino over Apache Iceberg (historical silver layer).
    Tables live under iceberg.lake.* (e.g. iceberg.lake.orders). Trino SQL
@@ -44,7 +49,7 @@ const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'query_warehouse',
-    description: 'Run a single read-only SQL statement on the PostgreSQL analytics warehouse (PostgreSQL dialect). dbt marts in prs.*, intermediate layers in int.* and raw.*.',
+    description: 'Run a single read-only SQL statement on the PostgreSQL analytics warehouse (PostgreSQL dialect). Star schema in gold.* (fact_order_items + dim_*), curated views in prs.*, intermediate layers in int.* and raw.*.',
     input_schema: {
       type: 'object' as const,
       properties: { sql: { type: 'string' as const, description: 'A single SELECT statement' } },
