@@ -82,8 +82,42 @@ The destination warehouse (`destdb`) is strictly organized:
 
 - **`raw`:** batch snapshots straight from the source (`*_source` tables).
 - **`int`:** cleaned, deduplicated integration layer (`*_clean` tables).
-- **`prs`:** presentation views for BI (`prs.v_daily_revenue`, …). Only this schema is exposed to BI tools.
+- **`gold`:** dimensional star schema for analytics and BI (see below).
+- **`prs`:** presentation views for simple headline metrics (`prs.v_daily_revenue`, …).
 - **`iceberg_catalog`:** Iceberg JDBC catalog metadata (managed by Spark/Trino — do not touch).
+
+### Gold layer — star schema
+
+`gold` is the layer BI tools and the AI assistant should query. One fact surrounded by conformed dimensions:
+
+```text
+      dim_customer          dim_date
+            \                 /
+             \               /
+              fact_order_items          ← grain: one order line item
+             /
+            /
+      dim_product
+```
+
+| Model | Grain | Notes |
+|---|---|---|
+| `fact_order_items` | one row per order line | Measures `quantity`, `unit_price`, `line_amount`. `order_id` is kept as a degenerate dimension. |
+| `dim_customer` | one row per customer | Keyed on the natural `customer_id`. |
+| `dim_product` | one row per product | `list_price` is the catalogue price; the price charged lives on the fact. |
+| `dim_date` | one row per calendar day | Built from the observed order range. |
+
+Measures are additive at every level, so order totals are `sum(line_amount)` grouped by `order_id`, and dbt `relationships` tests enforce that every fact row resolves to a row in each dimension.
+
+```sql
+select d.calendar_year, d.month_name, p.category, sum(f.line_amount) as revenue
+from gold.fact_order_items as f
+inner join gold.dim_date    as d on f.order_date_day = d.date_day
+inner join gold.dim_product as p on f.product_id     = p.product_id
+where f.order_status <> 'cancelled'
+group by 1, 2, 3
+order by revenue desc;
+```
 
 ## Technology Stack
 

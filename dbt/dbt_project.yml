@@ -24,3 +24,6 @@ models:
     prs:
       +schema: prs
       +materialized: view
+    gold:
+      +schema: gold
+      +materialized: table
