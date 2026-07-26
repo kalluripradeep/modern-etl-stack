@@ -8,7 +8,7 @@ A comprehensive ETL stack demonstrating the integration of open-source data engi
 
 📄 The full design rationale is in the accompanying paper: [Data to Analytics Pipeline — Proof of Concept](https://github.com/kalluripradeep/modern-etl-stack/raw/main/docs/Data-to-Analytics-Pipeline-POC.pdf) (downloads the PDF)
 
-```
+```text
                          ┌──► PIPE 3 · Real-Time Analytics (seconds)
                          │     WAL → Debezium → Kafka → ClickHouse mirror.* (column store)
                          │
@@ -28,15 +28,19 @@ All three pipelines run in parallel from the same source. Pipes 1 and 3 are full
 ## Data Pipelines
 
 ### 1. Analytical Warehouse — Batch Analysis
+
 Airflow extracts snapshots from the operational database in chunked micro-batches, lands them in the `raw` schema of the destination warehouse, and dbt transforms them into cleaned (`int`) and presentation (`prs`) layers. Best for business reporting, BI tools, and any workload where daily freshness is enough. Simple to deploy and debug, minimal infrastructure.
 
 ### 2. Lakehouse — Big Historical Data, Many Query Engines
+
 The same ingestion run writes parquet files to MinIO (bronze). Spark jobs clean and MERGE them into **Apache Iceberg** tables (silver), and **Trino** exposes those tables over ANSI SQL (`iceberg.lake.*`) to BI tools, notebooks, and the AI assistant. The Iceberg catalog is a JDBC catalog stored in the destination Postgres, so Spark and Trino always see the same tables. On Kubernetes, Trino is deployed via the official Helm chart (coordinator plus workers — scale with `server.workers` in `k8s/trino/helm-values.yaml`). Designed for data volumes that would be too expensive to keep in an operational database.
 
 ### 3. Real-Time Analytics — Streaming CDC into ClickHouse
+
 Debezium captures every insert/update/delete from the source WAL into Kafka, and **ClickHouse** consumes the topics with its built-in Kafka engine, materializing them into columnar tables (query the `mirror.*_current` views). Seconds-level freshness for live dashboards and operational monitoring, without touching the source database's performance. Kafka in the middle buys durability and replay — the mirror can be rebuilt from the retained log — and lets future consumers subscribe to the same change stream without adding replication slots on the source.
 
 ### AI Data Assistant
+
 A Next.js dashboard with an agentic analyst: it introspects the schemas of all three stores, decides which engine fits the question (warehouse, lakehouse via Trino, or the ClickHouse mirror), runs read-only SQL with automatic error-retry, and answers in plain language. Runs in demo mode without an API key; add an Anthropic API key to enable it, and set `DASHBOARD_AUTH_PASSWORD` to require a login.
 
 ## Adding a Source Table
@@ -68,13 +72,14 @@ Prometheus scrapes Airflow (via statsd), Kafka consumer lag (kafka-exporter), Mi
 
 | Service | Local URL |
 |---|---|
-| Grafana dashboards | http://localhost:3000 |
-| Prometheus | http://localhost:9090 |
-| Alertmanager | http://localhost:9095 |
+| Grafana dashboards | <http://localhost:3000> |
+| Prometheus | <http://localhost:9090> |
+| Alertmanager | <http://localhost:9095> |
 
 ## Database Schema Structure
 
 The destination warehouse (`destdb`) is strictly organized:
+
 - **`raw`:** batch snapshots straight from the source (`*_source` tables).
 - **`int`:** cleaned, deduplicated integration layer (`*_clean` tables).
 - **`prs`:** presentation views for BI (`prs.v_daily_revenue`, …). Only this schema is exposed to BI tools.
@@ -118,15 +123,15 @@ Kubernetes: `bash k8s/generate-secrets.sh && bash k8s/deploy.sh` (see [DEPLOY_GU
 
 | Service | Local URL | Credentials (from `.env`) |
 |---|---|---|
-| **Airflow UI** | http://localhost:8080 | admin / admin |
-| **AI Dashboard** | http://localhost:3001 *(run `npm run dev -- -p 3001` in `ui/`; 3000 is Grafana's)* | open unless `DASHBOARD_AUTH_PASSWORD` set |
-| **Trino UI** | http://localhost:8082 | any username |
-| **ClickHouse** | http://localhost:8123 | `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` |
-| **MinIO Console** | http://localhost:9001 | `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` |
-| **Kafka UI** | http://localhost:8001 | `KAFKA_UI_USER` / `KAFKA_UI_PASSWORD` |
-| **Metabase** | http://localhost:3030 | (setup required) |
-| **Spark Master** | http://localhost:8081 | — |
-| **Grafana** | http://localhost:3000 *(compose)* | `GRAFANA_ADMIN_USER` / password |
+| **Airflow UI** | <http://localhost:8080> | admin / admin |
+| **AI Dashboard** | <http://localhost:3001> *(run `npm run dev -- -p 3001` in `ui/`; 3000 is Grafana's)* | open unless `DASHBOARD_AUTH_PASSWORD` set |
+| **Trino UI** | <http://localhost:8082> | any username |
+| **ClickHouse** | <http://localhost:8123> | `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` |
+| **MinIO Console** | <http://localhost:9001> | `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` |
+| **Kafka UI** | <http://localhost:8001> | `KAFKA_UI_USER` / `KAFKA_UI_PASSWORD` |
+| **Metabase** | <http://localhost:3030> | (setup required) |
+| **Spark Master** | <http://localhost:8081> | — |
+| **Grafana** | <http://localhost:3000> *(compose)* | `GRAFANA_ADMIN_USER` / password |
 
 ## Orchestration & Pipeline Details
 
