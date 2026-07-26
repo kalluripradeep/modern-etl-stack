@@ -66,8 +66,8 @@ dag = DAG(
     description='Extract all source tables from postgres to data lake (Bronze)',
     # Hourly by default — extraction is incremental (high-water mark on the
     # cursor column), so a shorter cadence just means fewer rows per run and
-    # fresher warehouse data. Override with INGEST_SCHEDULE (e.g. '@daily'
-    # to go back to one run a day, or '*/15 * * * *' for a live demo).
+    # fresher warehouse data. Override with INGEST_SCHEDULE if an environment
+    # needs a different cadence (any Airflow schedule expression).
     schedule=os.environ.get('INGEST_SCHEDULE', '@hourly'),
     catchup=False,
     # Never let a slow run overlap the next one: concurrent runs would race
