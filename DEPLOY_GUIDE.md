@@ -224,12 +224,9 @@ kubectl logs -n etl <pod-name>    # read the logs
 ```
 
 ### Upgrading from an older deployment
-`deploy.sh` handles migrations automatically (it removes the retired cdc-sync-daemon and the old raw-manifest Trino before installing the Helm release). If you deployed before July 2026, also run once:
-```bash
-kubectl delete deployment cdc-sync-daemon -n etl --ignore-not-found
-```
+`deploy.sh` handles most migrations automatically: it removes the retired cdc-sync-daemon and the old raw-manifest Trino before installing the Helm release. Nothing to run by hand for those.
 
-Kafka storage moved from ephemeral to persistent volumes. Strimzi cannot change the storage type of a running cluster, so if your cluster predates this, delete the Kafka CR once before redeploying (in-flight messages are lost — they were on ephemeral storage anyway, and the CDC connector re-syncs):
+One migration it cannot do for you: Kafka storage moved from ephemeral to persistent volumes. Strimzi cannot change the storage type of a running cluster, so if your cluster predates this, delete the Kafka CR once before redeploying (in-flight messages are lost — they were on ephemeral storage anyway, and the CDC connector re-syncs):
 ```bash
 kubectl delete kafka etl-kafka -n etl --ignore-not-found
 bash k8s/deploy.sh   # recreates Kafka on persistent volumes
