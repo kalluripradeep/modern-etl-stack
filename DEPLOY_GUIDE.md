@@ -222,7 +222,7 @@ To deliver alerts (DAG failures, CDC lag, stale data, revenue anomalies), add a 
 
 Step 5 proves the pipelines work once. To watch a continuous stream of new records land in all three destinations, generate live traffic against the source.
 
-**First, speed up the batch cadence.** Pipe 3 (CDC → ClickHouse) is continuous and needs nothing, but Pipes 1 and 2 run `@daily` out of the box — you would wait a day to see them move. For a test run, set a short cron and restart the schedulers:
+**First, speed up the batch cadence.** Pipe 3 (CDC → ClickHouse) is continuous and needs nothing. Pipes 1 and 2 run `@hourly`, which is the right production cadence but still slow to watch. For a test run, set a short cron and restart the schedulers:
 
 ```bash
 kubectl patch configmap etl-env -n etl \
@@ -230,7 +230,7 @@ kubectl patch configmap etl-env -n etl \
 kubectl rollout restart deployment/airflow-scheduler deployment/airflow-dag-processor -n etl
 ```
 
-Put them back to `@daily` when you are done.
+Put them back to `@hourly` when you are done.
 
 **Then generate traffic.** Port-forward the source and run the generator — it only ever appends and updates, so CDC, the mirror and the batch high-water mark all stay valid while it runs:
 

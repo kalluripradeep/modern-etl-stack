@@ -137,11 +137,12 @@ data:
   KAFKA_CONNECT_URL: "http://kafka-connect-0.kafka-connect.etl.svc.cluster.local:8083"
   BRONZE_BUCKET: "bronze"
   SILVER_BUCKET: "silver"
-  # Batch cadence. "@daily" is the production default; set a cron such as
-  # "*/15 * * * *" to watch records flow through the batch and lakehouse
-  # pipelines without waiting for the next daily run.
-  INGEST_SCHEDULE: "@daily"
-  SILVER_SCHEDULE: "@daily"
+  # Batch cadence. Hourly in production — extraction is incremental, so a
+  # shorter cadence just means fewer rows per run and fresher data. Use
+  # "@daily" to go back to one run a day, or a cron such as "*/15 * * * *"
+  # when watching records flow end to end.
+  INGEST_SCHEDULE: "@hourly"
+  SILVER_SCHEDULE: "@hourly"
   # Scale these up for large datasets (50GB+)
   ETL_CHUNK_SIZE: "10000"
   SPARK_EXECUTOR_MEMORY: "2g"
