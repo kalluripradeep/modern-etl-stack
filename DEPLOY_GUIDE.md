@@ -218,6 +218,33 @@ A **Data Platform Health** dashboard (pipeline runs, CDC lag, source freshness, 
 
 To deliver alerts (DAG failures, CDC lag, stale data, revenue anomalies), add a Slack/email receiver in the `alertmanager-config` ConfigMap.
 
+### Step 8 — Watch live data flow through all three pipelines
+
+Step 5 proves the pipelines work once. To watch a continuous stream of new records land in all three destinations, generate live traffic against the source.
+
+**Generate traffic.** Port-forward the source and run the generator — it only ever appends and updates, so CDC, the mirror and the batch high-water mark all stay valid while it runs:
+
+```bash
+kubectl port-forward svc/postgres-source 5432:5432 -n etl
+# in another terminal, from the repo root:
+pip install psycopg2-binary
+python scripts/simulate_live_traffic.py --rate 5 --interval 3
+```
+
+Leave it running and watch each destination:
+
+| Pipeline | Where to look | When it moves |
+|---|---|---|
+| **3 · Real-time mirror** | `mirror.orders_current` in ClickHouse (command above) — rerun it and the count climbs | seconds |
+| **1 · Warehouse** | `raw.orders_source`, then `int`/`gold` after dbt runs | on the hourly run |
+| **2 · Lakehouse** | `iceberg.lake.orders` via Trino | on the hourly run, after the silver DAG follows ingestion |
+
+The source count and the ClickHouse count should track each other continuously. The warehouse and lakehouse catch up in steps, one batch per run — that difference **is** the architecture, and watching the three side by side is the clearest demonstration of it.
+
+The batch DAGs run hourly, so leave the generator going and check back. To see a batch cycle immediately instead of waiting, trigger `ingest_source_to_bronze` from the Airflow UI (`http://NODE_IP:30880`) — it runs on demand and the silver DAG follows it.
+
+> Do not use `make seed` / `generate_ecommerce.py` for this: that script drops and recreates the source tables, which breaks the replication slot mid-test and leaves stale rows in the mirror. `simulate_live_traffic.py` is the non-destructive one.
+
 ---
 
 ## Troubleshooting

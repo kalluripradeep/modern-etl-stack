@@ -137,6 +137,11 @@ data:
   KAFKA_CONNECT_URL: "http://kafka-connect-0.kafka-connect.etl.svc.cluster.local:8083"
   BRONZE_BUCKET: "bronze"
   SILVER_BUCKET: "silver"
+  # Batch cadence for the warehouse and lakehouse pipelines. Extraction is
+  # incremental, so a shorter cadence just means fewer rows per run and
+  # fresher data. Accepts any Airflow schedule expression.
+  INGEST_SCHEDULE: "@hourly"
+  SILVER_SCHEDULE: "@hourly"
   # Scale these up for large datasets (50GB+)
   ETL_CHUNK_SIZE: "10000"
   SPARK_EXECUTOR_MEMORY: "2g"

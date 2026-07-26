@@ -38,8 +38,13 @@ with DAG(
     'spark_transform_silver',
     default_args=default_args,
     description='Spark Batch Processing - Bronze to Silver (Iceberg)',
-    schedule='@daily',
+    # Also triggered by ingest_source_to_bronze on completion; this schedule
+    # is the independent fallback. Override with SILVER_SCHEDULE.
+    schedule=os.environ.get('SILVER_SCHEDULE', '@hourly'),
     catchup=False,
+    # Spark jobs are long-running; overlapping runs would MERGE into the same
+    # Iceberg tables concurrently.
+    max_active_runs=1,
     tags=['spark', 'iceberg', 'silver', 'scalability', 'compaction'],
 ) as dag:
 
@@ -91,9 +96,13 @@ with DAG(
     maintenance_task = BashOperator(
         task_id='iceberg_maintenance',
         bash_command=(
-            'if [ "$(date -d \'{{ ds }}\' +%u)" = "7" ]; then '
+            # Gate on weekday AND hour (%u%H == "700"): with an hourly schedule
+            # the date alone is the same for all 24 Sunday runs, which would
+            # compact 24 times instead of once. -u pins the comparison to UTC
+            # (Airflow's logical time) so it cannot drift with container TZ.
+            'if [ "$(date -u -d \'{{ ts }}\' +%u%H)" = "700" ]; then '
             + get_spark_submit_command('Iceberg-Maintenance', '/opt/spark-jobs/iceberg_maintenance.py')
-            + '; else echo "Skipping Iceberg maintenance — runs on Sundays only"; fi'
+            + '; else echo "Skipping Iceberg maintenance — runs Sundays at 00:00 only"; fi'
         ),
         # Run only on Sundays to optimize storage after weekly activity
         execution_timeout=timedelta(hours=2),

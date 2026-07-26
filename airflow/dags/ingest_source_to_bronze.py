@@ -64,8 +64,15 @@ dag = DAG(
     'ingest_source_to_bronze',
     default_args=default_args,
     description='Extract all source tables from postgres to data lake (Bronze)',
-    schedule='@daily',
+    # Hourly by default — extraction is incremental (high-water mark on the
+    # cursor column), so a shorter cadence just means fewer rows per run and
+    # fresher warehouse data. Override with INGEST_SCHEDULE if an environment
+    # needs a different cadence (any Airflow schedule expression).
+    schedule=os.environ.get('INGEST_SCHEDULE', '@hourly'),
     catchup=False,
+    # Never let a slow run overlap the next one: concurrent runs would race
+    # on the same raw tables and high-water mark.
+    max_active_runs=1,
     tags=['etl', 'bronze', 'multi-table'],
 )
 
@@ -80,6 +87,14 @@ def extract_and_load_table(table_name, **kwargs):
     cursor_col = config.get('cursor_column')
     logical_date = kwargs.get('logical_date', datetime.now())
     date_prefix = logical_date.strftime("%Y/%m/%d")
+    # Bronze objects stay in a daily folder (that is what the Spark jobs read),
+    # but the filename carries the run timestamp. Without it every run of the
+    # same day writes part-00000.parquet and overwrites the previous one —
+    # harmless at @daily, silent data loss for the lakehouse at any faster
+    # cadence, since each incremental run only holds its own new rows.
+    # A retry of the same run reuses its stamp and overwrites itself, which
+    # is the idempotent behaviour we want.
+    run_stamp = logical_date.strftime("%Y%m%dT%H%M%S")
 
     chunk_size = int(os.environ.get('ETL_CHUNK_SIZE', 10000))
     bucket_name = 'bronze'
@@ -149,7 +164,7 @@ def extract_and_load_table(table_name, **kwargs):
                         raise ValueError(f"Data quality error: Null PKs in {table_name} at {file_path}")
 
                     # Upload to MinIO
-                    object_name = f'{table_name}_source/{date_prefix}/part-{idx:05d}.parquet'
+                    object_name = f'{table_name}_source/{date_prefix}/part-{run_stamp}-{idx:05d}.parquet'
                     s3_hook.load_file(filename=file_path, key=object_name, bucket_name=bucket_name, replace=True)
 
                     # Upsert into DWH
