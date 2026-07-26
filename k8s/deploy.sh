@@ -201,6 +201,10 @@ kubectl rollout status statefulset/spark-master -n $NAMESPACE --timeout=300s
 kubectl rollout status deployment/spark-worker -n $NAMESPACE --timeout=300s
 ok "Spark cluster is ready"
 
+# One-time migration: the CDC sync daemon was retired when ClickHouse became
+# the sole Pipe 3 consumer. Remove it if an older deployment left it running.
+kubectl delete deployment/cdc-sync-daemon -n $NAMESPACE --ignore-not-found
+
 info "Deploying Trino (lakehouse query engine) via the official Helm chart..."
 # One-time migration: remove the previous raw-manifest deployment if present
 kubectl delete deployment/trino service/trino configmap/trino-catalog \

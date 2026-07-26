@@ -84,7 +84,7 @@ The destination warehouse (`destdb`) is strictly organized:
 
 | Layer | Component |
 |---|---|
-| **Orchestration** | Apache Airflow 3.2 |
+| **Orchestration** | Apache Airflow 3.3 |
 | **CDC / Streaming** | Debezium 2.5 & Apache Kafka (KRaft) |
 | **Object Storage** | MinIO (S3-compatible) |
 | **Warehouse Transformation** | dbt-core (incremental models + tests) |
