@@ -1,0 +1,24 @@
+{
+  // Markdown style rules for the repo's own docs.
+  //
+  // The CI job is advisory (continue-on-error), but its inline annotations
+  // showed up on every PR touching a .md file, which reads like a failure.
+  // Structural rules that affect rendering stay on; the two purely
+  // cosmetic ones below are off so the signal is meaningful.
+  "config": {
+    // Prose is not hard-wrapped at 80 columns — long lines keep diffs
+    // readable (one line per paragraph) and GitHub soft-wraps anyway.
+    "MD013": false,
+    // Tables use the compact `|---|` pipe style throughout; renders
+    // identically to the padded style this rule prefers.
+    "MD060": false
+  },
+  // Third-party and generated trees. CI lints a fresh checkout so most of
+  // these only exist locally, but ignoring them keeps a local run honest.
+  "ignores": [
+    "**/node_modules/**",
+    "**/.next/**",
+    "dbt-mcp/**",
+    "dbt/dbt_packages/**"
+  ]
+}

@@ -25,6 +25,7 @@ One source database feeding three parallel pipelines, plus a query layer:
 Install these tools on your machine before starting.
 
 ### 1. kubectl
+
 ```bash
 # Mac
 brew install kubectl
@@ -40,6 +41,7 @@ chmod +x kubectl && sudo mv kubectl /usr/local/bin/
 Verify: `kubectl version --client`
 
 ### 2. Helm
+
 ```bash
 # Mac
 brew install helm
@@ -54,20 +56,25 @@ curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 Verify: `helm version`
 
 ### 3. Docker
-Download and install from: **https://docs.docker.com/get-docker/**
+
+Download and install from: **<https://docs.docker.com/get-docker/>**
 
 Verify: `docker --version`
 
 ### 4. Docker Hub account (free)
-Needed to push the custom Airflow and dashboard images. Sign up at **https://hub.docker.com**, then:
+
+Needed to push the custom Airflow and dashboard images. Sign up at **<https://hub.docker.com>**, then:
+
 ```bash
 docker login
 ```
 
 ### 5. Kubernetes cluster access
+
 ```bash
 kubectl cluster-info
 ```
+
 You should see your cluster URL, not an error. If this fails, ask whoever manages your cluster for the kubeconfig file.
 
 ---
@@ -75,24 +82,29 @@ You should see your cluster URL, not an error. If this fails, ask whoever manage
 ## Deployment Steps
 
 ### Step 1 — Clone the repository
+
 ```bash
 git clone https://github.com/kalluripradeep/modern-etl-stack.git
 cd modern-etl-stack
 ```
 
 ### Step 2 — Generate credentials (recommended)
+
 ```bash
 bash k8s/generate-secrets.sh
 ```
+
 This writes `k8s/01-secrets.generated.yaml` (gitignored) with random passwords, and the deploy script picks it up automatically. **Save the printed passwords** — you need them for the dashboards in Step 6. Skipping this deploys well-known default credentials, acceptable only for a throwaway cluster.
 
 **Optional — enable the real AI assistant:** the AI dashboard runs in demo mode unless it has an Anthropic API key. Add it to the secret at any time (before or after deploying):
+
 ```bash
 kubectl -n etl patch secret etl-secrets -p '{"stringData":{"ANTHROPIC_API_KEY":"sk-ant-..."}}'
 kubectl -n etl rollout restart deployment/data-dashboard
 ```
 
 ### Step 3 — Run the deploy script
+
 ```bash
 bash k8s/deploy.sh
 ```
@@ -106,12 +118,14 @@ The script asks three questions:
 It then deploys everything: databases, Strimzi Kafka + Debezium connector, ClickHouse, MinIO (with bronze/silver buckets), Spark, Trino (Helm), Airflow (Helm), the AI dashboard, and the monitoring stack. First run takes about **10–15 minutes** (Kafka cluster startup is the slow part).
 
 ### Step 4 — Wait for all pods to be Running
+
 ```bash
 kubectl get pods -n etl -w
 ```
 
 Wait until every pod shows `Running`/`Completed`, then Ctrl+C. Expect roughly:
-```
+
+```text
 NAME                                READY   STATUS
 airflow-api-server-xxx              1/1     Running
 airflow-scheduler-xxx               1/1     Running
@@ -136,12 +150,14 @@ trino-worker-xxx (x2)               1/1     Running
 ```
 
 ### Step 5 — Run the end-to-end test
+
 ```bash
 bash scripts/test_e2e.sh
 ```
 
 This port-forwards the services, seeds 200 orders, runs the extract → MinIO → warehouse pipeline, fires live transactions (updates, cancellations, hard deletes), and verifies the ClickHouse mirror caught every change. Expected ending:
-```
+
+```text
   ✓  Seeded 200 orders into postgres-source
   ✓  Validation passed
   ✓  Uploaded 4 parquet file(s) to MinIO
@@ -158,6 +174,7 @@ This port-forwards the services, seeds 200 orders, runs the extract → MinIO �
 ### Step 6 — Open the dashboards
 
 Get your node IP:
+
 ```bash
 kubectl get nodes -o wide   # EXTERNAL-IP column; use INTERNAL-IP if blank
 ```
@@ -174,6 +191,7 @@ kubectl get nodes -o wide   # EXTERNAL-IP column; use INTERNAL-IP if blank
 Credentials come from `k8s/01-secrets.generated.yaml` if you ran Step 2, otherwise from the defaults in `k8s/01-secrets.yaml`.
 
 **Trino** (no NodePort — port-forward to query the lakehouse):
+
 ```bash
 kubectl port-forward svc/trino 8080:8080 -n etl
 # then http://localhost:8080 (any username), e.g.:
@@ -181,6 +199,7 @@ kubectl port-forward svc/trino 8080:8080 -n etl
 ```
 
 **ClickHouse** (query the real-time mirror):
+
 ```bash
 kubectl exec -n etl clickhouse-0 -- clickhouse-client --user <CLICKHOUSE_USER> --password <CLICKHOUSE_PASSWORD> \
   -q "SELECT status, count() FROM mirror.orders_current GROUP BY status"
@@ -204,29 +223,35 @@ To deliver alerts (DAG failures, CDC lag, stale data, revenue anomalies), add a 
 ## Troubleshooting
 
 ### docker push fails
+
 ```bash
 docker login   # then retry
 ```
 
 ### kubectl cluster-info fails
+
 ```bash
 export KUBECONFIG=/path/to/your/kubeconfig
 kubectl cluster-info
 ```
 
 ### Pods stuck in Pending
+
 Usually storage: check `kubectl describe pod <pod> -n etl` for PVC events, and confirm the StorageClass you accepted in Step 3 exists (`kubectl get sc`).
 
 ### A test step fails
+
 ```bash
 kubectl get pods -n etl           # find the pod name
 kubectl logs -n etl <pod-name>    # read the logs
 ```
 
 ### Upgrading from an older deployment
+
 `deploy.sh` handles most migrations automatically: it removes the retired cdc-sync-daemon and the old raw-manifest Trino before installing the Helm release. Nothing to run by hand for those.
 
 One migration it cannot do for you: Kafka storage moved from ephemeral to persistent volumes. Strimzi cannot change the storage type of a running cluster, so if your cluster predates this, delete the Kafka CR once before redeploying (in-flight messages are lost — they were on ephemeral storage anyway, and the CDC connector re-syncs):
+
 ```bash
 kubectl delete kafka etl-kafka -n etl --ignore-not-found
 bash k8s/deploy.sh   # recreates Kafka on persistent volumes
@@ -236,7 +261,7 @@ bash k8s/deploy.sh   # recreates Kafka on persistent volumes
 
 ## Quick Reference
 
-```
+```text
 INSTALL   kubectl + helm + docker + docker login
 CLONE     git clone https://github.com/kalluripradeep/modern-etl-stack.git
 SECRETS   bash k8s/generate-secrets.sh
