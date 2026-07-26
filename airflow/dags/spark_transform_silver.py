@@ -38,7 +38,9 @@ with DAG(
     'spark_transform_silver',
     default_args=default_args,
     description='Spark Batch Processing - Bronze to Silver (Iceberg)',
-    schedule='@daily',
+    # Also triggered by ingest_source_to_bronze on completion; this schedule
+    # is the independent fallback. Override with SILVER_SCHEDULE.
+    schedule=os.environ.get('SILVER_SCHEDULE', '@daily'),
     catchup=False,
     tags=['spark', 'iceberg', 'silver', 'scalability', 'compaction'],
 ) as dag:

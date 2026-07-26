@@ -137,6 +137,11 @@ data:
   KAFKA_CONNECT_URL: "http://kafka-connect-0.kafka-connect.etl.svc.cluster.local:8083"
   BRONZE_BUCKET: "bronze"
   SILVER_BUCKET: "silver"
+  # Batch cadence. "@daily" is the production default; set a cron such as
+  # "*/15 * * * *" to watch records flow through the batch and lakehouse
+  # pipelines without waiting for the next daily run.
+  INGEST_SCHEDULE: "@daily"
+  SILVER_SCHEDULE: "@daily"
   # Scale these up for large datasets (50GB+)
   ETL_CHUNK_SIZE: "10000"
   SPARK_EXECUTOR_MEMORY: "2g"

@@ -64,7 +64,10 @@ dag = DAG(
     'ingest_source_to_bronze',
     default_args=default_args,
     description='Extract all source tables from postgres to data lake (Bronze)',
-    schedule='@daily',
+    # Daily by default. Set INGEST_SCHEDULE (e.g. '*/15 * * * *') to run the
+    # batch and lakehouse pipelines more often — useful when watching records
+    # flow end to end without waiting a day for the next run.
+    schedule=os.environ.get('INGEST_SCHEDULE', '@daily'),
     catchup=False,
     tags=['etl', 'bronze', 'multi-table'],
 )

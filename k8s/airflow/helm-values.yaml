@@ -86,6 +86,16 @@ extraEnv: |
       configMapKeyRef:
         name: etl-env
         key: ETL_CHUNK_SIZE
+  - name: INGEST_SCHEDULE
+    valueFrom:
+      configMapKeyRef:
+        name: etl-env
+        key: INGEST_SCHEDULE
+  - name: SILVER_SCHEDULE
+    valueFrom:
+      configMapKeyRef:
+        name: etl-env
+        key: SILVER_SCHEDULE
   - name: SPARK_EXECUTOR_MEMORY
     valueFrom:
       configMapKeyRef:

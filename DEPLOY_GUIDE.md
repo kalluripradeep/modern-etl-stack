@@ -218,6 +218,41 @@ A **Data Platform Health** dashboard (pipeline runs, CDC lag, source freshness, 
 
 To deliver alerts (DAG failures, CDC lag, stale data, revenue anomalies), add a Slack/email receiver in the `alertmanager-config` ConfigMap.
 
+### Step 8 — Watch live data flow through all three pipelines
+
+Step 5 proves the pipelines work once. To watch a continuous stream of new records land in all three destinations, generate live traffic against the source.
+
+**First, speed up the batch cadence.** Pipe 3 (CDC → ClickHouse) is continuous and needs nothing, but Pipes 1 and 2 run `@daily` out of the box — you would wait a day to see them move. For a test run, set a short cron and restart the schedulers:
+
+```bash
+kubectl patch configmap etl-env -n etl \
+  -p '{"data":{"INGEST_SCHEDULE":"*/15 * * * *","SILVER_SCHEDULE":"*/15 * * * *"}}'
+kubectl rollout restart deployment/airflow-scheduler deployment/airflow-dag-processor -n etl
+```
+
+Put them back to `@daily` when you are done.
+
+**Then generate traffic.** Port-forward the source and run the generator — it only ever appends and updates, so CDC, the mirror and the batch high-water mark all stay valid while it runs:
+
+```bash
+kubectl port-forward svc/postgres-source 5432:5432 -n etl
+# in another terminal, from the repo root:
+pip install psycopg2-binary
+python scripts/simulate_live_traffic.py --rate 5 --interval 3
+```
+
+Leave it running and watch each destination:
+
+| Pipeline | Where to look | Expected lag |
+|---|---|---|
+| **3 · Real-time mirror** | `mirror.orders_current` in ClickHouse (command above) — rerun it and the count climbs | seconds |
+| **1 · Warehouse** | `raw.orders_source`, then `int`/`gold` after dbt runs; Airflow UI shows each run | next scheduled run |
+| **2 · Lakehouse** | `iceberg.lake.orders` via Trino | after the silver DAG follows ingestion |
+
+The source count and the ClickHouse count should track each other continuously. The warehouse and lakehouse catch up in steps, one batch per scheduled run — that difference **is** the architecture, and watching the three side by side is the clearest demonstration of it.
+
+> Do not use `make seed` / `generate_ecommerce.py` for this: that script drops and recreates the source tables, which breaks the replication slot mid-test and leaves stale rows in the mirror. `simulate_live_traffic.py` is the non-destructive one.
+
 ---
 
 ## Troubleshooting
