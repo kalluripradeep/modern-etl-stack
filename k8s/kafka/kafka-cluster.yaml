@@ -1,12 +1,35 @@
-apiVersion: kafka.strimzi.io/v1beta2
+# Kafka for Strimzi 1.x (KRaft only — ZooKeeper was removed upstream).
+#
+# Node count and storage live on the KafkaNodePool; the Kafka resource carries
+# cluster-wide settings. A single dual-role node (controller + broker) matches
+# the single-broker topology this POC uses everywhere else.
+#
+# deploy.sh rewrites the `class:` line below with the StorageClass you choose.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaNodePool
+metadata:
+  name: dual-role
+  namespace: etl
+  labels:
+    strimzi.io/cluster: etl-kafka
+spec:
+  replicas: 1
+  roles:
+    - controller
+    - broker
+  storage:
+    type: persistent-claim
+    size: 10Gi
+    deleteClaim: false
+    class: standard
+---
+apiVersion: kafka.strimzi.io/v1
 kind: Kafka
 metadata:
   name: etl-kafka
   namespace: etl
 spec:
   kafka:
-    version: 3.5.0
-    replicas: 1
     listeners:
       - name: plain
         port: 9092
@@ -16,22 +39,13 @@ spec:
         port: 9093
         type: internal
         tls: true
+    # Single-broker POC: every replication factor has to be 1.
     config:
       offsets.topic.replication.factor: 1
       transaction.state.log.replication.factor: 1
       transaction.state.log.min.isr: 1
       default.replication.factor: 1
       min.insync.replicas: 1
-      inter.broker.protocol.version: "3.5"
-    storage:
-      type: persistent-claim
-      size: 10Gi
-      deleteClaim: false
-      class: standard
-  zookeeper:
-    replicas: 1
-    storage:
-      type: persistent-claim
-      size: 2Gi
-      deleteClaim: false
-      class: standard
+  entityOperator:
+    topicOperator: {}
+    userOperator: {}

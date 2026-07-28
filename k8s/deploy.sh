@@ -13,6 +13,9 @@ set -euo pipefail
 
 NAMESPACE="etl"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Pinned so an upstream release cannot change the API our manifests target.
+# k8s/kafka/kafka-cluster.yaml is written against this version's v1 API.
+STRIMZI_VERSION="${STRIMZI_VERSION:-1.1.0}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 info()  { echo -e "${BLUE}[INFO]${NC}  $*"; }
@@ -154,9 +157,14 @@ fi
 # ─── Step 5: Strimzi Kafka Operator & Kafka Cluster ───────────────────────────
 echo ""
 
-info "Deploying Strimzi Kafka Operator..."
+info "Deploying Strimzi Kafka Operator (${STRIMZI_VERSION})..."
 kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
-kubectl apply -f 'https://strimzi.io/install/latest?namespace=etl' -n $NAMESPACE
+# Pinned, not 'latest': Strimzi 1.x dropped the v1beta2 API and ZooKeeper, so a
+# floating install silently stops matching k8s/kafka/kafka-cluster.yaml. The
+# release asset defaults to namespace "myproject", hence the rewrite.
+curl -fsSL "https://github.com/strimzi/strimzi-kafka-operator/releases/download/${STRIMZI_VERSION}/strimzi-cluster-operator-${STRIMZI_VERSION}.yaml" \
+  | sed "s/namespace: myproject/namespace: ${NAMESPACE}/g" \
+  | kubectl apply -n $NAMESPACE -f -
 kubectl rollout status deployment/strimzi-cluster-operator -n $NAMESPACE --timeout=300s
 # The operator being up does not mean its CRDs are servable yet. Applying the
 # Kafka resource too early fails with: no matches for kind "Kafka" in version

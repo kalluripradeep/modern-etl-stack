@@ -178,7 +178,7 @@ jobs:
       - name: Validate Kubernetes manifests
         # -ignore-missing-schemas: Strimzi Kafka CRDs have no upstream schema
         # helm-values.yaml is a Helm values file, not a manifest
-        run: kubeconform -ignore-missing-schemas -ignore-filename-pattern 'helm-values.yaml' -summary -skip Kafka k8s/
+        run: kubeconform -ignore-missing-schemas -ignore-filename-pattern 'helm-values.yaml' -summary -skip Kafka,KafkaNodePool k8s/
 
   # ── Application builds & integration ─────────────────────────────────────
 
