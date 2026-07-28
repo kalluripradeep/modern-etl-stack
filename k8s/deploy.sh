@@ -138,12 +138,18 @@ ok "MinIO is ready"
 # Create bronze and silver buckets
 info "Creating MinIO buckets (bronze, silver)..."
 MINIO_POD="minio-0"
-kubectl exec -n $NAMESPACE "$MINIO_POD" -- sh -c "
-  mc alias set local http://localhost:9000 minioadmin minioadmin123 &&
+# Single-quoted so the variables expand inside the pod: MinIO already has the
+# real credentials in its environment from etl-secrets. Hardcoding the defaults
+# here broke every deploy that used generate-secrets.sh, with a signature error.
+if kubectl exec -n $NAMESPACE "$MINIO_POD" -- sh -c '
+  mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" &&
   mc mb --ignore-existing local/bronze &&
   mc mb --ignore-existing local/silver
-" || warn "Could not create buckets automatically — create them manually in the MinIO console"
-ok "MinIO buckets ready"
+'; then
+  ok "MinIO buckets ready"
+else
+  warn "Could not create buckets automatically — create them manually in the MinIO console"
+fi
 
 # ─── Step 5: Strimzi Kafka Operator & Kafka Cluster ───────────────────────────
 echo ""
@@ -152,6 +158,13 @@ info "Deploying Strimzi Kafka Operator..."
 kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -f 'https://strimzi.io/install/latest?namespace=etl' -n $NAMESPACE
 kubectl rollout status deployment/strimzi-cluster-operator -n $NAMESPACE --timeout=300s
+# The operator being up does not mean its CRDs are servable yet. Applying the
+# Kafka resource too early fails with: no matches for kind "Kafka" in version
+# "kafka.strimzi.io/v1beta2".
+info "Waiting for Strimzi CRDs to be established..."
+kubectl wait --for=condition=Established --timeout=120s \
+  crd/kafkas.kafka.strimzi.io \
+  crd/kafkanodepools.kafka.strimzi.io
 ok "Strimzi Kafka Operator is ready"
 
 info "Deploying Kafka cluster via Strimzi..."
@@ -256,6 +269,14 @@ echo ""
 read -rp "Seed sample orders data into postgres-source? (y/N): " SEED
 if [[ "$SEED" =~ ^[Yy]$ ]]; then
   info "Running data generator (this may take a minute)..."
+  # Read the credentials that were actually applied, so this works with
+  # generate-secrets.sh as well as the checked-in defaults.
+  secret_val() {
+    kubectl get secret etl-secrets -n $NAMESPACE -o "jsonpath={.data.$1}" | base64 -d
+  }
+  SEED_DB_USER=$(secret_val SOURCE_DB_USER)
+  SEED_DB_PASSWORD=$(secret_val SOURCE_DB_PASSWORD)
+  SEED_DB_NAME=$(secret_val SOURCE_DB_NAME)
   # Pipe the local script into a temporary pod
   cat "$REPO_ROOT/sample-data/generate_ecommerce.py" | kubectl run seed-data \
     --image=python:3.11-slim \
@@ -263,9 +284,9 @@ if [[ "$SEED" =~ ^[Yy]$ ]]; then
     -i --rm \
     --namespace=$NAMESPACE \
     --env="SOURCE_DB_HOST=postgres-source-0.postgres-source.${NAMESPACE}.svc.cluster.local" \
-    --env="SOURCE_DB_USER=sourceuser" \
-    --env="SOURCE_DB_PASSWORD=sourcepass" \
-    --env="SOURCE_DB_NAME=sourcedb" \
+    --env="SOURCE_DB_USER=${SEED_DB_USER}" \
+    --env="SOURCE_DB_PASSWORD=${SEED_DB_PASSWORD}" \
+    --env="SOURCE_DB_NAME=${SEED_DB_NAME}" \
     --command -- sh -c "
       pip install psycopg2-binary faker pandas pyarrow -q &&
       python3 -
@@ -290,12 +311,15 @@ NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="
   || kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
 echo "  Service            URL"
 echo "  ─────────────────────────────────────────────────────"
-echo "  Airflow UI         http://${NODE_IP}:30880  (admin / admin)
-  Kafka UI           http://${NODE_IP}:30801  (No credentials)"
-echo "  Grafana            http://${NODE_IP}:30300  (admin / admin123)"
-echo "  AI Dashboard       http://${NODE_IP}:30333  (Enterprise AI Assistant)"
-echo "  MinIO Console      http://${NODE_IP}:30901  (minioadmin / minioadmin123)"
+echo "  Airflow UI         http://${NODE_IP}:30880  (admin / admin)"
+echo "  Kafka UI           http://${NODE_IP}:30801  (KAFKA_UI_USER / KAFKA_UI_PASSWORD)"
+echo "  Grafana            http://${NODE_IP}:30300  (AIRFLOW_ADMIN_USER / AIRFLOW_ADMIN_PASSWORD)"
+echo "  AI Dashboard       http://${NODE_IP}:30333  (DASHBOARD_AUTH_USER / DASHBOARD_AUTH_PASSWORD)"
+echo "  MinIO Console      http://${NODE_IP}:30901  (MINIO_ROOT_USER / MINIO_ROOT_PASSWORD)"
 echo "  Spark UI           http://${NODE_IP}:30808"
+echo ""
+echo "  Names in brackets are keys in the etl-secrets secret — read one with:"
+echo "    kubectl get secret etl-secrets -n etl -o jsonpath='{.data.MINIO_ROOT_PASSWORD}' | base64 -d"
 echo ""
 echo "  To scale for 50GB+ datasets, update k8s/02-configmaps.yaml:"
 echo "    ETL_CHUNK_SIZE:      500000"
