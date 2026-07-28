@@ -3,6 +3,18 @@
 
 executor: KubernetesExecutor
 
+# Match the Airflow actually running: docker/airflow/Dockerfile builds on
+# apache/airflow:3.3.0. Left unset, the chart assumes its own default (3.2.2)
+# and reports that on install, which reads as though the version pin never
+# took effect.
+airflowVersion: "3.3.0"
+
+# We resolve every service by DNS (see the *_HOST entries in etl-env), so the
+# legacy per-service environment variables are dead weight. Setting this
+# explicitly also silences the chart's deprecation warning and keeps behaviour
+# identical when Chart 2.0 flips the default.
+enableServiceLinks: false
+
 config:
   core:
     auth_manager: "airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager"
