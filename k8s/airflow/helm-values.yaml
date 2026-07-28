@@ -149,14 +149,25 @@ logs:
 redis:
   enabled: false
 
+# The custom image is large (Spark, JDK, dbt, Cosmos, the AWS providers), so
+# importing it takes roughly two minutes — well past the chart's default
+# startup budget of failureThreshold(6) x periodSeconds(10) = 60s. The probe
+# then kills the container mid-start, forever: CrashLoopBackOff that looks
+# like a crash but is a timeout. dagProcessor has no startup probe, which is
+# why it stays healthy while these two restart.
+# 30 x 10s gives 5 minutes to boot; the probe only applies during startup.
 scheduler:
   resources:
     requests:
-      memory: "512Mi"
-      cpu: "250m"
-    limits:
       memory: "1Gi"
       cpu: "500m"
+    limits:
+      memory: "2Gi"
+      cpu: "2"
+  startupProbe:
+    failureThreshold: 30
+    periodSeconds: 10
+    timeoutSeconds: 20
 
 createUserJob:
   useHelmHooks: true
@@ -173,11 +184,16 @@ createUserJob:
 apiServer:
   resources:
     requests:
-      memory: "512Mi"
-      cpu: "250m"
-    limits:
       memory: "1Gi"
       cpu: "500m"
+    limits:
+      memory: "2Gi"
+      cpu: "2"
+  # See the note on scheduler above — same 60s default, same consequence.
+  startupProbe:
+    failureThreshold: 30
+    periodSeconds: 10
+    timeoutSeconds: 20
   service:
     type: NodePort
     ports:
