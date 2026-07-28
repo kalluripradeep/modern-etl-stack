@@ -133,7 +133,7 @@ airflow-dag-processor-xxx           1/1     Running
 alertmanager-xxx                    1/1     Running
 clickhouse-0                        1/1     Running
 data-dashboard-xxx                  1/1     Running
-etl-kafka-broker-0                  1/1     Running
+etl-kafka-dual-role-0               1/1     Running
 grafana-xxx                         1/1     Running
 kafka-connect-0                     1/1     Running
 kafka-exporter-xxx                  1/1     Running
