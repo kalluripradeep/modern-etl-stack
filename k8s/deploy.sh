@@ -17,6 +17,13 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # k8s/kafka/kafka-cluster.yaml is written against this version's v1 API.
 STRIMZI_VERSION="${STRIMZI_VERSION:-1.1.0}"
 
+# Read a value from the secret that was actually applied, so every step works
+# with generate-secrets.sh as well as the checked-in defaults. Anything that
+# hardcodes a credential silently breaks for anyone who generated their own.
+secret_val() {
+  kubectl get secret etl-secrets -n "$NAMESPACE" -o "jsonpath={.data.$1}" | base64 -d
+}
+
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 info()  { echo -e "${BLUE}[INFO]${NC}  $*"; }
 ok()    { echo -e "${GREEN}[OK]${NC}    $*"; }
@@ -206,13 +213,24 @@ kubectl rollout status statefulset/clickhouse -n $NAMESPACE --timeout=300s
 ok "ClickHouse is ready"
 
 info "Registering Debezium CDC connector (via in-cluster exec)..."
-(
+# The connector script defaults to sourceuser/sourcepass when these are unset,
+# so without them Debezium is registered with the wrong password on any cluster
+# using generated secrets — it then fails to read the WAL and the whole
+# real-time pipeline is silently dead.
+if (
   echo "export KAFKA_CONNECT_URL=http://localhost:8083"
   echo "export SOURCE_DB_HOST=postgres-source-0.postgres-source.${NAMESPACE}.svc.cluster.local"
   echo "export DEST_DB_HOST=postgres-dest-0.postgres-dest.${NAMESPACE}.svc.cluster.local"
+  echo "export SOURCE_DB_USER=$(secret_val SOURCE_DB_USER)"
+  echo "export SOURCE_DB_PASSWORD=$(secret_val SOURCE_DB_PASSWORD)"
+  echo "export SOURCE_DB_NAME=$(secret_val SOURCE_DB_NAME)"
   cat "$REPO_ROOT/scripts/register_debezium_connector.sh"
-) | kubectl exec -i kafka-connect-0 -n $NAMESPACE -- bash || warn "Could not register connector automatically"
-ok "Debezium connector registered"
+) | kubectl exec -i kafka-connect-0 -n $NAMESPACE -- bash; then
+  ok "Debezium connector registered"
+else
+  warn "Could not register connector automatically — the real-time pipeline will not receive changes"
+  warn "Retry with: bash scripts/register_debezium_connector.sh (see DEPLOY_GUIDE)"
+fi
 
 # ─── Step 7: Spark ────────────────────────────────────────────────────────────
 echo ""
@@ -277,11 +295,6 @@ echo ""
 read -rp "Seed sample orders data into postgres-source? (y/N): " SEED
 if [[ "$SEED" =~ ^[Yy]$ ]]; then
   info "Running data generator (this may take a minute)..."
-  # Read the credentials that were actually applied, so this works with
-  # generate-secrets.sh as well as the checked-in defaults.
-  secret_val() {
-    kubectl get secret etl-secrets -n $NAMESPACE -o "jsonpath={.data.$1}" | base64 -d
-  }
   SEED_DB_USER=$(secret_val SOURCE_DB_USER)
   SEED_DB_PASSWORD=$(secret_val SOURCE_DB_PASSWORD)
   SEED_DB_NAME=$(secret_val SOURCE_DB_NAME)
