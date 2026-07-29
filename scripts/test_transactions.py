@@ -385,6 +385,10 @@ def simulate_transactions():
 
 
 # ── Step 5: Verify the ClickHouse mirror (Pipe 3's real consumer) ─────────────
+class ClickHouseAuthError(RuntimeError):
+    """Wrong ClickHouse credentials — retrying will never help."""
+
+
 def ch_query(sql):
     """Run a read-only query against ClickHouse, return list of rows."""
     r = requests.post(
@@ -393,6 +397,12 @@ def ch_query(sql):
         data=sql,
         timeout=15,
     )
+    if r.status_code in (401, 403):
+        raise ClickHouseAuthError(
+            f"ClickHouse rejected user '{CLICKHOUSE_USER}' (HTTP {r.status_code}). "
+            "Set CLICKHOUSE_USER/CLICKHOUSE_PASSWORD to match the deployment "
+            "(scripts/test_e2e.sh reads them from the etl-secrets secret)."
+        )
     r.raise_for_status()
     return r.json().get("data", [])
 
@@ -420,6 +430,11 @@ def verify_clickhouse(txn, max_order_id):
             ch_count = int(ch_query(f"SELECT count() FROM mirror.orders_current WHERE {scope}")[0][0])  # nosec B608
             if ch_count == src_count:
                 break
+        except ClickHouseAuthError as e:
+            # Credentials will not fix themselves — stop instead of spending
+            # 90 seconds printing the same rejection.
+            fail("ClickHouse authentication failed", str(e))
+            return
         except Exception as e:
             print(f"  waiting for ClickHouse… ({e})")
         time.sleep(5)
