@@ -1,0 +1,125 @@
+name: Deploy Smoke Test
+
+# Stands the real-time path up on a throwaway kind cluster using the actual
+# deploy script, with generated secrets.
+#
+# Every defect found during the first cluster deployments lived in this path and
+# was invisible to the rest of CI, which validates manifests but never applies
+# them: hardcoded MinIO and CDC credentials that only worked with the checked-in
+# defaults, a Strimzi major release that dropped the API our manifest used, and
+# a mirror schema that never reached an existing volume. Rendering YAML cannot
+# catch any of those; running the deploy can.
+#
+# Airflow, Spark and Trino are deliberately out of scope — the Airflow image
+# alone is several gigabytes. DEPLOY_PROFILE=core stops after ClickHouse.
+
+on:
+  pull_request:
+    paths:
+      - 'k8s/**'
+      - 'scripts/register_debezium_connector.sh'
+      - 'scripts/generate_pipeline_assets.py'
+      - 'docker/clickhouse/**'
+      - '.github/workflows/deploy-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: etl-smoke
+          wait: 120s
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Generate secrets
+        # The whole point: exercise the path the deploy guide recommends.
+        # Random credentials are what exposed the hardcoded ones.
+        run: bash k8s/generate-secrets.sh
+
+      - name: Deploy the real-time path
+        env:
+          REGISTRY: ''            # skip image builds; core profile needs none
+          STORAGE_CLASS: standard # kind's default provisioner
+          SEED: 'n'
+          DEPLOY_PROFILE: core
+        run: bash k8s/deploy.sh
+
+      - name: Assert the deployment is actually healthy
+        run: |
+          set -euo pipefail
+          sv() { kubectl get secret etl-secrets -n etl -o "jsonpath={.data.$1}" | base64 -d; }
+          fail() { echo "::error::$1"; exit 1; }
+
+          echo "--- pods ---"
+          kubectl get pods -n etl
+
+          for sts in postgres-source postgres-dest minio kafka-connect clickhouse; do
+            kubectl rollout status "statefulset/$sts" -n etl --timeout=60s \
+              || fail "$sts is not ready"
+          done
+
+          # Strimzi API compatibility: a major release that drops the version our
+          # manifest targets shows up here as a Kafka that never goes Ready.
+          kubectl wait kafka/etl-kafka --for=condition=Ready --timeout=120s -n etl \
+            || fail "Kafka cluster did not become Ready"
+
+          # MinIO buckets — fails if bucket creation used the wrong credentials.
+          buckets=$(kubectl exec -n etl minio-0 -- sh -c \
+            'mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && mc ls local' 2>/dev/null)
+          echo "$buckets" | grep -q bronze || fail "bronze bucket missing"
+          echo "$buckets" | grep -q silver || fail "silver bucket missing"
+
+          # The CDC connector must be registered with the *generated* password.
+          # Registering with the checked-in default is the bug that silently
+          # disabled the real-time pipeline.
+          cfg=$(kubectl exec -n etl kafka-connect-0 -- \
+            curl -s localhost:8083/connectors/orders-cdc-connector/config)
+          echo "$cfg" | grep -q "$(sv SOURCE_DB_PASSWORD)" \
+            || fail "connector was not registered with the generated password"
+          echo "$cfg" | grep -q 'sourcepass' \
+            && fail "connector is using the default password, not the deployed one"
+
+          status=$(kubectl exec -n etl kafka-connect-0 -- \
+            curl -s localhost:8083/connectors/orders-cdc-connector/status)
+          echo "$status" | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)
+          states=[d['connector']['state']]+[t['state'] for t in d.get('tasks',[])]
+          print('connector+task states:', states)
+          sys.exit(0 if all(s=='RUNNING' for s in states) and len(states)>1 else 1)
+          " || fail "connector or its task is not RUNNING"
+
+          # Mirror schema must exist for every table in the manifest.
+          for t in customers products orders order_items; do
+            n=$(kubectl exec -n etl clickhouse-0 -- clickhouse-client \
+                  --user "$(sv CLICKHOUSE_USER)" --password "$(sv CLICKHOUSE_PASSWORD)" \
+                  -q "SELECT count() FROM system.tables WHERE database='mirror' AND name='${t}_current'")
+            [ "$n" = "1" ] || fail "mirror.${t}_current is missing"
+          done
+
+          # And they must point at the in-cluster broker, not the compose name.
+          broker=$(kubectl exec -n etl clickhouse-0 -- clickhouse-client \
+                     --user "$(sv CLICKHOUSE_USER)" --password "$(sv CLICKHOUSE_PASSWORD)" \
+                     -q "SELECT extract(engine_full, 'kafka_broker_list = ''([^'']*)''') FROM system.tables WHERE database='mirror' AND name='kafka_orders'")
+          echo "mirror broker: $broker"
+          case "$broker" in
+            etl-kafka-kafka-bootstrap*) ;;
+            *) fail "mirror is pointed at '$broker', not the in-cluster Kafka bootstrap" ;;
+          esac
+
+          echo "All deploy smoke assertions passed."
+
+      - name: Dump diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get pods -n etl -o wide || true
+          kubectl get events -n etl --sort-by=.lastTimestamp | tail -40 || true
+          kubectl logs -n etl kafka-connect-0 --tail=60 2>/dev/null | grep -v kube-probe || true

@@ -42,7 +42,13 @@ echo ""
 warn "You need a container registry to push the Airflow image."
 warn "Options: DockerHub (docker.io/USERNAME), GCR (gcr.io/PROJECT), ECR, etc."
 warn "IMPORTANT: Ensure you have run 'docker login' for your registry first."
-read -rp "Enter your registry (e.g. docker.io/myuser): " REGISTRY
+# Presetting REGISTRY (even to empty, meaning "skip the build") suppresses the
+# prompt, so the script can run unattended in CI or any automation.
+if [ -z "${REGISTRY+x}" ]; then
+  read -rp "Enter your registry (e.g. docker.io/myuser): " REGISTRY
+else
+  info "Using REGISTRY from the environment: ${REGISTRY:-(none — skipping image build)}"
+fi
 
 if [ -z "$REGISTRY" ]; then
   warn "Skipping image build — using default apache/airflow:3.3.0-python3.11"
@@ -83,7 +89,9 @@ else
   ok "Found default StorageClass: $DEFAULT_SC"
 fi
 
-read -rp "Enter StorageClass to use [$DEFAULT_SC]: " STORAGE_CLASS
+if [ -z "${STORAGE_CLASS+x}" ]; then
+  read -rp "Enter StorageClass to use [$DEFAULT_SC]: " STORAGE_CLASS
+fi
 STORAGE_CLASS=${STORAGE_CLASS:-$DEFAULT_SC}
 info "Using StorageClass: $STORAGE_CLASS"
 
@@ -249,6 +257,17 @@ else
   warn "Retry with: bash scripts/register_debezium_connector.sh (see DEPLOY_GUIDE)"
 fi
 
+# Everything above is the real-time path: databases, object storage, Kafka,
+# Debezium and the ClickHouse mirror. DEPLOY_PROFILE=core stops here, which is
+# what CI exercises — it covers the parts that have actually broken on fresh
+# installs without pulling the multi-gigabyte Airflow image.
+if [ "${DEPLOY_PROFILE:-full}" = "core" ]; then
+  echo ""
+  ok "Core profile complete (databases, MinIO, Kafka, Debezium, ClickHouse)"
+  info "Set DEPLOY_PROFILE=full for Spark, Trino, monitoring, Airflow and the dashboard."
+  exit 0
+fi
+
 # ─── Step 7: Spark ────────────────────────────────────────────────────────────
 echo ""
 info "Deploying Spark master and workers..."
@@ -309,8 +328,10 @@ ok "Airflow is ready"
 
 # ─── Step 10: Seed sample data ────────────────────────────────────────────────
 echo ""
-read -rp "Seed sample orders data into postgres-source? (y/N): " SEED
-if [[ "$SEED" =~ ^[Yy]$ ]]; then
+if [ -z "${SEED+x}" ]; then
+  read -rp "Seed sample orders data into postgres-source? (y/N): " SEED
+fi
+if [[ "${SEED:-n}" =~ ^[Yy]$ ]]; then
   info "Running data generator (this may take a minute)..."
   SEED_DB_USER=$(secret_val SOURCE_DB_USER)
   SEED_DB_PASSWORD=$(secret_val SOURCE_DB_PASSWORD)

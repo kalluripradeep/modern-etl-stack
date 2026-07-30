@@ -46,6 +46,12 @@ spec:
       transaction.state.log.min.isr: 1
       default.replication.factor: 1
       min.insync.replicas: 1
+      # Debezium creates one topic per captured table on first change event.
+      # Strimzi defaults this to false, unlike docker-compose which sets
+      # KAFKA_AUTO_CREATE_TOPICS_ENABLE=true — so on Kubernetes the producer
+      # looped on UNKNOWN_TOPIC_OR_PARTITION while the connector still
+      # reported RUNNING, and the mirror silently stayed empty.
+      auto.create.topics.enable: "true"
   entityOperator:
     topicOperator: {}
     userOperator: {}
