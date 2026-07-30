@@ -105,23 +105,37 @@ ok "Python environment ready"
 info "Running transactional test suite..."
 echo ""
 
+# Credentials come from the cluster we are testing, not from literals. The
+# checked-in defaults only match a cluster deployed without
+# generate-secrets.sh; hardcoding them made this script fail against exactly
+# the setup we recommend, and the failure looked like a broken pipeline
+# (SignatureDoesNotMatch from MinIO, 403 from ClickHouse) rather than a bad
+# password. Each value falls back to the compose default when the secret or
+# key is absent, so local docker-compose runs still work.
+sv() {  # $1 = key in etl-secrets, $2 = fallback
+  local v
+  v=$(kubectl get secret etl-secrets -n "$NAMESPACE" -o "jsonpath={.data.$1}" 2>/dev/null | base64 -d 2>/dev/null || true)
+  echo "${v:-$2}"
+}
+
 export SOURCE_DB_HOST=localhost
 export SOURCE_DB_PORT=5433
 export DEST_DB_HOST=localhost
 export DEST_DB_PORT=5434
 export KAFKA_CONNECT_URL="http://localhost:8084"
 export MINIO_ENDPOINT="http://localhost:9000"
-export SOURCE_DB_NAME=sourcedb
-export SOURCE_DB_USER=sourceuser
-export SOURCE_DB_PASSWORD=sourcepass
-export DEST_DB_NAME=destdb
-export DEST_DB_USER=destuser
-export DEST_DB_PASSWORD=destpass
-export MINIO_ROOT_USER=minioadmin
-export MINIO_ROOT_PASSWORD=minioadmin123
 export CLICKHOUSE_URL="http://localhost:8123"
-export CLICKHOUSE_USER=chuser
-export CLICKHOUSE_PASSWORD=chpass123
+
+SOURCE_DB_NAME=$(sv SOURCE_DB_NAME sourcedb);            export SOURCE_DB_NAME
+SOURCE_DB_USER=$(sv SOURCE_DB_USER sourceuser);          export SOURCE_DB_USER
+SOURCE_DB_PASSWORD=$(sv SOURCE_DB_PASSWORD sourcepass);  export SOURCE_DB_PASSWORD
+DEST_DB_NAME=$(sv DEST_DB_NAME destdb);                  export DEST_DB_NAME
+DEST_DB_USER=$(sv DEST_DB_USER destuser);                export DEST_DB_USER
+DEST_DB_PASSWORD=$(sv DEST_DB_PASSWORD destpass);        export DEST_DB_PASSWORD
+MINIO_ROOT_USER=$(sv MINIO_ROOT_USER minioadmin);        export MINIO_ROOT_USER
+MINIO_ROOT_PASSWORD=$(sv MINIO_ROOT_PASSWORD minioadmin123); export MINIO_ROOT_PASSWORD
+CLICKHOUSE_USER=$(sv CLICKHOUSE_USER chuser);            export CLICKHOUSE_USER
+CLICKHOUSE_PASSWORD=$(sv CLICKHOUSE_PASSWORD chpass123); export CLICKHOUSE_PASSWORD
 
 set +e   # don't exit on test failure — we want the cleanup trap to run
 python3 "$REPO_ROOT/scripts/test_transactions.py"
