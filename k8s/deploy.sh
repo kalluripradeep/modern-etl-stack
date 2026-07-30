@@ -219,22 +219,6 @@ kubectl create configmap clickhouse-init -n $NAMESPACE \
 kubectl apply -f "$TMP_K8S/clickhouse/"
 kubectl rollout status statefulset/clickhouse -n $NAMESPACE --timeout=300s
 
-# The ConfigMap is mounted at /docker-entrypoint-initdb.d, which ClickHouse only
-# executes on first boot of an empty volume. Applying it explicitly means schema
-# changes — a new table, a different broker address, an altered column mapping —
-# also reach clusters whose volume already exists. The script is safe to re-run:
-# data tables use IF NOT EXISTS, and only the stateless Kafka consumers and their
-# views are rebuilt.
-info "Applying the mirror schema (idempotent, so existing volumes converge)..."
-if kubectl exec -i clickhouse-0 -n $NAMESPACE -- clickhouse-client \
-     --user "$(secret_val CLICKHOUSE_USER)" \
-     --password "$(secret_val CLICKHOUSE_PASSWORD)" \
-     --multiquery < "$CH_INIT_DIR/01_mirror_schema.sql"; then
-  ok "Mirror schema applied"
-else
-  warn "Could not apply the mirror schema — the real-time mirror may not receive changes"
-  warn "Retry with: kubectl exec -i clickhouse-0 -n $NAMESPACE -- clickhouse-client --user <u> --password <p> --multiquery < docker/clickhouse/initdb/01_mirror_schema.sql"
-fi
 ok "ClickHouse is ready"
 
 info "Registering Debezium CDC connector (via in-cluster exec)..."
@@ -255,6 +239,39 @@ if (
 else
   warn "Could not register connector automatically — the real-time pipeline will not receive changes"
   warn "Retry with: bash scripts/register_debezium_connector.sh (see DEPLOY_GUIDE)"
+fi
+
+# Deliberately after the connector: Debezium creates the CDC topics when it
+# registers, and a ClickHouse Kafka table built against a topic that does not
+# exist yet does not reliably start consuming once it appears. Creating the
+# consumers first left Kafka holding tens of thousands of messages while the
+# mirror stayed empty, with nothing reporting an error.
+#
+# The ConfigMap is mounted at /docker-entrypoint-initdb.d, which ClickHouse only
+# executes on first boot of an empty volume, so applying it explicitly is also
+# what carries schema changes to clusters whose volume already exists. Safe to
+# re-run: data tables use IF NOT EXISTS and only the stateless consumers and
+# their views are rebuilt.
+info "Waiting for the CDC topics to appear before building the consumers..."
+for _ in $(seq 1 30); do
+  if kubectl exec -n $NAMESPACE etl-kafka-dual-role-0 -- \
+       /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list 2>/dev/null \
+       | grep -q '^cdc\.'; then
+    ok "CDC topics present"
+    break
+  fi
+  sleep 5
+done
+
+info "Applying the mirror schema (idempotent, so existing volumes converge)..."
+if kubectl exec -i clickhouse-0 -n $NAMESPACE -- clickhouse-client \
+     --user "$(secret_val CLICKHOUSE_USER)" \
+     --password "$(secret_val CLICKHOUSE_PASSWORD)" \
+     --multiquery < "$CH_INIT_DIR/01_mirror_schema.sql"; then
+  ok "Mirror schema applied"
+else
+  warn "Could not apply the mirror schema — the real-time mirror may not receive changes"
+  warn "Retry with: kubectl exec -i clickhouse-0 -n $NAMESPACE -- clickhouse-client --user <u> --password <p> --multiquery < docker/clickhouse/initdb/01_mirror_schema.sql"
 fi
 
 # Everything above is the real-time path: databases, object storage, Kafka,
