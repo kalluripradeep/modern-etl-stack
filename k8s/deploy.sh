@@ -210,6 +210,23 @@ kubectl create configmap clickhouse-init -n $NAMESPACE \
   --from-file="$CH_INIT_DIR" --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -f "$TMP_K8S/clickhouse/"
 kubectl rollout status statefulset/clickhouse -n $NAMESPACE --timeout=300s
+
+# The ConfigMap is mounted at /docker-entrypoint-initdb.d, which ClickHouse only
+# executes on first boot of an empty volume. Applying it explicitly means schema
+# changes — a new table, a different broker address, an altered column mapping —
+# also reach clusters whose volume already exists. The script is safe to re-run:
+# data tables use IF NOT EXISTS, and only the stateless Kafka consumers and their
+# views are rebuilt.
+info "Applying the mirror schema (idempotent, so existing volumes converge)..."
+if kubectl exec -i clickhouse-0 -n $NAMESPACE -- clickhouse-client \
+     --user "$(secret_val CLICKHOUSE_USER)" \
+     --password "$(secret_val CLICKHOUSE_PASSWORD)" \
+     --multiquery < "$CH_INIT_DIR/01_mirror_schema.sql"; then
+  ok "Mirror schema applied"
+else
+  warn "Could not apply the mirror schema — the real-time mirror may not receive changes"
+  warn "Retry with: kubectl exec -i clickhouse-0 -n $NAMESPACE -- clickhouse-client --user <u> --password <p> --multiquery < docker/clickhouse/initdb/01_mirror_schema.sql"
+fi
 ok "ClickHouse is ready"
 
 info "Registering Debezium CDC connector (via in-cluster exec)..."

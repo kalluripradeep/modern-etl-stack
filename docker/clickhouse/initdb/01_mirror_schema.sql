@@ -33,14 +33,23 @@ CREATE TABLE IF NOT EXISTS mirror.customers
 ENGINE = ReplacingMergeTree(ver, is_deleted)
 ORDER BY customer_id;
 
-CREATE TABLE IF NOT EXISTS mirror.kafka_customers (raw String)
+-- The consumer and its view carry no data, so they are rebuilt every time this
+-- script runs. With IF NOT EXISTS they were created once and then frozen: a
+-- changed broker address, topic or column mapping never reached a cluster whose
+-- volume already existed. Dropping them re-reads the settings below; the
+-- ReplacingMergeTree above keeps its rows, and the consumer group name is
+-- unchanged so it resumes from its committed offsets.
+DROP VIEW IF EXISTS mirror.customers_mv;
+DROP TABLE IF EXISTS mirror.kafka_customers;
+
+CREATE TABLE mirror.kafka_customers (raw String)
 ENGINE = Kafka
 SETTINGS kafka_broker_list = 'kafka:9092',
          kafka_topic_list = 'cdc.public.customers',
          kafka_group_name = 'clickhouse-mirror-customers',
          kafka_format = 'JSONAsString';
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS mirror.customers_mv TO mirror.customers AS
+CREATE MATERIALIZED VIEW mirror.customers_mv TO mirror.customers AS
 WITH
     JSONExtractString(raw, 'op') AS op,
     if(op = 'd', JSONExtractRaw(raw, 'before'), JSONExtractRaw(raw, 'after')) AS rec
@@ -60,7 +69,7 @@ SELECT
 FROM mirror.kafka_customers
 WHERE length(raw) > 0 AND rec NOT IN ('', 'null');
 
-CREATE VIEW IF NOT EXISTS mirror.customers_current AS
+CREATE OR REPLACE VIEW mirror.customers_current AS
 SELECT * EXCEPT (ver, is_deleted) FROM mirror.customers FINAL WHERE is_deleted = 0;
 
 -- ── products ─────────────────────────────────────────────────────────────
@@ -80,14 +89,23 @@ CREATE TABLE IF NOT EXISTS mirror.products
 ENGINE = ReplacingMergeTree(ver, is_deleted)
 ORDER BY product_id;
 
-CREATE TABLE IF NOT EXISTS mirror.kafka_products (raw String)
+-- The consumer and its view carry no data, so they are rebuilt every time this
+-- script runs. With IF NOT EXISTS they were created once and then frozen: a
+-- changed broker address, topic or column mapping never reached a cluster whose
+-- volume already existed. Dropping them re-reads the settings below; the
+-- ReplacingMergeTree above keeps its rows, and the consumer group name is
+-- unchanged so it resumes from its committed offsets.
+DROP VIEW IF EXISTS mirror.products_mv;
+DROP TABLE IF EXISTS mirror.kafka_products;
+
+CREATE TABLE mirror.kafka_products (raw String)
 ENGINE = Kafka
 SETTINGS kafka_broker_list = 'kafka:9092',
          kafka_topic_list = 'cdc.public.products',
          kafka_group_name = 'clickhouse-mirror-products',
          kafka_format = 'JSONAsString';
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS mirror.products_mv TO mirror.products AS
+CREATE MATERIALIZED VIEW mirror.products_mv TO mirror.products AS
 WITH
     JSONExtractString(raw, 'op') AS op,
     if(op = 'd', JSONExtractRaw(raw, 'before'), JSONExtractRaw(raw, 'after')) AS rec
@@ -105,7 +123,7 @@ SELECT
 FROM mirror.kafka_products
 WHERE length(raw) > 0 AND rec NOT IN ('', 'null');
 
-CREATE VIEW IF NOT EXISTS mirror.products_current AS
+CREATE OR REPLACE VIEW mirror.products_current AS
 SELECT * EXCEPT (ver, is_deleted) FROM mirror.products FINAL WHERE is_deleted = 0;
 
 -- ── orders ─────────────────────────────────────────────────────────────
@@ -124,14 +142,23 @@ CREATE TABLE IF NOT EXISTS mirror.orders
 ENGINE = ReplacingMergeTree(ver, is_deleted)
 ORDER BY order_id;
 
-CREATE TABLE IF NOT EXISTS mirror.kafka_orders (raw String)
+-- The consumer and its view carry no data, so they are rebuilt every time this
+-- script runs. With IF NOT EXISTS they were created once and then frozen: a
+-- changed broker address, topic or column mapping never reached a cluster whose
+-- volume already existed. Dropping them re-reads the settings below; the
+-- ReplacingMergeTree above keeps its rows, and the consumer group name is
+-- unchanged so it resumes from its committed offsets.
+DROP VIEW IF EXISTS mirror.orders_mv;
+DROP TABLE IF EXISTS mirror.kafka_orders;
+
+CREATE TABLE mirror.kafka_orders (raw String)
 ENGINE = Kafka
 SETTINGS kafka_broker_list = 'kafka:9092',
          kafka_topic_list = 'cdc.public.orders',
          kafka_group_name = 'clickhouse-mirror-orders',
          kafka_format = 'JSONAsString';
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS mirror.orders_mv TO mirror.orders AS
+CREATE MATERIALIZED VIEW mirror.orders_mv TO mirror.orders AS
 WITH
     JSONExtractString(raw, 'op') AS op,
     if(op = 'd', JSONExtractRaw(raw, 'before'), JSONExtractRaw(raw, 'after')) AS rec
@@ -148,7 +175,7 @@ SELECT
 FROM mirror.kafka_orders
 WHERE length(raw) > 0 AND rec NOT IN ('', 'null');
 
-CREATE VIEW IF NOT EXISTS mirror.orders_current AS
+CREATE OR REPLACE VIEW mirror.orders_current AS
 SELECT * EXCEPT (ver, is_deleted) FROM mirror.orders FINAL WHERE is_deleted = 0;
 
 -- ── order_items ─────────────────────────────────────────────────────────────
@@ -167,14 +194,23 @@ CREATE TABLE IF NOT EXISTS mirror.order_items
 ENGINE = ReplacingMergeTree(ver, is_deleted)
 ORDER BY item_id;
 
-CREATE TABLE IF NOT EXISTS mirror.kafka_order_items (raw String)
+-- The consumer and its view carry no data, so they are rebuilt every time this
+-- script runs. With IF NOT EXISTS they were created once and then frozen: a
+-- changed broker address, topic or column mapping never reached a cluster whose
+-- volume already existed. Dropping them re-reads the settings below; the
+-- ReplacingMergeTree above keeps its rows, and the consumer group name is
+-- unchanged so it resumes from its committed offsets.
+DROP VIEW IF EXISTS mirror.order_items_mv;
+DROP TABLE IF EXISTS mirror.kafka_order_items;
+
+CREATE TABLE mirror.kafka_order_items (raw String)
 ENGINE = Kafka
 SETTINGS kafka_broker_list = 'kafka:9092',
          kafka_topic_list = 'cdc.public.order_items',
          kafka_group_name = 'clickhouse-mirror-order-items',
          kafka_format = 'JSONAsString';
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS mirror.order_items_mv TO mirror.order_items AS
+CREATE MATERIALIZED VIEW mirror.order_items_mv TO mirror.order_items AS
 WITH
     JSONExtractString(raw, 'op') AS op,
     if(op = 'd', JSONExtractRaw(raw, 'before'), JSONExtractRaw(raw, 'after')) AS rec
@@ -191,5 +227,5 @@ SELECT
 FROM mirror.kafka_order_items
 WHERE length(raw) > 0 AND rec NOT IN ('', 'null');
 
-CREATE VIEW IF NOT EXISTS mirror.order_items_current AS
+CREATE OR REPLACE VIEW mirror.order_items_current AS
 SELECT * EXCEPT (ver, is_deleted) FROM mirror.order_items FINAL WHERE is_deleted = 0;
