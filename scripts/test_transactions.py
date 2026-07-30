@@ -444,6 +444,18 @@ def verify_clickhouse(txn, max_order_id):
     else:
         fail("Row count mismatch", f"source={src_count}, clickhouse={ch_count}")
 
+    if ch_count <= 0:
+        # Every check below looks for the *absence* of specific rows, which an
+        # empty mirror satisfies trivially. Reporting those as passes hides the
+        # only fact that matters: no CDC events arrived at all.
+        fail(
+            "Mirror is empty — downstream checks skipped",
+            "no CDC events reached ClickHouse, so delete and cancellation "
+            "verification would pass vacuously. Check the Debezium connector "
+            "task state and the ClickHouse Kafka consumer.",
+        )
+        return
+
     del_ids = ",".join(str(i) for i in txn["deleted"])
     found = int(ch_query(f"SELECT count() FROM mirror.orders_current WHERE order_id IN ({del_ids})")[0][0])  # nosec B608
     if found == 0:
