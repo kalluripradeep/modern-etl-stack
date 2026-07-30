@@ -256,6 +256,9 @@ services:
     volumes:
       - clickhouse-data:/var/lib/clickhouse
       - ./docker/clickhouse/initdb:/docker-entrypoint-initdb.d:ro
+      # Single file, not the directory: mounting the directory would mask the
+      # image's docker_related_config.xml and the server would bind loopback only
+      - ./docker/clickhouse/config.d/kafka.xml:/etc/clickhouse-server/config.d/kafka.xml:ro
     networks:
       - etl-network
     healthcheck:
