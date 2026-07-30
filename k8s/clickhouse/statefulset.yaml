@@ -38,6 +38,13 @@ spec:
           mountPath: /var/lib/clickhouse
         - name: initdb
           mountPath: /docker-entrypoint-initdb.d
+        # subPath so only this file is added. Mounting the whole directory
+        # masks the image's own docker_related_config.xml, which sets
+        # listen_host — without it the server binds loopback only and every
+        # probe gets connection refused.
+        - name: server-config
+          mountPath: /etc/clickhouse-server/config.d/kafka.xml
+          subPath: kafka.xml
         readinessProbe:
           httpGet:
             path: /ping
@@ -55,6 +62,9 @@ spec:
       - name: initdb
         configMap:
           name: clickhouse-init
+      - name: server-config
+        configMap:
+          name: clickhouse-config
   volumeClaimTemplates:
   - metadata:
       name: clickhouse-data

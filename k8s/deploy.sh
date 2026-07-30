@@ -216,6 +216,11 @@ sed 's|kafka:9092|etl-kafka-kafka-bootstrap.etl.svc.cluster.local:9092|g' \
   "$REPO_ROOT/docker/clickhouse/initdb/01_mirror_schema.sql" > "$CH_INIT_DIR/01_mirror_schema.sql"
 kubectl create configmap clickhouse-init -n $NAMESPACE \
   --from-file="$CH_INIT_DIR" --dry-run=client -o yaml | kubectl apply -f -
+# Server settings, notably auto_offset_reset=earliest so consumers read topics
+# from the beginning rather than skipping everything produced before they
+# attached. Same file compose mounts, so both environments behave identically.
+kubectl create configmap clickhouse-config -n $NAMESPACE \
+  --from-file="$REPO_ROOT/docker/clickhouse/config.d" --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -f "$TMP_K8S/clickhouse/"
 kubectl rollout status statefulset/clickhouse -n $NAMESPACE --timeout=300s
 

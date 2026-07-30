@@ -1,0 +1,18 @@
+<clickhouse>
+    <!--
+      Start new consumer groups at the beginning of each topic.
+
+      librdkafka defaults auto.offset.reset to "latest", which silently loses
+      data for a CDC mirror: Debezium creates the topic and starts producing as
+      soon as it is registered, but the ClickHouse consumers attach later. With
+      "latest" every message written before that moment is skipped and never
+      read — the consumer sits connected with no committed offset while the
+      topic holds thousands of records, and nothing reports an error.
+
+      "earliest" makes the mirror converge on the full topic instead, which is
+      the only correct behaviour for a replica of a source table.
+    -->
+    <kafka>
+        <auto_offset_reset>earliest</auto_offset_reset>
+    </kafka>
+</clickhouse>
