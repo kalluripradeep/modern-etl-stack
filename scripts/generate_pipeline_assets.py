@@ -60,14 +60,23 @@ CREATE TABLE IF NOT EXISTS mirror.{name}
 ENGINE = ReplacingMergeTree(ver, is_deleted)
 ORDER BY {table['primary_key']};
 
-CREATE TABLE IF NOT EXISTS mirror.kafka_{name} (raw String)
+-- The consumer and its view carry no data, so they are rebuilt every time this
+-- script runs. With IF NOT EXISTS they were created once and then frozen: a
+-- changed broker address, topic or column mapping never reached a cluster whose
+-- volume already existed. Dropping them re-reads the settings below; the
+-- ReplacingMergeTree above keeps its rows, and the consumer group name is
+-- unchanged so it resumes from its committed offsets.
+DROP VIEW IF EXISTS mirror.{name}_mv;
+DROP TABLE IF EXISTS mirror.kafka_{name};
+
+CREATE TABLE mirror.kafka_{name} (raw String)
 ENGINE = Kafka
 SETTINGS kafka_broker_list = 'kafka:9092',
          kafka_topic_list = '{topic}',
          kafka_group_name = '{group}',
          kafka_format = 'JSONAsString';
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS mirror.{name}_mv TO mirror.{name} AS
+CREATE MATERIALIZED VIEW mirror.{name}_mv TO mirror.{name} AS
 WITH
     JSONExtractString(raw, 'op') AS op,
     if(op = 'd', JSONExtractRaw(raw, 'before'), JSONExtractRaw(raw, 'after')) AS rec
@@ -78,7 +87,7 @@ SELECT
 FROM mirror.kafka_{name}
 WHERE length(raw) > 0 AND rec NOT IN ('', 'null');
 
-CREATE VIEW IF NOT EXISTS mirror.{name}_current AS
+CREATE OR REPLACE VIEW mirror.{name}_current AS
 SELECT * EXCEPT (ver, is_deleted) FROM mirror.{name} FINAL WHERE is_deleted = 0;
 ''')  # nosec B608 - code generator emitting SQL from the manifest, not runtime queries
     return '\n'.join(out)
