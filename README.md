@@ -130,7 +130,7 @@ order by revenue desc;
 | **Batch Compute** | Apache Spark 3.5 & Apache Iceberg 1.4 |
 | **Lakehouse Query Engine** | Trino |
 | **Row Warehouse / Mirror** | PostgreSQL 15 |
-| **Columnar Mirror** | ClickHouse 24.8 |
+| **Columnar Mirror** | ClickHouse 25.3 |
 | **AI Assistant** | Next.js + Claude (agentic SQL over all stores) |
 | **BI / Dashboards** | Metabase |
 | **Monitoring** | Prometheus & Grafana |
