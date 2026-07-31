@@ -238,7 +238,7 @@ services:
 
   # ClickHouse - columnar hot mirror fed from the CDC topics
   clickhouse:
-    image: clickhouse/clickhouse-server:24.8
+    image: clickhouse/clickhouse-server:25.3
     container_name: clickhouse
     depends_on:
       kafka:
