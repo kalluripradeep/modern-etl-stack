@@ -117,6 +117,67 @@ jobs:
 
           echo "All deploy smoke assertions passed."
 
+      - name: Assert a row actually reaches the mirror
+        # The structural checks above all passed while the pipeline was dead:
+        # consumers built before their topics existed, a librdkafka that could
+        # not talk to a Kafka 4.x broker, and Connect wrapping records in a
+        # schema envelope the views could not parse. In every case the pods were
+        # Running, the connector was RUNNING, no component logged an error, and
+        # nothing arrived. Only moving a real row end to end catches that class.
+        run: |
+          set -euo pipefail
+          sv() { kubectl get secret etl-secrets -n etl -o "jsonpath={.data.$1}" | base64 -d; }
+          ch() { kubectl exec -n etl clickhouse-0 -- clickhouse-client \
+                   --user "$(sv CLICKHOUSE_USER)" --password "$(sv CLICKHOUSE_PASSWORD)" -q "$1"; }
+          fail() { echo "::error::$1"; exit 1; }
+
+          # Debezium creates the publication FOR ALL TABLES, so a table created
+          # now is captured without re-registering the connector.
+          kubectl exec -n etl postgres-source-0 -- env PGPASSWORD="$(sv SOURCE_DB_PASSWORD)" \
+            psql -U "$(sv SOURCE_DB_USER)" -d "$(sv SOURCE_DB_NAME)" -q -c "
+              CREATE TABLE IF NOT EXISTS orders (
+                order_id BIGINT PRIMARY KEY, customer_id BIGINT, order_date TIMESTAMP,
+                total_amount NUMERIC(18,2), status TEXT,
+                created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now());
+              INSERT INTO orders (order_id,customer_id,order_date,total_amount,status) VALUES
+                (1,10,now(),25.50,'pending'),
+                (2,11,now(),99.99,'shipped'),
+                (3,12,now(),10.00,'delivered')
+              ON CONFLICT (order_id) DO NOTHING;"
+          echo "inserted 3 rows into postgres-source"
+
+          # CDC is asynchronous: Debezium must create the topic and produce,
+          # then ClickHouse must consume and flush. Allow three minutes.
+          n=0
+          for i in $(seq 1 36); do
+            n=$(ch "SELECT count() FROM mirror.orders_current" 2>/dev/null | tr -d '\r' || echo 0)
+            case "$n" in ''|*[!0-9]*) n=0;; esac
+            [ "$n" -ge 3 ] && { echo "mirror received $n rows after ~$((i*5))s"; break; }
+            sleep 5
+          done
+
+          if [ "$n" -lt 3 ]; then
+            echo "--- consumer state ---"
+            ch "SELECT table, num_messages_read, last_poll_time, exceptions.text[1] AS last_error FROM system.kafka_consumers FORMAT Vertical" || true
+            echo "--- topics ---"
+            kubectl exec -n etl etl-kafka-dual-role-0 -- \
+              /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || true
+            echo "--- one raw record (should start {\"before\": not {\"schema\": ) ---"
+            kubectl exec -n etl etl-kafka-dual-role-0 -- \
+              /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
+              --topic cdc.public.orders --from-beginning --max-messages 1 --timeout-ms 15000 || true
+            fail "only $n/3 rows reached mirror.orders_current — CDC is not delivering end to end"
+          fi
+
+          # Values must survive the round trip, not just the row count.
+          got=$(ch "SELECT sum(total_amount) FROM mirror.orders_current WHERE order_id <= 3" | tr -d '\r')
+          case "$got" in
+            135.49) echo "measures intact: sum(total_amount) = $got" ;;
+            *) fail "expected sum(total_amount)=135.49, got '$got' — records are arriving but decoding wrongly" ;;
+          esac
+
+          echo "Data flows end to end: Postgres -> Debezium -> Kafka -> ClickHouse."
+
       - name: Dump diagnostics on failure
         if: failure()
         run: |
