@@ -52,6 +52,17 @@ spec:
           value: "org.apache.kafka.connect.json.JsonConverter"
         - name: VALUE_CONVERTER
           value: "org.apache.kafka.connect.json.JsonConverter"
+        # JsonConverter defaults schemas.enable to true, which wraps every
+        # record as {"schema":{...},"payload":{...}}. The ClickHouse
+        # materialized views read op/before/after at the top level, so a
+        # wrapped record yields an empty `rec` and is dropped by the view's
+        # WHERE clause — the consumers report tens of thousands of messages
+        # read while the mirror stays at zero, with no error anywhere.
+        # docker-compose has always set these; Kubernetes did not.
+        - name: CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE
+          value: "false"
+        - name: CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE
+          value: "false"
         - name: HEAP_OPTS
           value: "-Xmx1G -Xms512M"
         resources:
