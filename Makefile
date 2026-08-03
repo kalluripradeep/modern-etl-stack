@@ -51,7 +51,7 @@ register-connector:
 
 ## Regenerate pipeline artifacts from airflow/dags/config/pipelines.yml
 generate:
-	python scripts/generate_pipeline_assets.py
+	python3 scripts/generate_pipeline_assets.py
 
 ## Show this help
 help:
