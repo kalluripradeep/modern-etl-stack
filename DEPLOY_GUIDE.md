@@ -227,8 +227,8 @@ Step 5 proves the pipelines work once. To watch a continuous stream of new recor
 ```bash
 kubectl port-forward svc/postgres-source 5432:5432 -n etl
 # in another terminal, from the repo root:
-pip install psycopg2-binary
-python scripts/simulate_live_traffic.py --rate 5 --interval 3
+python3 -m pip install psycopg2-binary
+python3 scripts/simulate_live_traffic.py --rate 5 --interval 3
 ```
 
 Leave it running and watch each destination:
