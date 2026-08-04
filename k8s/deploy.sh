@@ -329,6 +329,20 @@ ok "Monitoring stack is ready"
 
 # ─── Step 9: Airflow ──────────────────────────────────────────────────────────
 echo ""
+# The DAGs resolve their hooks by connection id — source_postgres,
+# dest_postgres and minio_s3 (the Cosmos dbt profile uses dest_postgres too).
+# docker-compose supplies all of these as AIRFLOW_CONN_* env vars; Kubernetes
+# only ever set AIRFLOW_CONN_SPARK_DEFAULT, so every ingest task failed within
+# seconds looking up a connection that did not exist. Built here rather than in
+# the values file because the URIs embed credentials that live in the secret.
+info "Building Airflow connection URIs from the deployed credentials..."
+kubectl create secret generic airflow-connections -n $NAMESPACE \
+  --from-literal=AIRFLOW_CONN_SOURCE_POSTGRES="postgresql://$(secret_val SOURCE_DB_USER):$(secret_val SOURCE_DB_PASSWORD)@postgres-source-0.postgres-source.${NAMESPACE}.svc.cluster.local:5432/$(secret_val SOURCE_DB_NAME)" \
+  --from-literal=AIRFLOW_CONN_DEST_POSTGRES="postgresql://$(secret_val DEST_DB_USER):$(secret_val DEST_DB_PASSWORD)@postgres-dest-0.postgres-dest.${NAMESPACE}.svc.cluster.local:5432/$(secret_val DEST_DB_NAME)" \
+  --from-literal=AIRFLOW_CONN_MINIO_S3="aws://$(secret_val MINIO_ROOT_USER):$(secret_val MINIO_ROOT_PASSWORD)@?endpoint_url=http%3A%2F%2Fminio-0.minio.${NAMESPACE}.svc.cluster.local%3A9000" \
+  --dry-run=client -o yaml | kubectl apply -f -
+ok "Airflow connections published"
+
 info "Adding Airflow Helm repo..."
 helm repo add apache-airflow https://airflow.apache.org --force-update
 helm repo update

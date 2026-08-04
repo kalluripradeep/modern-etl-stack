@@ -124,6 +124,12 @@ extraEnv: |
 extraEnvFrom: |
   - secretRef:
       name: etl-secrets
+  # source_postgres, dest_postgres and minio_s3 as AIRFLOW_CONN_* URIs.
+  # deploy.sh builds this secret from the deployed credentials; without it the
+  # DAGs fail immediately on a missing connection. Compose provides the same
+  # set inline (see the x-airflow-connections anchor in docker-compose.yml).
+  - secretRef:
+      name: airflow-connections
 
 extraVolumeMounts:
   - name: dbt-project
