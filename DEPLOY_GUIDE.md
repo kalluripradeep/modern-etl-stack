@@ -184,11 +184,22 @@ kubectl get nodes -o wide   # EXTERNAL-IP column; use INTERNAL-IP if blank
 | Airflow (pipeline runs) | `http://NODE_IP:30880` | admin / admin |
 | AI Dashboard (ask questions in English) | `http://NODE_IP:30333` | `DASHBOARD_AUTH_*` from secrets |
 | Kafka UI (topic monitoring) | `http://NODE_IP:30801` | `KAFKA_UI_*` from secrets |
-| Grafana (metrics) | `http://NODE_IP:30300` | admin / admin123 |
+| Grafana (metrics) | `http://NODE_IP:30300` | `AIRFLOW_ADMIN_*` from secrets — see note |
 | MinIO (data files) | `http://NODE_IP:30901` | `MINIO_ROOT_*` from secrets |
 | Spark UI (job progress) | `http://NODE_IP:30808` | — |
 
-Credentials come from `k8s/01-secrets.generated.yaml` if you ran Step 2, otherwise from the defaults in `k8s/01-secrets.yaml`.
+Credentials come from `k8s/01-secrets.generated.yaml` if you ran Step 2, otherwise from the defaults in `k8s/01-secrets.yaml`. Read any of them with:
+
+```bash
+kubectl get secret etl-secrets -n etl -o jsonpath='{.data.MINIO_ROOT_PASSWORD}' | base64 -d
+```
+
+> **Grafana uses the `AIRFLOW_ADMIN_*` keys, not a Grafana-specific pair.** The deployment maps `AIRFLOW_ADMIN_USER`/`AIRFLOW_ADMIN_PASSWORD` onto `GF_SECURITY_ADMIN_USER`/`GF_SECURITY_ADMIN_PASSWORD`, so the two services share one admin credential. It is not `admin/admin123`, and it is not the `DASHBOARD_AUTH_*` pair — those belong to the AI dashboard:
+>
+> ```bash
+> kubectl get secret etl-secrets -n etl -o jsonpath='{.data.AIRFLOW_ADMIN_USER}' | base64 -d; echo
+> kubectl get secret etl-secrets -n etl -o jsonpath='{.data.AIRFLOW_ADMIN_PASSWORD}' | base64 -d; echo
+> ```
 
 **Trino** (no NodePort — port-forward to query the lakehouse):
 
