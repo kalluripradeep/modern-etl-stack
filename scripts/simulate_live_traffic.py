@@ -48,6 +48,50 @@ def _stop(signum, frame):
     print("\n  stopping after this tick…")
 
 
+# What this script writes. A source database seeded by an older version of
+# sample-data/generate_ecommerce.py can be missing some of these — order_items
+# used to carry `price` rather than `unit_price` — and the insert then fails
+# several ticks in with a bare psycopg2 UndefinedColumn, naming one column and
+# offering no remedy.
+REQUIRED_COLUMNS = {
+    'orders': {'order_id', 'customer_id', 'order_date', 'total_amount',
+               'status', 'updated_at'},
+    'order_items': {'order_id', 'product_id', 'quantity', 'unit_price'},
+}
+
+
+def check_schema(cur):
+    """Fail early and legibly if the source predates the current schema."""
+    problems = []
+    for table, needed in REQUIRED_COLUMNS.items():
+        cur.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = %s",
+            (table,),
+        )
+        present = {r[0] for r in cur.fetchall()}
+        if not present:
+            problems.append(f"  {table}: table does not exist")
+            continue
+        missing = needed - present
+        if missing:
+            problems.append(f"  {table}: missing {', '.join(sorted(missing))}"
+                            f"  (has: {', '.join(sorted(present))})")
+    if problems:
+        sys.exit(
+            "Source schema does not match what this script writes:\n"
+            + "\n".join(problems)
+            + "\n\nThis usually means the database was seeded by an older "
+              "version of sample-data/generate_ecommerce.py — order_items "
+              "carried 'price' before it was renamed to 'unit_price'.\n"
+              "Re-seed to bring it in line (this drops and recreates the "
+              "source tables):\n"
+              "  make seed\n"
+              "or, on Kubernetes, re-run bash k8s/deploy.sh and answer y when "
+              "it offers to seed."
+        )
+
+
 def load_reference_data(cur):
     """Existing customers and products to reference — keeps FKs valid."""
     cur.execute("SELECT customer_id FROM customers")
@@ -153,6 +197,7 @@ def main():
     conn = psycopg2.connect(**SOURCE)
     conn.autocommit = True
     cur = conn.cursor()
+    check_schema(cur)
     customers, products = load_reference_data(cur)
 
     print(f"Live traffic → {SOURCE['host']}:{SOURCE['port']}/{SOURCE['database']}")
