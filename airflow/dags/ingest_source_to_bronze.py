@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 
 from airflow import DAG
+from airflow.exceptions import AirflowException
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
@@ -28,6 +29,47 @@ sys.path.insert(0, str(Path(__file__).parent))
 from pipeline_config import load_manifest, raw_ddl  # noqa: E402
 
 log = logging.getLogger(__name__)
+
+
+def check_source_schema(source_hook, table_name, needed):
+    """Fail with a legible message if the source lacks a manifested column.
+
+    The extract selects the manifest's column list verbatim. When the source
+    predates the manifest the query dies inside pandas with a bare
+
+        psycopg2.errors.UndefinedColumn: column "name" does not exist
+
+    naming one column, buried under a SQLAlchemy traceback, and offering no
+    remedy — the same trap simulate_live_traffic.py already guards against.
+    Checking up front names every missing column at once and says what to do.
+    """
+    rows = source_hook.get_records(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = %s",
+        parameters=(table_name,),
+    )
+    present = {r[0] for r in rows}
+    if not present:
+        raise AirflowException(
+            f"Source table '{table_name}' does not exist. Seed the source "
+            f"first: make seed (or re-run k8s/deploy.sh and answer y when it "
+            f"offers to seed)."
+        )
+
+    missing = [c for c in needed if c not in present]
+    if missing:
+        raise AirflowException(
+            f"Source table '{table_name}' is missing {', '.join(missing)}, "
+            f"which airflow/dags/config/pipelines.yml expects.\n"
+            f"  present: {', '.join(sorted(present))}\n"
+            f"This means the source was seeded by an older version of "
+            f"sample-data/generate_ecommerce.py. Re-seed to bring it in line "
+            f"(this drops and recreates the source tables, so the Debezium "
+            f"slot and the ClickHouse mirror restart from empty):\n"
+            f"  make seed\n"
+            f"On Kubernetes, re-run bash k8s/deploy.sh and answer y when it "
+            f"offers to seed."
+        )
 
 # Single source of truth for tables: airflow/dags/config/pipelines.yml
 MANIFEST = load_manifest()
@@ -111,6 +153,9 @@ def extract_and_load_table(table_name, **kwargs):
     dest_hook.run(raw_ddl(table_name, config))
 
     # 2. Extract from Source (Incremental CDC Logic)
+    # The cursor is filtered on as well as selected, so it has to exist too.
+    check_source_schema(source_hook, table_name,
+                        columns + ([cursor_col] if cursor_col else []))
     cols_str = ",".join(columns)
 
     # 2a. Fetch the high-water mark (MAX cursor) from the Destination staging DB
