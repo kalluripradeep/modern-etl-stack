@@ -101,7 +101,13 @@ with DAG(
             # compact 24 times instead of once. -u pins the comparison to UTC
             # (Airflow's logical time) so it cannot drift with container TZ.
             'if [ "$(date -u -d \'{{ ts }}\' +%u%H)" = "700" ]; then '
-            + get_spark_submit_command('Iceberg-Maintenance', '/opt/spark-jobs/iceberg_maintenance.py')
+            # .strip() matters: the builder's f-string ends with a newline and
+            # indent, so without it the "; else" lands on its own line starting
+            # with a semicolon -- a bash syntax error that exits 2 before the
+            # gate is ever evaluated. The other tasks pass the string through
+            # as a whole command, where the stray whitespace is harmless, so
+            # only this composed one breaks.
+            + get_spark_submit_command('Iceberg-Maintenance', '/opt/spark-jobs/iceberg_maintenance.py').strip()
             + '; else echo "Skipping Iceberg maintenance — runs Sundays at 00:00 only"; fi'
         ),
         # Run only on Sundays to optimize storage after weekly activity
