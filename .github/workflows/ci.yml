@@ -35,6 +35,8 @@ jobs:
         run: |
           pip install pyyaml
           python scripts/generate_pipeline_assets.py --check
+      - name: Verify dashboard and alert metrics exist in the statsd mapping
+        run: python scripts/check_dashboard_metrics.py
 
   type-check:
     runs-on: ubuntu-latest

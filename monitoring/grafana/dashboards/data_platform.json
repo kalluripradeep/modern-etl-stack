@@ -19,7 +19,7 @@
       "datasource": "Prometheus",
       "gridPos": { "h": 6, "w": 6, "x": 0, "y": 1 },
       "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } } },
-      "targets": [ { "expr": "sum(rate(airflow_scheduler_heartbeat_total[5m]))", "refId": "A" } ]
+      "targets": [ { "expr": "sum(rate(airflow_scheduler_heartbeat[5m]))", "refId": "A" } ]
     },
     {
       "type": "stat",
@@ -35,8 +35,8 @@
       "datasource": "Prometheus",
       "gridPos": { "h": 6, "w": 12, "x": 12, "y": 1 },
       "targets": [
-        { "expr": "sum(rate(airflow_ti_successes_total[5m]))", "legendFormat": "successes", "refId": "A" },
-        { "expr": "sum(rate(airflow_ti_failures_total[5m]))", "legendFormat": "failures", "refId": "B" }
+        { "expr": "sum(rate(airflow_ti_successes[5m]))", "legendFormat": "successes", "refId": "A" },
+        { "expr": "sum(rate(airflow_ti_failures[5m]))", "legendFormat": "failures", "refId": "B" }
       ]
     },
     {
