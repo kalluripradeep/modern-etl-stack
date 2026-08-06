@@ -1,6 +1,18 @@
-# Airflow connections shared by webserver, scheduler and dag-processor.
-# Provisioned via AIRFLOW_CONN_* env vars so no manual UI setup is needed.
+# Airflow env shared by webserver, scheduler and dag-processor.
+# Connections are provisioned via AIRFLOW_CONN_* so no manual UI setup is
+# needed. The JWT secret lives here too, because its whole purpose is to be
+# identical across the three services -- copying it into each would invite
+# exactly the drift it exists to prevent.
 x-airflow-connections: &airflow-connections
+  # Airflow 3 tasks authenticate to the Task Execution API with a JWT the
+  # scheduler signs and the API server verifies. Unset, each process invents
+  # its own secret, every task dies with
+  #   airflow.sdk.api.client.ServerResponseError: Invalid auth token
+  # and the scheduler only reports "finished with state failed, but the task
+  # instance's state attribute is queued" -- which reads like a scheduling
+  # race, not an auth failure. Kubernetes is unaffected: the Airflow chart
+  # generates and shares one for us.
+  AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:-etl-local-jwt-secret-change-in-production}
   AIRFLOW_CONN_SPARK_DEFAULT: spark://spark-master:7077
   AIRFLOW_CONN_SOURCE_POSTGRES: >-
     postgresql://${SOURCE_DB_USER:-sourceuser}:${SOURCE_DB_PASSWORD:-sourcepass}@postgres-source:5432/${SOURCE_DB_NAME:-sourcedb}
@@ -430,6 +442,17 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
       AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: 'True'
+      # Airflow 3 runs every task through the Task Execution API rather than
+      # letting it reach the metadata database directly. LocalExecutor forks
+      # the task inside THIS container, so the default of localhost:8080 points
+      # at nothing here -- the API server is the separate airflow-webserver
+      # service. Without this, every task dies before it starts with
+      #   httpx.ConnectError: [Errno 111] Connection refused
+      # and the scheduler reports "finished with state failed, but the task
+      # instance's state attribute is queued", which reads like a scheduling
+      # race rather than a missing address. Kubernetes is unaffected: the
+      # Airflow chart wires this to its own api-server service.
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-webserver:8080/execution/
       SOURCE_DB_USER: ${SOURCE_DB_USER:-sourceuser}
       SOURCE_DB_PASSWORD: ${SOURCE_DB_PASSWORD:-sourcepass}
       SOURCE_DB_NAME: ${SOURCE_DB_NAME:-sourcedb}
