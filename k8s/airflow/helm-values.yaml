@@ -20,6 +20,22 @@ config:
     auth_manager: "airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager"
   api:
     auth_backends: "airflow.providers.fab.auth_manager.api.auth.backend.basic_auth,airflow.providers.fab.auth_manager.api.auth.backend.session"
+  # Ship task logs to the MinIO already in the stack.
+  #
+  # With KubernetesExecutor each task runs in its own pod and the scheduler
+  # fetches logs from it over port 8793. Log persistence is off because
+  # local-path provisioners cannot do ReadWriteMany, so once the pod exits the
+  # logs are gone and the UI can only report
+  #   Could not read served logs: ... Failed to resolve '<pod>' ...
+  # That message replaces the actual traceback, which makes every task failure
+  # undiagnosable — exactly what happened while chasing the missing connections.
+  #
+  # Writing them to s3://airflow-logs/ via the minio_s3 connection means the
+  # logs outlive the pod and the UI reads them from object storage instead.
+  logging:
+    remote_logging: "True"
+    remote_base_log_folder: "s3://airflow-logs/"
+    remote_log_conn_id: "minio_s3"
 
 images:
   airflow:
@@ -148,6 +164,8 @@ postgresql:
 
 # Disable log persistence for local deployments since local-path provisioners
 # typically do not support the ReadWriteMany (RWX) access mode required by Airflow.
+# Task logs are shipped to MinIO instead — see the logging config above, without
+# which they would be unreadable the moment a worker pod exits.
 logs:
   persistence:
     enabled: false
