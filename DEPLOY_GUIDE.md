@@ -242,11 +242,30 @@ python3 -m pip install psycopg2-binary
 python3 scripts/simulate_live_traffic.py --rate 5 --interval 3
 ```
 
+**Watch the mirror keep up.** In a third terminal, poll the source and the mirror together. Any gap between the two columns is the live end-to-end CDC lag:
+
+```bash
+CH_USER=$(kubectl get secret etl-secrets -n etl -o jsonpath='{.data.CLICKHOUSE_USER}' | base64 -d)
+CH_PASS=$(kubectl get secret etl-secrets -n etl -o jsonpath='{.data.CLICKHOUSE_PASSWORD}' | base64 -d)
+
+for _ in $(seq 1 20); do
+  src=$(kubectl exec -n etl postgres-source-0 -- \
+          bash -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM orders"')
+  mir=$(kubectl exec -n etl clickhouse-0 -- clickhouse-client \
+          --user "$CH_USER" --password "$CH_PASS" \
+          -q "SELECT count() FROM mirror.orders_current")
+  echo "$(date +%T)  source: ${src// /}  mirror: ${mir}  behind: $(( ${src// /} - mir ))"
+  sleep 5
+done
+```
+
+Expect the mirror to trail by a few seconds and never fall further behind. Steady lag means the consumer is keeping up; lag that grows run after run is the signal something is wrong. The gap itself is mostly ClickHouse's `stream_flush_interval_ms` (7.5s by default), so a few seconds is normal and not a sign of trouble.
+
 Leave it running and watch each destination:
 
 | Pipeline | Where to look | When it moves |
 |---|---|---|
-| **3 · Real-time mirror** | `mirror.orders_current` in ClickHouse (command above) — rerun it and the count climbs | seconds |
+| **3 · Real-time mirror** | `mirror.orders_current` in ClickHouse — the loop above, or rerun the count by hand | seconds |
 | **1 · Warehouse** | `raw.orders_source`, then `int`/`gold` after dbt runs | on the hourly run |
 | **2 · Lakehouse** | `iceberg.lake.orders` via Trino | on the hourly run, after the silver DAG follows ingestion |
 
