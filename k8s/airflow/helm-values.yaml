@@ -36,6 +36,22 @@ config:
     remote_logging: "True"
     remote_base_log_folder: "s3://airflow-logs/"
     remote_log_conn_id: "minio_s3"
+  # Delete worker pods when a task FAILS, not just when it succeeds.
+  #
+  # Airflow keeps failed worker pods by default so their logs can be read
+  # after the fact. With KubernetesExecutor and a DAG that fails on a
+  # schedule, that is unbounded growth: every hourly run leaves another dead
+  # pod behind, and each one holds its container writable layer on the node.
+  # A spark-submit pod resolves ~1GB of Ivy jars into that layer, so a
+  # repeatedly failing Spark task fills the node's ephemeral storage, the
+  # kubelet starts evicting, and the eviction SIGTERMs the next Spark run --
+  # which fails, leaves another pod, and tightens the spiral.
+  #
+  # Safe to turn on only because task logs now go to MinIO (see logging
+  # above): the logs outlive the pod, so keeping the corpse buys nothing.
+  kubernetes_executor:
+    delete_worker_pods: "True"
+    delete_worker_pods_on_failure: "True"
 
 images:
   airflow:
