@@ -16,7 +16,16 @@ spec:
     spec:
       containers:
       - name: spark-master
-        image: bitnamilegacy/spark:3.5.1-debian-12-r9
+        # Must be the same Spark version as the driver. The Airflow image
+        # pins pyspark==3.5.0 (see docker/airflow/requirements-airflow.txt),
+        # and Spark checks serialVersionUID on every object crossing the
+        # wire, so a 3.5.1 cluster rejects a 3.5.0 driver's RDDs with
+        #   java.io.InvalidClassException: org.apache.spark.rdd.RDD;
+        #   local class incompatible
+        # Executors start, register, take a task and die on the first
+        # deserialization -- so it presents as a task failure, not a version
+        # problem. Bump this and the pyspark pin together, never alone.
+        image: bitnamilegacy/spark:3.5.0
         env:
         - name: SPARK_MODE
           value: master
