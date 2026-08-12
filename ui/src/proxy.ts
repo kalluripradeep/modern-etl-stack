@@ -9,6 +9,24 @@ import type { NextRequest } from 'next/server';
  * the dashboard stays open — sensible for local development, but set a
  * password on any shared or cluster deployment.
  */
+/**
+ * Compare two strings without leaking how far they matched.
+ *
+ * `===` on a secret returns as soon as it hits a differing character, so the
+ * response time carries the length of the matching prefix. Walking the full
+ * width every time removes that signal. Written by hand rather than with
+ * node:crypto's timingSafeEqual because this runs in the Edge runtime, where
+ * the node crypto module is unavailable.
+ */
+function safeEqual(a: string, b: string): boolean {
+  const width = Math.max(a.length, b.length);
+  let mismatch = a.length ^ b.length;
+  for (let i = 0; i < width; i++) {
+    mismatch |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+  }
+  return mismatch === 0;
+}
+
 export function proxy(request: NextRequest) {
   const expectedPassword = process.env.DASHBOARD_AUTH_PASSWORD;
   if (!expectedPassword) {
@@ -20,7 +38,7 @@ export function proxy(request: NextRequest) {
   if (header.startsWith('Basic ')) {
     try {
       const [user, ...rest] = atob(header.slice(6)).split(':');
-      if (user === expectedUser && rest.join(':') === expectedPassword) {
+      if (safeEqual(user, expectedUser) && safeEqual(rest.join(':'), expectedPassword)) {
         return NextResponse.next();
       }
     } catch {
