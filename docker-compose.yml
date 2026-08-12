@@ -508,16 +508,43 @@ services:
     command: dag-processor
     networks:
       - etl-network
-  # Metabase Business Intelligence
-  metabase:
-    image: metabase/metabase:latest
-    container_name: metabase
+  # AI Data Dashboard (Next.js) — the same image k8s/ui/deployment.yaml runs
+  data-dashboard:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    image: data-dashboard:latest
+    container_name: data-dashboard
+    depends_on:
+      postgres-dest:
+        condition: service_healthy
+    environment:
+      DEST_DB_HOST: postgres-dest
+      DEST_DB_PORT: 5432
+      DEST_DB_NAME: ${DEST_DB_NAME:-destdb}
+      # Read-only warehouse role — the dashboard never needs write access
+      DEST_DB_USER: ${DASHBOARD_DB_USER:-dashboard_ro}
+      DEST_DB_PASSWORD: ${DASHBOARD_DB_PASSWORD:-dashboard_ro}
+      TRINO_URL: http://trino:8080
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-chuser}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-chpass}
+      # Set both to require a login. Left unset the dashboard is open, which
+      # is fine on a laptop and not on anything shared.
+      DASHBOARD_AUTH_USER: ${DASHBOARD_AUTH_USER:-}
+      DASHBOARD_AUTH_PASSWORD: ${DASHBOARD_AUTH_PASSWORD:-}
+      # Optional: without it the assistant runs in demo mode.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     ports:
-      - "3030:3000"
-    volumes:
-      - metabase-data:/metabase-data
+      # 3000 inside the container; 3001 on the host because Grafana owns 3000
+      - "3001:3000"
     networks:
       - etl-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:3000/"]
+      interval: 30s
+      retries: 5
+      start_period: 20s
 
   # StatsD Exporter for Airflow Metrics
   statsd-exporter:
@@ -535,7 +562,6 @@ services:
 
 volumes:
   clickhouse-data:
-  metabase-data:
   postgres-source-data:
   postgres-dest-data:
   kafka-data:
