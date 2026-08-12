@@ -15,7 +15,9 @@ spec:
     spec:
       containers:
       - name: spark-worker
-        image: bitnamilegacy/spark:3.5.1-debian-12-r9
+        # Same Spark version as the driver and the master -- see the note in
+        # master-deployment.yaml. A mismatch here is what executors die on.
+        image: bitnamilegacy/spark:3.5.0
         env:
         - name: SPARK_MODE
           value: worker
