@@ -48,6 +48,24 @@ with DAG(
     tags=['spark', 'iceberg', 'silver', 'scalability', 'compaction'],
 ) as dag:
 
+    # Every date below falls back to "now" when the run has no interval.
+    #
+    # In Airflow 3 a manually triggered run has logical_date=None unless one is
+    # passed explicitly, and the whole family of macros derived from it --
+    # ds_nodash, ts, and data_interval_end alike -- is then simply absent from
+    # the template context. Rendering fails before the task starts:
+    #   UndefinedError: 'ds_nodash' is undefined
+    # so the DAG could not be triggered from the UI or from `airflow dags
+    # trigger` at all. Only the scheduler and the TriggerDagRunOperator in
+    # ingest_source_to_bronze supplied one, which is why it went unnoticed:
+    # the automated paths always worked.
+    #
+    # The `| default(...)` filter is what makes it safe, because it tolerates
+    # an undefined name rather than a null one. Today's date is the right
+    # fallback anyway -- the Spark jobs already default to it when no argument
+    # is passed (see transform_orders.py), so this only makes the DAG agree
+    # with the jobs it calls.
+
     # Helper function to generate standardized spark-submit commands
     def get_spark_submit_command(job_name, script_path, additional_args=""):
         # spark.driver.host: advertise the driver's IP, not its hostname.
@@ -94,22 +112,22 @@ with DAG(
 
     transform_orders = BashOperator(
         task_id='transform_orders',
-        bash_command=get_spark_submit_command('Orders-Bronze-to-Silver', '/opt/spark-jobs/transform_orders.py', '{{ ds_nodash }}'),
+        bash_command=get_spark_submit_command('Orders-Bronze-to-Silver', '/opt/spark-jobs/transform_orders.py', '{{ (data_interval_end | default(macros.datetime.utcnow())).strftime("%Y%m%d") }}'),
     )
 
     transform_customers = BashOperator(
         task_id='transform_customers',
-        bash_command=get_spark_submit_command('Customers-Bronze-to-Silver', '/opt/spark-jobs/transform_customers.py', '{{ ds_nodash }}'),
+        bash_command=get_spark_submit_command('Customers-Bronze-to-Silver', '/opt/spark-jobs/transform_customers.py', '{{ (data_interval_end | default(macros.datetime.utcnow())).strftime("%Y%m%d") }}'),
     )
 
     transform_products = BashOperator(
         task_id='transform_products',
-        bash_command=get_spark_submit_command('Products-Bronze-to-Silver', '/opt/spark-jobs/transform_products.py', '{{ ds_nodash }}'),
+        bash_command=get_spark_submit_command('Products-Bronze-to-Silver', '/opt/spark-jobs/transform_products.py', '{{ (data_interval_end | default(macros.datetime.utcnow())).strftime("%Y%m%d") }}'),
     )
 
     transform_order_items = BashOperator(
         task_id='transform_order_items',
-        bash_command=get_spark_submit_command('OrderItems-Bronze-to-Silver', '/opt/spark-jobs/transform_order_items.py', '{{ ds_nodash }}'),
+        bash_command=get_spark_submit_command('OrderItems-Bronze-to-Silver', '/opt/spark-jobs/transform_order_items.py', '{{ (data_interval_end | default(macros.datetime.utcnow())).strftime("%Y%m%d") }}'),
     )
 
     # Weekly Maintenance: Compaction & Z-Ordering (Essential for 1 Billion+ records)
@@ -119,8 +137,8 @@ with DAG(
             # Gate on weekday AND hour (%u%H == "700"): with an hourly schedule
             # the date alone is the same for all 24 Sunday runs, which would
             # compact 24 times instead of once. -u pins the comparison to UTC
-            # (Airflow's logical time) so it cannot drift with container TZ.
-            'if [ "$(date -u -d \'{{ ts }}\' +%u%H)" = "700" ]; then '
+            # so it cannot drift with container TZ.
+            'if [ "$(date -u -d \'{{ data_interval_end | default(macros.datetime.utcnow()) }}\' +%u%H)" = "700" ]; then '
             # .strip() matters: the builder's f-string ends with a newline and
             # indent, so without it the "; else" lands on its own line starting
             # with a semicolon -- a bash syntax error that exits 2 before the
