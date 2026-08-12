@@ -50,9 +50,29 @@ with DAG(
 
     # Helper function to generate standardized spark-submit commands
     def get_spark_submit_command(job_name, script_path, additional_args=""):
+        # spark.driver.host: advertise the driver's IP, not its hostname.
+        #
+        # These run in client mode, so the driver lives in whatever container
+        # Airflow gave the task and every executor has to open a connection
+        # back to it. Left unset, Spark advertises the local hostname. Under
+        # docker-compose that is the container name and Docker's DNS resolves
+        # it, so this works and hides the problem. Under KubernetesExecutor it
+        # is the task pod's name -- and a bare pod has no Service, so nothing
+        # in the cluster can resolve it. Executors then launch with
+        #   --driver-url spark://CoarseGrainedScheduler@<task-pod-name>:<port>
+        # fail to reach it, and die with "Command exited with code 1". The
+        # master immediately grants a replacement, which dies the same way:
+        # one cluster reached executor ID 45962 before anyone noticed, while
+        # the driver sat logging "Initial job has not accepted any resources"
+        # and the workers looked idle because they were, between deaths.
+        #
+        # The pod IP is routable, so pin to it. bindAddress stays 0.0.0.0 so
+        # the driver still listens on all interfaces inside the container.
         return f"""
     spark-submit \
         --master {SPARK_MASTER_URL} \
+        --conf spark.driver.host=$(hostname -i | cut -d' ' -f1) \
+        --conf spark.driver.bindAddress=0.0.0.0 \
         --conf spark.executor.memory=2g \
         --conf spark.executor.cores=2 \
         --conf spark.sql.adaptive.enabled=true \
