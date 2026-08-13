@@ -27,15 +27,32 @@ RUN pip install --no-cache-dir -r /requirements-airflow.txt
 # re-download, and the versions are pinned in one place instead of a string
 # inside a DAG. PySpark 3.5.0 bundles Hadoop 3.3.4, so hadoop-aws must match
 # it exactly; iceberg-spark-runtime must match Spark 3.5 / Scala 2.12.
+#
+# Each JAR is taken from docker/airflow/jars/ when a copy is sitting there,
+# and downloaded otherwise. On a normal machine the directory is empty and
+# this behaves exactly as a plain download. On a host that cannot reach
+# repo1.maven.org -- a proxy, an air-gapped network, a firewall that blocks
+# Maven Central -- drop the four files in and the build stops needing the
+# internet at all. See docker/airflow/jars/README.md for the URLs.
+COPY docker/airflow/jars/ /tmp/localjars/
 RUN PYSPARK_JARS=$(python -c "import pyspark; import os; print(os.path.join(os.path.dirname(pyspark.__file__), 'jars'))") && \
-    curl -fsSL https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar \
-        -o "${PYSPARK_JARS}/hadoop-aws-3.3.4.jar" && \
-    curl -fsSL https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar \
-        -o "${PYSPARK_JARS}/aws-java-sdk-bundle-1.12.262.jar" && \
-    curl -fsSL https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-3.5_2.12/1.4.2/iceberg-spark-runtime-3.5_2.12-1.4.2.jar \
-        -o "${PYSPARK_JARS}/iceberg-spark-runtime-3.5_2.12-1.4.2.jar" && \
-    curl -fsSL https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.4/postgresql-42.7.4.jar \
-        -o "${PYSPARK_JARS}/postgresql-42.7.4.jar"
+    fetch() { \
+        if [ -f "/tmp/localjars/$1" ]; then \
+            echo "using local /tmp/localjars/$1"; \
+            cp "/tmp/localjars/$1" "${PYSPARK_JARS}/$1"; \
+        else \
+            echo "downloading $1"; \
+            curl -fsSL "$2" -o "${PYSPARK_JARS}/$1"; \
+        fi; \
+    } && \
+    fetch hadoop-aws-3.3.4.jar \
+        https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar && \
+    fetch aws-java-sdk-bundle-1.12.262.jar \
+        https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar && \
+    fetch iceberg-spark-runtime-3.5_2.12-1.4.2.jar \
+        https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-3.5_2.12/1.4.2/iceberg-spark-runtime-3.5_2.12-1.4.2.jar && \
+    fetch postgresql-42.7.4.jar \
+        https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.4/postgresql-42.7.4.jar
 
 # Bake spark jobs into image so they're always available
 # (volume mount ./spark/jobs:/opt/spark-jobs can still override at runtime)

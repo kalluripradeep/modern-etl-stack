@@ -47,3 +47,5 @@ node_modules/
 
 # Local dbt-mcp checkout/venv — vendored copy was removed; never re-commit it
 dbt-mcp/
+# Offline Spark JARs dropped in for restricted networks (see the README there)
+docker/airflow/jars/*.jar
