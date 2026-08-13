@@ -86,6 +86,16 @@ with DAG(
         #
         # The pod IP is routable, so pin to it. bindAddress stays 0.0.0.0 so
         # the driver still listens on all interfaces inside the container.
+        #
+        # --jars, not --conf spark.jars.packages: the JARs are baked into the
+        # image (see docker/airflow/Dockerfile) instead of resolved from Maven
+        # Central on every run. That download was ~1GB per task -- slow, the
+        # thing that filled the node's ephemeral storage before #127, and a
+        # hard failure whenever the cluster cannot reach repo1.maven.org:
+        #   :: UNRESOLVED DEPENDENCIES ::
+        #   module not found: org.apache.iceberg#iceberg-spark-runtime...
+        # Only these two are listed because the Spark workers already ship
+        # hadoop-aws and the AWS SDK; the driver serves these to the executors.
         return f"""
     spark-submit \
         --master {SPARK_MASTER_URL} \
@@ -99,7 +109,7 @@ with DAG(
         --conf spark.hadoop.fs.s3a.secret.key={MINIO_PASSWORD} \
         --conf spark.hadoop.fs.s3a.path.style.access=true \
         --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
-        --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.4.2,org.apache.hadoop:hadoop-aws:3.3.4,org.postgresql:postgresql:42.7.4 \
+        --jars /opt/spark-jars/iceberg-spark-runtime-3.5_2.12-1.4.2.jar,/opt/spark-jars/postgresql-42.7.4.jar \
         --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions \
         --conf spark.sql.catalog.silver=org.apache.iceberg.spark.SparkCatalog \
         --conf spark.sql.catalog.silver.catalog-impl=org.apache.iceberg.jdbc.JdbcCatalog \
