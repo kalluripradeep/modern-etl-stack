@@ -146,6 +146,20 @@ info "Waiting for postgres-dest to be ready..."
 kubectl rollout status statefulset/postgres-dest -n $NAMESPACE --timeout=300s
 ok "PostgreSQL pods are ready"
 
+# The Iceberg JDBC catalog stores its metadata tables in this schema, and the
+# catalog cannot create them itself -- Spark fails with
+#   Cannot initialize JDBC catalog ... no schema has been selected to create in
+# The init-configmap creates it, but Postgres only runs those scripts on a
+# fresh volume, so any cluster deployed before that script existed would never
+# get it. Ensure it here too: CREATE SCHEMA IF NOT EXISTS is idempotent, so
+# this is a no-op on healthy clusters and a repair on older ones.
+info "Ensuring iceberg_catalog schema exists in postgres-dest..."
+kubectl exec -n $NAMESPACE postgres-dest-0 -- bash -c \
+  'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+     -c "CREATE SCHEMA IF NOT EXISTS iceberg_catalog AUTHORIZATION \"$POSTGRES_USER\";"' \
+  >/dev/null 2>&1 && ok "iceberg_catalog schema is ready" \
+  || warn "Could not ensure iceberg_catalog schema — Spark writes to Iceberg will fail until it exists"
+
 # ─── Step 4: MinIO ────────────────────────────────────────────────────────────
 echo ""
 info "Deploying MinIO..."
