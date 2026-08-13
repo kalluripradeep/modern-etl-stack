@@ -45,3 +45,22 @@ data:
     EOSQL
 
     echo "Read-only dashboard role '${DASHBOARD_DB_USER}' is ready."
+  02-create-iceberg-catalog-schema.sh: |
+    #!/bin/bash
+    # Creates the schema that holds Iceberg JDBC catalog metadata
+    # (iceberg_tables / iceberg_namespace_properties), shared by Spark and
+    # Trino. Mirrors docker/postgres-dest-init/02-create-iceberg-catalog-schema.sh
+    # -- that file existed for compose but was never ported here, so on
+    # Kubernetes the schema simply did not exist and every Spark write failed
+    # with "Cannot initialize JDBC catalog ... no schema has been selected to
+    # create in", long after the Spark job itself was working.
+    #
+    # Only runs on a fresh volume; deploy.sh also ensures it on every run so
+    # existing clusters get it without re-initialising the database.
+    set -euo pipefail
+
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+        CREATE SCHEMA IF NOT EXISTS iceberg_catalog AUTHORIZATION ${POSTGRES_USER};
+    EOSQL
+
+    echo "Schema iceberg_catalog is ready."
