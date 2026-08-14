@@ -5,6 +5,7 @@ Essential for 1 Billion+ record scalability to prevent the 'Small File Problem'.
 
 import os
 import sys
+from datetime import datetime, timedelta
 from pyspark.sql import SparkSession
 
 
@@ -45,6 +46,34 @@ def run_maintenance(spark, table_name, z_order_col=None):
                 sort_order => 'zorder({z_order_col})'
             )
         """).show()
+
+    # 4. Expire old snapshots — this is the step that actually frees storage.
+    #
+    # Everything above REWRITES data: compaction and Z-ordering write new
+    # files while the previous snapshots still reference the old ones. Iceberg
+    # keeps every snapshot until it is expired, so without this the table only
+    # ever grows, and running maintenance makes it grow FASTER rather than
+    # smaller. A cluster running this pipeline hourly filled its node disk
+    # and started evicting pods.
+    #
+    # Seven days keeps time-travel useful while bounding what is retained.
+    print(f"Expiring snapshots older than 7 days on {table_name}...")
+    spark.sql(f"""
+        CALL silver.system.expire_snapshots(
+            table => '{table_name}',
+            older_than => TIMESTAMP '{
+                (datetime.utcnow() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+            }',
+            retain_last => 5
+        )
+    """).show()
+
+    # 5. Delete files no snapshot references any more. expire_snapshots drops
+    # the metadata pointers; orphans are what compaction left behind when a
+    # write failed partway. Iceberg refuses to look at anything younger than
+    # three days by default, which protects in-flight writes.
+    print(f"Removing orphan files on {table_name}...")
+    spark.sql(f"CALL silver.system.remove_orphan_files(table => '{table_name}')").show()
 
     print(f"--- Maintenance Completed for: {table_name} ---\n")
 
