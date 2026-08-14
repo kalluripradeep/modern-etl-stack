@@ -201,9 +201,16 @@ scheduler:
     requests:
       memory: "1Gi"
       cpu: "500m"
+      # Declared so the kubelet charges disk usage to the pod that caused it.
+      # With no request, usage is compared against zero and every pod looks
+      # over budget, so eviction picks victims at random -- which is how the
+      # scheduler and api-server were repeatedly killed for storage that
+      # Prometheus and the Spark workers were using.
+      ephemeral-storage: "2Gi"
     limits:
       memory: "2Gi"
       cpu: "2"
+      ephemeral-storage: "4Gi"
   startupProbe:
     failureThreshold: 30
     periodSeconds: 10
@@ -226,9 +233,12 @@ apiServer:
     requests:
       memory: "1Gi"
       cpu: "500m"
+      # See the note on scheduler above.
+      ephemeral-storage: "2Gi"
     limits:
       memory: "2Gi"
       cpu: "2"
+      ephemeral-storage: "4Gi"
   # See the note on scheduler above — same 60s default, same consequence.
   startupProbe:
     failureThreshold: 30
