@@ -29,6 +29,22 @@ spec:
           value: "no"
         - name: SPARK_RPC_ENCRYPTION_ENABLED
           value: "no"
+        # Delete finished applications' work directories.
+        #
+        # A standalone worker keeps a directory per application it has ever
+        # run -- executor stdout/stderr plus any JARs the driver shipped --
+        # and never removes them on its own. On an hourly pipeline that grows
+        # without limit on node disk, which is how this cluster ended up in
+        # DiskPressure twice. Cleanup is off by default in Spark, so it has to
+        # be asked for.
+        #
+        # Runs every 30 minutes and keeps the last 24 hours, which leaves
+        # recent runs available for debugging while bounding the total.
+        - name: SPARK_WORKER_OPTS
+          value: >-
+            -Dspark.worker.cleanup.enabled=true
+            -Dspark.worker.cleanup.interval=1800
+            -Dspark.worker.cleanup.appDataTtl=86400
         # S3A / MinIO config for workers
         - name: SPARK_EXTRA_CLASSPATH
           value: "/opt/bitnami/spark/jars/hadoop-aws-*.jar:/opt/bitnami/spark/jars/aws-java-sdk-bundle-*.jar"
@@ -43,6 +59,13 @@ spec:
           requests:
             memory: "2Gi"   # increase to 8Gi for 50GB datasets
             cpu: "500m"
+            # Without a request, the kubelet measures this pod's disk usage
+            # against zero, so it always looks over budget and eviction picks
+            # victims at random -- that is how the Airflow api-server and
+            # scheduler were killed for storage other pods were using.
+            # Declaring it makes evictions land on whoever actually overran.
+            ephemeral-storage: "2Gi"
           limits:
             memory: "4Gi"   # increase to 16Gi for 50GB datasets
             cpu: "2"
+            ephemeral-storage: "4Gi"
