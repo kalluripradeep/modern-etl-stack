@@ -63,6 +63,14 @@ spec:
         - --config.file=/etc/prometheus/prometheus.yml
         - --storage.tsdb.path=/prometheus
         - --storage.tsdb.retention.time=7d
+        # Time-based retention alone does not bound disk: 7d of samples is
+        # however many bytes 7d happens to produce. On a busy cluster the TSDB
+        # grew until the node hit DiskPressure, the kubelet evicted Prometheus,
+        # the replacement started on a fresh emptyDir and began filling it
+        # again -- dozens of evicted pods, and the api-server and scheduler
+        # taken out alongside it as collateral. A size cap is what actually
+        # bounds it; whichever limit is reached first wins.
+        - --storage.tsdb.retention.size=2GB
         ports:
         - containerPort: 9090
         volumeMounts:
@@ -74,15 +82,29 @@ spec:
           requests:
             memory: "256Mi"
             cpu: "100m"
+            # Declaring ephemeral-storage is what lets the kubelet hold THIS
+            # pod to account. With no request, a pod's usage is compared
+            # against zero, so it always looks over budget and eviction picks
+            # victims essentially at random -- which is how the Airflow
+            # api-server and scheduler died for storage Prometheus was using.
+            ephemeral-storage: "3Gi"
           limits:
             memory: "512Mi"
             cpu: "500m"
+            ephemeral-storage: "4Gi"
       volumes:
       - name: prometheus-config
         configMap:
           name: prometheus-config
       - name: prometheus-data
-        emptyDir: {}   # use a PVC in production for persistence
+        # sizeLimit is the backstop: if the TSDB somehow exceeds it despite
+        # retention.size, the kubelet evicts this pod alone rather than
+        # letting the volume grow until the whole node is under DiskPressure.
+        # Keep it above retention.size so normal operation never trips it.
+        # Use a PVC in production if the metrics history needs to survive a
+        # restart -- an emptyDir starts empty every time the pod moves.
+        emptyDir:
+          sizeLimit: 3Gi
 ---
 apiVersion: v1
 kind: Service
