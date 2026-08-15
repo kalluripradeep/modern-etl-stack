@@ -73,6 +73,25 @@ else
   docker push "$DASHBOARD_IMAGE" || warn "Push failed for dashboard"
   ok "Image pushed: $DASHBOARD_IMAGE"
 
+  # Reclaim what this build just orphaned.
+  #
+  # Both images are rebuilt and re-tagged :latest on every run, so the
+  # previous build's layers become dangling and the BuildKit cache keeps
+  # growing. The Airflow image alone is over 5GB. Nobody thinks to clean up
+  # after a deploy script, so it accumulates silently -- one cluster reached
+  # 20GB in /var/snap/docker over a fortnight of redeploys and hit
+  # DiskPressure, which evicted the Airflow control plane.
+  #
+  # Note this is Docker's store, which is separate from the containerd store
+  # Kubernetes actually runs pods from -- `crictl rmi --prune` does not touch
+  # it, and pruning here cannot disturb anything running on the cluster.
+  #
+  # Only dangling images and stale cache: nothing tagged, nothing in use.
+  info "Reclaiming dangling build layers..."
+  PRUNED=$(docker image prune -f 2>/dev/null | tail -1)
+  docker builder prune -f --filter "until=168h" >/dev/null 2>&1 || true
+  ok "Build cleanup done${PRUNED:+ — $PRUNED}"
+
   # Patch the helm values with actual image in the temporary directory (created later)
   # We'll defer this until TMP_K8S is created.
   export REGISTRY_FOR_REPLACE="$REGISTRY"
