@@ -144,11 +144,14 @@ with DAG(
     maintenance_task = BashOperator(
         task_id='iceberg_maintenance',
         bash_command=(
-            # Gate on weekday AND hour (%u%H == "700"): with an hourly schedule
-            # the date alone is the same for all 24 Sunday runs, which would
-            # compact 24 times instead of once. -u pins the comparison to UTC
-            # so it cannot drift with container TZ.
-            'if [ "$(date -u -d \'{{ data_interval_end | default(macros.datetime.utcnow()) }}\' +%u%H)" = "700" ]; then '
+            # Gate on the hour only (%H == "00"), so this runs once a day
+            # rather than once an hour. It used to be gated to Sunday as well,
+            # but the job now expires Iceberg snapshots on every run and only
+            # compacts on Sundays -- expiry is what releases disk, and waiting
+            # a week to release disk is how a cluster fills up. The job decides
+            # which mode it is in; this only decides how often it is invoked.
+            # -u pins the comparison to UTC so it cannot drift with container TZ.
+            'if [ "$(date -u -d \'{{ data_interval_end | default(macros.datetime.utcnow()) }}\' +%H)" = "00" ]; then '
             # .strip() matters: the builder's f-string ends with a newline and
             # indent, so without it the "; else" lands on its own line starting
             # with a semicolon -- a bash syntax error that exits 2 before the
@@ -156,7 +159,7 @@ with DAG(
             # as a whole command, where the stray whitespace is harmless, so
             # only this composed one breaks.
             + get_spark_submit_command('Iceberg-Maintenance', '/opt/spark-jobs/iceberg_maintenance.py').strip()
-            + '; else echo "Skipping Iceberg maintenance — runs Sundays at 00:00 only"; fi'
+            + '; else echo "Skipping Iceberg maintenance — runs once daily at 00:00 UTC"; fi'
         ),
         # Run only on Sundays to optimize storage after weekly activity
         execution_timeout=timedelta(hours=2),
