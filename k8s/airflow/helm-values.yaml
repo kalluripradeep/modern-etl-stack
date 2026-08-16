@@ -260,29 +260,26 @@ apiServer:
 #
 # The dag-processor is not a hypothetical here: when a node filled up it was
 # rejected and recreated twenty-five times in six seconds, because the
-# Deployment kept replacing a pod the kubelet would not admit. Both are small
-# and long-lived; these numbers exist to make evictions land on whoever
-# actually overran, not to constrain them.
+# Deployment kept replacing a pod the kubelet would not admit.
+#
+# ONLY ephemeral-storage is declared, deliberately. The first version of this
+# also set memory and cpu requests, which reserved 1Gi and 500m that these
+# two never previously held -- and on a busy node that is enough to leave
+# nothing for the next pod to schedule. kafka-connect went Pending straight
+# after. Eviction accounting needs the storage figure; it does not need the
+# other two, so they are gone.
 dagProcessor:
   resources:
     requests:
-      memory: "512Mi"
-      cpu: "250m"
       ephemeral-storage: "1Gi"
     limits:
-      memory: "1Gi"
-      cpu: "1"
       ephemeral-storage: "2Gi"
 
 triggerer:
   resources:
     requests:
-      memory: "512Mi"
-      cpu: "250m"
       ephemeral-storage: "1Gi"
     limits:
-      memory: "1Gi"
-      cpu: "1"
       ephemeral-storage: "2Gi"
 
 webserverSecretKey: "etl-secret-key-change-in-production"
