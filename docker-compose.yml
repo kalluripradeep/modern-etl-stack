@@ -342,6 +342,16 @@ services:
   node-exporter:
     image: prom/node-exporter:latest
     container_name: node-exporter
+    command:
+      # Without --path.rootfs and the mount below, node_filesystem_* reports
+      # this container's filesystem rather than the host's, so the disk alerts
+      # in monitoring/alert_rules.yml would watch the wrong device and never
+      # fire as the real one filled.
+      - '--path.rootfs=/host'
+      - '--collector.filesystem.mount-points-exclude=^/host/(dev|proc|sys|run)($$|/)'
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
     ports:
       - "9100:9100"
     networks:

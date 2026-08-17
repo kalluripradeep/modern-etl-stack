@@ -63,6 +63,14 @@ spec:
         - --config.file=/etc/prometheus/prometheus.yml
         - --storage.tsdb.path=/prometheus
         - --storage.tsdb.retention.time=7d
+        # A time-only retention is not a size bound: how much disk 7d costs
+        # depends on how many series are being scraped, and this database sits
+        # on an emptyDir, which is node ephemeral storage and counts toward the
+        # kubelet's eviction threshold. Adding more exporters or labels would
+        # otherwise grow it silently until the node began evicting pods --
+        # Prometheus included, which is when the disk graphs go blank.
+        # Whichever limit is reached first wins.
+        - --storage.tsdb.retention.size=2GB
         ports:
         - containerPort: 9090
         volumeMounts:
@@ -82,7 +90,12 @@ spec:
         configMap:
           name: prometheus-config
       - name: prometheus-data
-        emptyDir: {}   # use a PVC in production for persistence
+        emptyDir:
+          # Backstop for the retention limit above. Unbounded, an emptyDir may
+          # consume the whole node filesystem; with a sizeLimit the kubelet
+          # evicts this pod alone rather than letting it take the node's other
+          # workloads down with it. Use a PVC in production for persistence.
+          sizeLimit: 3Gi
 ---
 apiVersion: v1
 kind: Service
@@ -118,6 +131,17 @@ spec:
         args:
         - --path.procfs=/host/proc
         - --path.sysfs=/host/sys
+        # Without --path.rootfs and the mount below, node_filesystem_* describes
+        # this container's filesystem, not the node's. The node can then fill to
+        # the kubelet's eviction threshold -- tainting itself, evicting pods and
+        # refusing to schedule new ones -- while every disk panel stays flat,
+        # because nothing is measuring the disk that ran out. One cluster spent
+        # four days in that state before anyone thought to run df on the node.
+        - --path.rootfs=/host
+        # Pseudo and per-container filesystems only add noise: the overlay and
+        # kubelet mounts are views onto the same root device already reported.
+        - --collector.filesystem.mount-points-exclude=^/host/(dev|proc|sys|run)($|/)
+        - --collector.filesystem.fs-types-exclude=^(autofs|;binfmt_misc|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|mqueue|overlay|proc|pstore|securityfs|shm|squashfs|sysfs|tmpfs|tracefs)$
         ports:
         - containerPort: 9100
         volumeMounts:
@@ -127,6 +151,12 @@ spec:
         - name: sys
           mountPath: /host/sys
           readOnly: true
+        - name: root
+          mountPath: /host
+          readOnly: true
+          # So filesystems mounted on the node after this pod starts are still
+          # visible to it.
+          mountPropagation: HostToContainer
         resources:
           requests:
             memory: "64Mi"
@@ -141,6 +171,9 @@ spec:
       - name: sys
         hostPath:
           path: /sys
+      - name: root
+        hostPath:
+          path: /
 ---
 apiVersion: v1
 kind: Service
