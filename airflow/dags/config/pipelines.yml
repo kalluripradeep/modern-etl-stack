@@ -21,6 +21,7 @@ tables:
   customers:
     primary_key: customer_id
     cursor_column: updated_at        # incremental extract high-water mark
+    partition_column: created_at     # immutable — see note at the bottom
     columns:
       customer_id: BIGINT
       first_name: TEXT
@@ -38,6 +39,7 @@ tables:
   products:
     primary_key: product_id
     cursor_column: updated_at
+    partition_column: created_at     # immutable — see note at the bottom
     columns:
       product_id: BIGINT
       name: TEXT
@@ -53,6 +55,7 @@ tables:
   orders:
     primary_key: order_id
     cursor_column: updated_at
+    partition_column: created_at     # immutable — see note at the bottom
     columns:
       order_id: BIGINT
       customer_id: BIGINT
@@ -67,6 +70,7 @@ tables:
   order_items:
     primary_key: item_id
     cursor_column: updated_at
+    partition_column: created_at     # immutable — see note at the bottom
     columns:
       item_id: BIGINT
       order_id: BIGINT
@@ -76,3 +80,29 @@ tables:
       created_at: TIMESTAMP
       updated_at: TIMESTAMP
     update_columns: [quantity, unit_price, updated_at]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# partition_column
+#
+# Sets `PARTITION BY toYYYYMM(<col>)` on the ClickHouse mirror table. It must
+# name a column the source never UPDATEs — which is why it is created_at and
+# not updated_at, and why it must never appear in update_columns above.
+#
+# The mirror tables are ReplacingMergeTree: every CDC event appends a row, and
+# the superseded versions of a key are only discarded when the parts holding
+# them are merged. Merges happen within a partition, and ClickHouse will not
+# start a merge it lacks the free disk to finish. Unpartitioned, the table is
+# one ever-growing part set, so on a tight disk the merge that would reclaim
+# space is the first thing skipped -- and the table then grows faster than
+# before. One cluster reached 34G against a 20Gi claim this way.
+#
+# Partition on a mutable column and it fails differently and worse: versions of
+# one row land in different partitions, no merge can ever bring them together,
+# and <t>_current returns a row per partition the key has visited. load_manifest
+# rejects that outright rather than let it ship.
+#
+# Not set: no TTL. These tables mirror current state, so an age-based TTL would
+# delete rows that are still live in the source -- a customer who has not been
+# touched in 90 days is still a customer. If a table ever becomes a genuine
+# rolling window, add the TTL deliberately for that table, not as a default.
+# ─────────────────────────────────────────────────────────────────────────────

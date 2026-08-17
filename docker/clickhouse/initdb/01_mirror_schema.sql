@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS mirror.customers
     is_deleted  UInt8
 )
 ENGINE = ReplacingMergeTree(ver, is_deleted)
+PARTITION BY toYYYYMM(created_at)
 ORDER BY customer_id;
 
 -- The consumer and its view carry no data, so they are rebuilt every time this
@@ -87,6 +88,7 @@ CREATE TABLE IF NOT EXISTS mirror.products
     is_deleted     UInt8
 )
 ENGINE = ReplacingMergeTree(ver, is_deleted)
+PARTITION BY toYYYYMM(created_at)
 ORDER BY product_id;
 
 -- The consumer and its view carry no data, so they are rebuilt every time this
@@ -140,6 +142,7 @@ CREATE TABLE IF NOT EXISTS mirror.orders
     is_deleted   UInt8
 )
 ENGINE = ReplacingMergeTree(ver, is_deleted)
+PARTITION BY toYYYYMM(created_at)
 ORDER BY order_id;
 
 -- The consumer and its view carry no data, so they are rebuilt every time this
@@ -192,6 +195,7 @@ CREATE TABLE IF NOT EXISTS mirror.order_items
     is_deleted UInt8
 )
 ENGINE = ReplacingMergeTree(ver, is_deleted)
+PARTITION BY toYYYYMM(created_at)
 ORDER BY item_id;
 
 -- The consumer and its view carry no data, so they are rebuilt every time this
