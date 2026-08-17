@@ -51,7 +51,44 @@ def load_manifest(path=None):
             missing = [c for c in table.get(key, []) if c not in table['columns']]
             if missing:
                 raise ValueError(f"{name}: {key} not in columns: {missing}")
+        _validate_partition(name, table)
     return manifest
+
+
+def _validate_partition(name, table):
+    """A ReplacingMergeTree only collapses duplicates within one partition.
+
+    Every CDC event appends a row, and the versions of a key are only reduced
+    to one when the parts holding them are merged -- which happens per
+    partition. Partition on a column the source can UPDATE and the versions of
+    a single key land in different partitions, where no merge will ever bring
+    them together. They stop being duplicates ClickHouse can collapse and
+    become permanent copies, and `FINAL` will not save you either: it dedupes
+    per partition too, so `<t>_current` starts returning one row per partition
+    the key ever visited.
+
+    That failure is silent and unbounded, so the column is checked here rather
+    than left to whoever edits the manifest next.
+    """
+    col = table.get('partition_column')
+    if col is None:
+        return
+    if col not in table['columns']:
+        raise ValueError(f"{name}: partition_column {col} not in columns")
+    base = table['columns'][col].upper()
+    if not (base.startswith('TIMESTAMP') or base.startswith('DATE')):
+        raise ValueError(
+            f"{name}: partition_column {col} is {table['columns'][col]}; "
+            f"partitioning is by month, so it must be TIMESTAMP or DATE"
+        )
+    if col in table.get('update_columns', []):
+        raise ValueError(
+            f"{name}: partition_column {col} is also in update_columns. "
+            f"A mutable partition key scatters the versions of one row across "
+            f"partitions, where ReplacingMergeTree can never collapse them and "
+            f"{name}_current returns duplicates. Partition on a column the "
+            f"source never updates (created_at), not one it does."
+        )
 
 
 def topics(manifest):
