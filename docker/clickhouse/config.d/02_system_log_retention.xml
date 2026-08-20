@@ -1,0 +1,121 @@
+<clickhouse>
+    <!--
+      ClickHouse's own internal logging, not our data, and by default every
+      one of these is on, unbounded, and partitioned by month, which is
+      exactly the trap #144 hit in the mirror tables before this repo
+      partitioned them: nothing expires, and a partition that only rolls
+      monthly waits weeks before ALTER ... DROP PARTITION has anything to
+      drop.
+
+      trace_log samples a stack trace roughly once a second per running
+      query, and every Kafka Engine table in mirror/01_mirror_schema.sql
+      polls continuously, so it is effectively always "running a query".
+      metric_log snapshots the whole system.metrics/system.events set once a
+      second, unconditionally, whether or not anything is happening.
+      Nineteen days of both, uncapped, was 34G on one node: point for point
+      where #144's TRUNCATE landed, at 13.2s and 11.9s respectively versus
+      under a tenth of a second for every other system table cleared in the
+      same session.
+
+      Daily partitions plus a short TTL bound it going forward. This does not
+      touch anything under `mirror`: Kafka Engine, materialized views, and
+      the ReplacingMergeTree tables they feed are untouched.
+
+      Not every table below is guaranteed to exist in every ClickHouse
+      version: system.query_thread_log, for one, was folded into
+      system.query_log some releases back. A config block for a table this
+      build does not have is inert, not an error, so this stays exhaustive
+      rather than probing each cluster's exact version first.
+    -->
+
+    <query_log>
+        <database>system</database>
+        <table>query_log</table>
+        <partition_by>toYYYYMMDD(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+    </query_log>
+
+    <query_thread_log>
+        <database>system</database>
+        <table>query_thread_log</table>
+        <partition_by>toYYYYMMDD(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+    </query_thread_log>
+
+    <query_views_log>
+        <database>system</database>
+        <table>query_views_log</table>
+        <partition_by>toYYYYMMDD(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+    </query_views_log>
+
+    <part_log>
+        <database>system</database>
+        <table>part_log</table>
+        <partition_by>toYYYYMMDD(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+    </part_log>
+
+    <!-- The two confirmed by #144: 29G and 5.2G of the 34G that took the
+         node down, at roughly matching truncate times. Short TTL, and daily
+         partitions so that TTL has something cheap to drop. -->
+    <trace_log>
+        <database>system</database>
+        <table>trace_log</table>
+        <partition_by>toYYYYMMDD(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+    </trace_log>
+
+    <metric_log>
+        <database>system</database>
+        <table>metric_log</table>
+        <partition_by>toYYYYMMDD(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+        <collect_interval_milliseconds>1000</collect_interval_milliseconds>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+    </metric_log>
+
+    <asynchronous_metric_log>
+        <database>system</database>
+        <table>asynchronous_metric_log</table>
+        <partition_by>toYYYYMMDD(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+    </asynchronous_metric_log>
+
+    <session_log>
+        <database>system</database>
+        <table>session_log</table>
+        <partition_by>toYYYYMMDD(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+    </session_log>
+
+    <text_log>
+        <database>system</database>
+        <table>text_log</table>
+        <partition_by>toYYYYMMDD(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+    </text_log>
+
+    <crash_log>
+        <database>system</database>
+        <table>crash_log</table>
+        <partition_by>toYYYYMMDD(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 30 DAY DELETE</ttl>
+    </crash_log>
+
+    <processors_profile_log>
+        <database>system</database>
+        <table>processors_profile_log</table>
+        <partition_by>toYYYYMMDD(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+    </processors_profile_log>
+</clickhouse>

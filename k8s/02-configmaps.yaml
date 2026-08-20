@@ -120,6 +120,35 @@ data:
               severity: warning
             annotations:
               summary: "Daily revenue is anomalous (z={{ $value }})"
+          # Node disk. Once free space on the root filesystem crosses the
+          # kubelet's nodefs.available threshold (10-15%) the node taints
+          # itself NoSchedule and starts evicting, and the symptoms read as
+          # anything but a disk problem: ContainerStatusUnknown pods, new pods
+          # Pending on an untolerated taint, a node flapping ready. Image
+          # garbage collection cannot rescue it -- it may only remove unused
+          # images, so it reports "0 bytes eligible" while a PersistentVolume
+          # it must not touch holds the space. These fire with room to act.
+          - alert: NodeDiskFillingUp
+            expr: node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} < 0.25
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Node {{ $labels.instance }} below 25% free disk ({{ $value | humanizePercentage }})"
+          - alert: NodeDiskNearEvictionThreshold
+            expr: node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} < 0.18
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Node {{ $labels.instance }} is about to evict pods ({{ $value | humanizePercentage }} free)"
+          - alert: NodeDiskWillFillWithin24h
+            expr: predict_linear(node_filesystem_avail_bytes{mountpoint="/"}[6h], 86400) < 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Node {{ $labels.instance }} will run out of disk within 24h"
 ---
 apiVersion: v1
 kind: ConfigMap

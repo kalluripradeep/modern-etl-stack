@@ -294,7 +294,43 @@ kubectl cluster-info
 
 ### Pods stuck in Pending
 
-Usually storage: check `kubectl describe pod <pod> -n etl` for PVC events, and confirm the StorageClass you accepted in Step 3 exists (`kubectl get sc`).
+Read the `Events` line of `kubectl describe pod <pod> -n etl` and note *which* reason it gives — they need opposite fixes and look identical at a glance.
+
+`Insufficient cpu` or `Insufficient memory` is a capacity problem: something requested more than the node has left.
+
+A **taint** is not. This is the one to recognise:
+
+```text
+0/2 nodes are available:
+  1 node(s) had untolerated taint {node-role.kubernetes.io/control-plane: }
+  1 node(s) had untolerated taint {node.kubernetes.io/disk-pressure: }
+```
+
+The control-plane taint is normal and permanent. `node.kubernetes.io/disk-pressure` is the kubelet reporting that the node's root filesystem has crossed its eviction threshold (10–15% free depending on distribution). It taints the node `NoSchedule` and starts evicting pods, so *nothing* new schedules regardless of what it requests. Adjusting resource requests will not help.
+
+Check the node itself — and mind that these commands are node-local, so run them on the node that is actually complaining, not the control-plane:
+
+```bash
+kubectl describe node <node> | grep -A8 Conditions
+ssh <node> df -h /
+ssh <node> "sudo du -xh --max-depth=1 / 2>/dev/null | sort -h | tail -12"
+```
+
+The alerts in `NodeDiskFillingUp` / `NodeDiskNearEvictionThreshold` are meant to catch this days earlier. If they never fired, confirm node-exporter is reading the host filesystem rather than its own container — it needs `--path.rootfs=/host` and a read-only `/` mount, both of which the manifests set.
+
+### PVC sizes are not limits on a local StorageClass
+
+`local-path` (and `hostPath`) hand out a plain directory on the node. The `storage:` figure in a PVC is a label with no mechanism behind it: no quota, no device, no separate filesystem. A pod can write past its request until the **node's** disk is full, and every byte counts against the same filesystem the kubelet watches for eviction.
+
+The default manifests claim roughly 300Gi in total. On a single 100G node every claim still binds and the cluster reports itself healthy — right up until one workload grows into the space and takes the node down with it. On one cluster ClickHouse reached 34G against a 20Gi claim and evicted the Airflow control plane.
+
+If your nodes are smaller than the sum of the claims, either point the StorageClass at real volumes, or lower the requests **before first deploy**. Lowering them afterwards is not a live change: `volumeClaimTemplates` are immutable, so `kubectl apply` and `helm upgrade` both reject it. Changing one means deleting the StatefulSet with `--cascade=orphan`, editing, and re-applying — plan it, do not discover it mid-incident.
+
+Watch the actual consumption rather than the claims:
+
+```bash
+ssh <node> "sudo du -xh --max-depth=2 /opt/local-path-provisioner | sort -h | tail"
+```
 
 ### Pods Evicted, or the node reports DiskPressure
 

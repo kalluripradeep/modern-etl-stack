@@ -50,6 +50,17 @@ CREATE DATABASE IF NOT EXISTS mirror;
         )
         topic = f"{prefix}.{schema}.{name}"
         group = f"clickhouse-mirror-{name.replace('_', '-')}"
+        # Partitioning is what lets this table shrink again. ReplacingMergeTree
+        # only drops superseded row versions when parts are merged, and
+        # ClickHouse refuses a merge it does not have the free disk to finish.
+        # Unpartitioned, the table is one ever-growing part set, so the merge
+        # that would reclaim space is the first thing skipped once the disk is
+        # tight -- and the table then grows faster. Monthly partitions keep
+        # merges small enough to run, and give `ALTER TABLE ... DROP PARTITION`
+        # as an escape hatch that costs nothing.
+        partition = ''
+        if table.get('partition_column'):
+            partition = f"\nPARTITION BY toYYYYMM({table['partition_column']})"
         out.append(f'''-- ── {name} ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS mirror.{name}
 (
@@ -57,7 +68,7 @@ CREATE TABLE IF NOT EXISTS mirror.{name}
     {'ver'.ljust(width)}UInt64,
     {'is_deleted'.ljust(width)}UInt8
 )
-ENGINE = ReplacingMergeTree(ver, is_deleted)
+ENGINE = ReplacingMergeTree(ver, is_deleted){partition}
 ORDER BY {table['primary_key']};
 
 -- The consumer and its view carry no data, so they are rebuilt every time this

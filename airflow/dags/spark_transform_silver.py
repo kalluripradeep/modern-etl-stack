@@ -66,6 +66,25 @@ with DAG(
     # is passed (see transform_orders.py), so this only makes the DAG agree
     # with the jobs it calls.
 
+    # Secrets are passed to the task's environment, never interpolated into the
+    # command string. Airflow stores every bash_command it renders and shows it
+    # under "Rendered Template" in the UI, so a password written into the
+    # command is a password in the metadata database, in the task log, and on
+    # any screen showing that page. Referencing $MINIO_ROOT_PASSWORD instead
+    # keeps the literal name in all three places and lets the shell substitute
+    # the value at exec time.
+    #
+    # This does not hide the value from `ps` inside the task container -- Spark
+    # takes these as --conf arguments, so they land in the process's argv
+    # either way. Closing that too means a Spark properties file mounted from a
+    # secret, which is a larger change than this one.
+    SPARK_SECRET_ENV = {
+        'MINIO_ROOT_USER': MINIO_USER,
+        'MINIO_ROOT_PASSWORD': MINIO_PASSWORD,
+        'DEST_DB_USER': DEST_DB_USER,
+        'DEST_DB_PASSWORD': DEST_DB_PASSWORD,
+    }
+
     # Helper function to generate standardized spark-submit commands
     def get_spark_submit_command(job_name, script_path, additional_args=""):
         # spark.driver.host: advertise the driver's IP, not its hostname.
@@ -105,8 +124,8 @@ with DAG(
         --conf spark.executor.cores=2 \
         --conf spark.sql.adaptive.enabled=true \
         --conf spark.hadoop.fs.s3a.endpoint={MINIO_ENDPOINT} \
-        --conf spark.hadoop.fs.s3a.access.key={MINIO_USER} \
-        --conf spark.hadoop.fs.s3a.secret.key={MINIO_PASSWORD} \
+        --conf spark.hadoop.fs.s3a.access.key=$MINIO_ROOT_USER \
+        --conf spark.hadoop.fs.s3a.secret.key=$MINIO_ROOT_PASSWORD \
         --conf spark.hadoop.fs.s3a.path.style.access=true \
         --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
         --jars /opt/spark-jars/iceberg-spark-runtime-3.5_2.12-1.4.2.jar,/opt/spark-jars/postgresql-42.7.4.jar \
@@ -114,8 +133,8 @@ with DAG(
         --conf spark.sql.catalog.silver=org.apache.iceberg.spark.SparkCatalog \
         --conf spark.sql.catalog.silver.catalog-impl=org.apache.iceberg.jdbc.JdbcCatalog \
         --conf spark.sql.catalog.silver.uri={ICEBERG_CATALOG_URI} \
-        --conf spark.sql.catalog.silver.jdbc.user={DEST_DB_USER} \
-        --conf spark.sql.catalog.silver.jdbc.password={DEST_DB_PASSWORD} \
+        --conf spark.sql.catalog.silver.jdbc.user=$DEST_DB_USER \
+        --conf spark.sql.catalog.silver.jdbc.password=$DEST_DB_PASSWORD \
         --conf spark.sql.catalog.silver.warehouse=s3a://silver/ \
         --name {job_name} {script_path} {additional_args}
     """
@@ -123,21 +142,29 @@ with DAG(
     transform_orders = BashOperator(
         task_id='transform_orders',
         bash_command=get_spark_submit_command('Orders-Bronze-to-Silver', '/opt/spark-jobs/transform_orders.py', '{{ (data_interval_end | default(macros.datetime.utcnow())).strftime("%Y%m%d") }}'),
+        env=SPARK_SECRET_ENV,
+        append_env=True,
     )
 
     transform_customers = BashOperator(
         task_id='transform_customers',
         bash_command=get_spark_submit_command('Customers-Bronze-to-Silver', '/opt/spark-jobs/transform_customers.py', '{{ (data_interval_end | default(macros.datetime.utcnow())).strftime("%Y%m%d") }}'),
+        env=SPARK_SECRET_ENV,
+        append_env=True,
     )
 
     transform_products = BashOperator(
         task_id='transform_products',
         bash_command=get_spark_submit_command('Products-Bronze-to-Silver', '/opt/spark-jobs/transform_products.py', '{{ (data_interval_end | default(macros.datetime.utcnow())).strftime("%Y%m%d") }}'),
+        env=SPARK_SECRET_ENV,
+        append_env=True,
     )
 
     transform_order_items = BashOperator(
         task_id='transform_order_items',
         bash_command=get_spark_submit_command('OrderItems-Bronze-to-Silver', '/opt/spark-jobs/transform_order_items.py', '{{ (data_interval_end | default(macros.datetime.utcnow())).strftime("%Y%m%d") }}'),
+        env=SPARK_SECRET_ENV,
+        append_env=True,
     )
 
     # Weekly Maintenance: Compaction & Z-Ordering (Essential for 1 Billion+ records)
@@ -161,6 +188,8 @@ with DAG(
             + get_spark_submit_command('Iceberg-Maintenance', '/opt/spark-jobs/iceberg_maintenance.py').strip()
             + '; else echo "Skipping Iceberg maintenance — runs once daily at 00:00 UTC"; fi'
         ),
+        env=SPARK_SECRET_ENV,
+        append_env=True,
         # Run only on Sundays to optimize storage after weekly activity
         execution_timeout=timedelta(hours=2),
     )

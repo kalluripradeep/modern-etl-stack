@@ -140,6 +140,17 @@ spec:
         args:
         - --path.procfs=/host/proc
         - --path.sysfs=/host/sys
+        # Without --path.rootfs and the mount below, node_filesystem_* describes
+        # this container's filesystem, not the node's. The node can then fill to
+        # the kubelet's eviction threshold -- tainting itself, evicting pods and
+        # refusing to schedule new ones -- while every disk panel stays flat,
+        # because nothing is measuring the disk that ran out. One cluster spent
+        # four days in that state before anyone thought to run df on the node.
+        - --path.rootfs=/host
+        # Pseudo and per-container filesystems only add noise: the overlay and
+        # kubelet mounts are views onto the same root device already reported.
+        - --collector.filesystem.mount-points-exclude=^/host/(dev|proc|sys|run)($|/)
+        - --collector.filesystem.fs-types-exclude=^(autofs|;binfmt_misc|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|mqueue|overlay|proc|pstore|securityfs|shm|squashfs|sysfs|tmpfs|tracefs)$
         ports:
         - containerPort: 9100
         volumeMounts:
@@ -149,6 +160,12 @@ spec:
         - name: sys
           mountPath: /host/sys
           readOnly: true
+        - name: root
+          mountPath: /host
+          readOnly: true
+          # So filesystems mounted on the node after this pod starts are still
+          # visible to it.
+          mountPropagation: HostToContainer
         resources:
           requests:
             memory: "64Mi"
@@ -163,6 +180,9 @@ spec:
       - name: sys
         hostPath:
           path: /sys
+      - name: root
+        hostPath:
+          path: /
 ---
 apiVersion: v1
 kind: Service

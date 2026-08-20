@@ -45,6 +45,13 @@ spec:
         - name: server-config
           mountPath: /etc/clickhouse-server/config.d/kafka.xml
           subPath: kafka.xml
+        # Bounds ClickHouse's own internal logging (trace_log, metric_log,
+        # ...). Unbounded, these grew to 34G on one node -- most of it two
+        # tables, trace_log and metric_log -- and took the node past the
+        # kubelet's eviction threshold. See #144.
+        - name: server-config
+          mountPath: /etc/clickhouse-server/config.d/02_system_log_retention.xml
+          subPath: 02_system_log_retention.xml
         readinessProbe:
           httpGet:
             path: /ping
