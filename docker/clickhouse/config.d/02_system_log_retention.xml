@@ -7,15 +7,19 @@
       monthly waits weeks before ALTER ... DROP PARTITION has anything to
       drop.
 
-      trace_log samples a stack trace roughly once a second per running
-      query, and every Kafka Engine table in mirror/01_mirror_schema.sql
-      polls continuously, so it is effectively always "running a query".
-      metric_log snapshots the whole system.metrics/system.events set once a
-      second, unconditionally, whether or not anything is happening.
-      Nineteen days of both, uncapped, was 34G on one node: point for point
-      where #144's TRUNCATE landed, at 13.2s and 11.9s respectively versus
-      under a tenth of a second for every other system table cleared in the
-      same session.
+      Two tables were nearly all of the 34G that took a node down in #144.
+      trace_log, at 29G, samples a stack trace roughly once a second per
+      running query, and every Kafka Engine table in
+      mirror/01_mirror_schema.sql polls continuously, so it is effectively
+      always "running a query". text_log, at 5.2G across 98 million rows, is
+      the server's own log written into a table, which is off by default in
+      stock ClickHouse but on in the image this stack runs.
+
+      An earlier revision of this comment named metric_log as the second of
+      the two, on the strength of its 11.9s TRUNCATE next to trace_log's
+      13.2s. Mapping the store directories to table names later showed that
+      was wrong: metric_log runs under 10 MiB a day. TRUNCATE time tracks part
+      count, not bytes, and the two only correlate until they don't.
 
       Daily partitions plus a short TTL bound it going forward. This does not
       touch anything under `mirror`: Kafka Engine, materialized views, and
@@ -23,9 +27,24 @@
 
       Not every table below is guaranteed to exist in every ClickHouse
       version: system.query_thread_log, for one, was folded into
-      system.query_log some releases back. A config block for a table this
+      system.query_log some releases back, and latency_log and
+      query_metric_log only appeared in 25.x. A config block for a table this
       build does not have is inert, not an error, so this stays exhaustive
       rather than probing each cluster's exact version first.
+
+      That cuts both ways, and the first version of this file got it wrong in
+      the other direction: it was written from ClickHouse's documented set of
+      default system tables rather than from `SHOW TABLES FROM system` on the
+      cluster that was actually on fire, so latency_log, error_log and
+      query_metric_log were simply absent. All three are small today. Being
+      small is not the same as being bounded, which is the entire lesson of
+      #144, so they are here now.
+
+      Adding a file to this directory is never only a file change on
+      Kubernetes: each one needs its own subPath mount in
+      k8s/clickhouse/statefulset.yaml, because mounting the directory whole
+      would mask the image's docker_related_config.xml. See
+      DEPLOY_GUIDE.md for the full sequence.
     -->
 
     <query_log>
@@ -60,14 +79,32 @@
         <flush_interval_milliseconds>7500</flush_interval_milliseconds>
     </part_log>
 
-    <!-- The two confirmed by #144: 29G and 5.2G of the 34G that took the
-         node down, at roughly matching truncate times. Short TTL, and daily
-         partitions so that TTL has something cheap to drop. -->
+    <!-- The single largest table in #144: 29G of the 34G, on its own.
+         Resolving the store directories to table names afterwards also
+         corrected the pairing this comment used to claim - the 5.2G runner up
+         was text_log, not metric_log, which turned out to be under 10 MiB a day.
+
+         1 day, not the 3 the rest get, because #144 left behind an actual
+         measurement instead of a guess. After the incident TRUNCATE emptied
+         it, trace_log was back to 645 MiB across 45,012,156 rows in roughly
+         six hours: about 2.4 GiB a day, near 2,000 rows a second. That is the
+         profiler working as designed rather than a fault, since every Kafka
+         Engine table in mirror/01_mirror_schema.sql polls without pause and
+         so always looks like a running query to it. At that rate 3 days is
+         some 7 GiB held permanently, a third of the 20Gi volume, for stack
+         traces nobody on this project has ever read. 1 day keeps it useful
+         for diagnosing something that broke this morning and costs 2.4 GiB.
+
+         Turning the profiler off outright would cost nothing measurable and
+         reclaim that too, via query_profiler_real_time_period_ns=0 and
+         query_profiler_cpu_time_period_ns=0 in the default profile. It is
+         deliberately not done here: a profiler you disabled is one you will
+         not have on the day you need it, and 2.4 GiB is affordable. -->
     <trace_log>
         <database>system</database>
         <table>trace_log</table>
         <partition_by>toYYYYMMDD(event_date)</partition_by>
-        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+        <ttl>event_date + INTERVAL 1 DAY DELETE</ttl>
         <flush_interval_milliseconds>7500</flush_interval_milliseconds>
     </trace_log>
 
@@ -118,4 +155,34 @@
         <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
         <flush_interval_milliseconds>7500</flush_interval_milliseconds>
     </processors_profile_log>
+
+    <!-- The three 25.x additions the first revision of this file did not know
+         about, found by listing system tables on the affected cluster rather
+         than trusting the documented default set. On that cluster, after 20
+         days: latency_log 22.85 MiB, error_log 574 KiB, query_metric_log 237 KiB. All
+         negligible, none of them bounded, which is the same sentence that
+         described trace_log 20 days before it was 29G. -->
+    <latency_log>
+        <database>system</database>
+        <table>latency_log</table>
+        <partition_by>toYYYYMMDD(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+    </latency_log>
+
+    <error_log>
+        <database>system</database>
+        <table>error_log</table>
+        <partition_by>toYYYYMMDD(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+    </error_log>
+
+    <query_metric_log>
+        <database>system</database>
+        <table>query_metric_log</table>
+        <partition_by>toYYYYMMDD(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+    </query_metric_log>
 </clickhouse>
