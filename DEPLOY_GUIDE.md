@@ -363,6 +363,58 @@ Once `DiskPressure` returns to `False`, the rejected pods schedule on their own.
 kubectl delete pod -n etl --field-selector status.phase=Failed
 ```
 
+### A config file change did not take effect
+
+Editing a file under `docker/clickhouse/config.d/` and restarting the pod does nothing on Kubernetes. Under Compose the file is bind-mounted, so an edit plus a restart is genuinely the whole story — that difference is what makes this easy to get wrong.
+
+On Kubernetes the file reaches the container through three links, and every one of them has to be updated:
+
+1. **The ConfigMap.** `deploy.sh` builds `clickhouse-config` from the whole directory *at deploy time* (`k8s/deploy.sh:256`). Your checkout is not mounted into the cluster; a `git pull` alone changes nothing the pod can see.
+2. **The mount.** Each file gets its own `subPath` entry in `k8s/clickhouse/statefulset.yaml`. Mounting the directory whole would replace the image's `docker_related_config.xml`, which sets `listen_host` — without it the server binds loopback only and every probe gets connection refused. So **a new file needs a new mount**, and a mount only exists in the cluster once the manifest has been applied.
+3. **The pod.** `config.d` is read at startup, so the pod must restart.
+
+`kubectl rollout restart` on its own only does the third. It restarts pods against the StatefulSet spec **already in the cluster**, so a mount added in the repo but never applied does not exist as far as the restart is concerned.
+
+Re-running the deploy does all three:
+
+```bash
+SEED=n bash k8s/deploy.sh
+```
+
+Verify by looking in the container rather than trusting the output:
+
+```bash
+kubectl exec -n etl clickhouse-0 -- ls /etc/clickhouse-server/config.d/
+```
+
+Every file you expect should be listed. If one is missing, its `subPath` mount is missing — no amount of restarting will change that.
+
+Do **not** apply the raw manifest by hand:
+
+```bash
+kubectl apply -f k8s/clickhouse/statefulset.yaml   # will be rejected
+```
+
+The file carries `storageClassName: standard` and `deploy.sh` rewrites that to your actual StorageClass (`k8s/deploy.sh:128`). Since `volumeClaimTemplates` is immutable, the apply fails with a `Forbidden: updates to statefulset spec for fields other than...` error that names the storage class rather than whatever you were trying to change. To skip a full deploy, patch the pod template only:
+
+```bash
+kubectl patch statefulset clickhouse -n etl --type=json \
+  -p='[{"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-","value":{"name":"server-config","mountPath":"/etc/clickhouse-server/config.d/<file>.xml","subPath":"<file>.xml"}}]'
+```
+
+### ClickHouse system tables keep their old settings after a config change
+
+`02_system_log_retention.xml` sets a partition key and TTL on ClickHouse's internal log tables. ClickHouse will not rewrite an existing table to match: at startup it renames the old one aside — `text_log` becomes `text_log_0`, then `text_log_1` — and creates a fresh empty table with the new definition.
+
+New writes are bounded immediately, but **the old data stays on disk under the renamed table** and no TTL applies to it. Applying the retention config therefore reclaims nothing by itself. List them and drop them:
+
+```sql
+SHOW TABLES FROM system LIKE '%log%';
+DROP TABLE system.text_log_0;   -- repeat for each numeric suffix
+```
+
+The same renaming happens on a ClickHouse version upgrade, so a long-lived cluster accumulates these whether or not anyone edits the config.
+
 ### A test step fails
 
 ```bash
