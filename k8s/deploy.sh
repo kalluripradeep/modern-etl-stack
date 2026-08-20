@@ -73,6 +73,25 @@ else
   docker push "$DASHBOARD_IMAGE" || warn "Push failed for dashboard"
   ok "Image pushed: $DASHBOARD_IMAGE"
 
+  # Reclaim what this build just orphaned.
+  #
+  # Both images are rebuilt and re-tagged :latest on every run, so the
+  # previous build's layers become dangling and the BuildKit cache keeps
+  # growing. The Airflow image alone is over 5GB. Nobody thinks to clean up
+  # after a deploy script, so it accumulates silently -- one cluster reached
+  # 20GB in /var/snap/docker over a fortnight of redeploys and hit
+  # DiskPressure, which evicted the Airflow control plane.
+  #
+  # Note this is Docker's store, which is separate from the containerd store
+  # Kubernetes actually runs pods from -- `crictl rmi --prune` does not touch
+  # it, and pruning here cannot disturb anything running on the cluster.
+  #
+  # Only dangling images and stale cache: nothing tagged, nothing in use.
+  info "Reclaiming dangling build layers..."
+  PRUNED=$(docker image prune -f 2>/dev/null | tail -1)
+  docker builder prune -f --filter "until=168h" >/dev/null 2>&1 || true
+  ok "Build cleanup done${PRUNED:+ — $PRUNED}"
+
   # Patch the helm values with actual image in the temporary directory (created later)
   # We'll defer this until TMP_K8S is created.
   export REGISTRY_FOR_REPLACE="$REGISTRY"
@@ -145,6 +164,20 @@ kubectl rollout status statefulset/postgres-source -n $NAMESPACE --timeout=300s
 info "Waiting for postgres-dest to be ready..."
 kubectl rollout status statefulset/postgres-dest -n $NAMESPACE --timeout=300s
 ok "PostgreSQL pods are ready"
+
+# The Iceberg JDBC catalog stores its metadata tables in this schema, and the
+# catalog cannot create them itself -- Spark fails with
+#   Cannot initialize JDBC catalog ... no schema has been selected to create in
+# The init-configmap creates it, but Postgres only runs those scripts on a
+# fresh volume, so any cluster deployed before that script existed would never
+# get it. Ensure it here too: CREATE SCHEMA IF NOT EXISTS is idempotent, so
+# this is a no-op on healthy clusters and a repair on older ones.
+info "Ensuring iceberg_catalog schema exists in postgres-dest..."
+kubectl exec -n $NAMESPACE postgres-dest-0 -- bash -c \
+  'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+     -c "CREATE SCHEMA IF NOT EXISTS iceberg_catalog AUTHORIZATION \"$POSTGRES_USER\";"' \
+  >/dev/null 2>&1 && ok "iceberg_catalog schema is ready" \
+  || warn "Could not ensure iceberg_catalog schema — Spark writes to Iceberg will fail until it exists"
 
 # ─── Step 4: MinIO ────────────────────────────────────────────────────────────
 echo ""

@@ -204,6 +204,47 @@ make seed                # Generate sample source data
 make register-connector  # Initialize Debezium CDC connector
 ```
 
+## Storage Growth
+
+Every layer here writes continuously, and most of it is bounded by something
+that has to be asked for rather than assumed. The non-obvious one is Iceberg.
+
+### Compaction does not reclaim space — expiry does
+
+Iceberg is copy-on-write. `rewrite_data_files` (compaction) merges small files
+into larger ones by **writing new files**; the old ones stay, because earlier
+snapshots still reference them. Iceberg keeps every snapshot until told
+otherwise, so compaction on its own *increases* storage. Running maintenance
+more often makes the problem worse, not better.
+
+Two procedures actually release space, and both are in
+`spark/jobs/iceberg_maintenance.py`:
+
+| Procedure | What it does |
+|---|---|
+| `expire_snapshots` | Drops snapshots past the retention window, so the files they held become unreferenced |
+| `remove_orphan_files` | Deletes files no snapshot references — typically left by a write that failed partway |
+
+Because expiry is cheap and compaction is expensive, they run on different
+cadences: **expiry every day, compaction on Sundays**. The job picks its mode
+from the day of the week; the DAG only decides how often it is invoked.
+Waiting a week to release disk is enough to fill a modest node.
+
+### What else is bounded, and where
+
+| Data | Bound | Set in |
+|---|---|---|
+| Bronze parquet | 7 days, `BRONZE_RETENTION_DAYS` | `prune_bronze` task in the ingest DAG |
+| Iceberg snapshots | 7 days, keep last 5 | `iceberg_maintenance.py` |
+| Prometheus TSDB | 2GB, whichever of size/time hits first | `k8s/monitoring/prometheus.yaml` |
+| Spark worker dirs | 24h TTL, swept every 30 min | `SPARK_WORKER_OPTS` in the worker manifest |
+| Docker build layers | pruned after each build | `k8s/deploy.sh` |
+
+On a single-node cluster the PersistentVolumes are the node's disk, so any of
+these growing without limit eventually stops pods being scheduled at all —
+see the DiskPressure section in [DEPLOY_GUIDE.md](DEPLOY_GUIDE.md) for what
+that looks like and how to recover.
+
 ## Security Notes
 
 - The AI dashboard executes only single read-only SELECT statements, over a SELECT-only database role, behind optional HTTP Basic Auth.

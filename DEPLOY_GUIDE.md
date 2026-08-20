@@ -332,6 +332,37 @@ Watch the actual consumption rather than the claims:
 ssh <node> "sudo du -xh --max-depth=2 /opt/local-path-provisioner | sort -h | tail"
 ```
 
+### Pods Evicted, or the node reports DiskPressure
+
+```bash
+kubectl describe node | grep DiskPressure
+```
+
+If that says `True`, the node is out of disk and the kubelet is **rejecting** new pods — so you will see dozens of Evicted pods appear within seconds of each other. They were never running; they were turned away on arrival. Nothing schedules until space is freed.
+
+The usual culprit is Docker's build store, not the pipeline. `deploy.sh` rebuilds a 5GB+ Airflow image on every run, and the previous layers plus the BuildKit cache stay behind. The script now prunes what it orphans, but a machine with a backlog from earlier deploys needs one manual pass:
+
+```bash
+docker system prune -a --volumes    # Docker's store: build layers and cache
+sudo crictl rmi --prune             # containerd's store: images Kubernetes runs from
+sudo journalctl --vacuum-size=500M  # systemd journal, often several GB
+```
+
+Those are two separate stores. `crictl` will not touch Docker's, and pruning Docker cannot disturb anything running on the cluster.
+
+Find what is actually holding the space before guessing:
+
+```bash
+df -h /
+sudo du -xh --max-depth=1 / | sort -h | tail -10
+```
+
+Once `DiskPressure` returns to `False`, the rejected pods schedule on their own. This just tidies the list:
+
+```bash
+kubectl delete pod -n etl --field-selector status.phase=Failed
+```
+
 ### A test step fails
 
 ```bash

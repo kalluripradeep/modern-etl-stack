@@ -105,6 +105,16 @@ with DAG(
         #
         # The pod IP is routable, so pin to it. bindAddress stays 0.0.0.0 so
         # the driver still listens on all interfaces inside the container.
+        #
+        # --jars, not --conf spark.jars.packages: the JARs are baked into the
+        # image (see docker/airflow/Dockerfile) instead of resolved from Maven
+        # Central on every run. That download was ~1GB per task -- slow, the
+        # thing that filled the node's ephemeral storage before #127, and a
+        # hard failure whenever the cluster cannot reach repo1.maven.org:
+        #   :: UNRESOLVED DEPENDENCIES ::
+        #   module not found: org.apache.iceberg#iceberg-spark-runtime...
+        # Only these two are listed because the Spark workers already ship
+        # hadoop-aws and the AWS SDK; the driver serves these to the executors.
         return f"""
     spark-submit \
         --master {SPARK_MASTER_URL} \
@@ -118,7 +128,7 @@ with DAG(
         --conf spark.hadoop.fs.s3a.secret.key=$MINIO_ROOT_PASSWORD \
         --conf spark.hadoop.fs.s3a.path.style.access=true \
         --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
-        --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.4.2,org.apache.hadoop:hadoop-aws:3.3.4,org.postgresql:postgresql:42.7.4 \
+        --jars /opt/spark-jars/iceberg-spark-runtime-3.5_2.12-1.4.2.jar,/opt/spark-jars/postgresql-42.7.4.jar \
         --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions \
         --conf spark.sql.catalog.silver=org.apache.iceberg.spark.SparkCatalog \
         --conf spark.sql.catalog.silver.catalog-impl=org.apache.iceberg.jdbc.JdbcCatalog \
@@ -161,11 +171,14 @@ with DAG(
     maintenance_task = BashOperator(
         task_id='iceberg_maintenance',
         bash_command=(
-            # Gate on weekday AND hour (%u%H == "700"): with an hourly schedule
-            # the date alone is the same for all 24 Sunday runs, which would
-            # compact 24 times instead of once. -u pins the comparison to UTC
-            # so it cannot drift with container TZ.
-            'if [ "$(date -u -d \'{{ data_interval_end | default(macros.datetime.utcnow()) }}\' +%u%H)" = "700" ]; then '
+            # Gate on the hour only (%H == "00"), so this runs once a day
+            # rather than once an hour. It used to be gated to Sunday as well,
+            # but the job now expires Iceberg snapshots on every run and only
+            # compacts on Sundays -- expiry is what releases disk, and waiting
+            # a week to release disk is how a cluster fills up. The job decides
+            # which mode it is in; this only decides how often it is invoked.
+            # -u pins the comparison to UTC so it cannot drift with container TZ.
+            'if [ "$(date -u -d \'{{ data_interval_end | default(macros.datetime.utcnow()) }}\' +%H)" = "00" ]; then '
             # .strip() matters: the builder's f-string ends with a newline and
             # indent, so without it the "; else" lands on its own line starting
             # with a semicolon -- a bash syntax error that exits 2 before the
@@ -173,7 +186,7 @@ with DAG(
             # as a whole command, where the stray whitespace is harmless, so
             # only this composed one breaks.
             + get_spark_submit_command('Iceberg-Maintenance', '/opt/spark-jobs/iceberg_maintenance.py').strip()
-            + '; else echo "Skipping Iceberg maintenance — runs Sundays at 00:00 only"; fi'
+            + '; else echo "Skipping Iceberg maintenance — runs once daily at 00:00 UTC"; fi'
         ),
         env=SPARK_SECRET_ENV,
         append_env=True,

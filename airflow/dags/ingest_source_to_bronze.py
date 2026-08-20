@@ -297,6 +297,52 @@ def emit_data_quality_metrics(**kwargs):
     _ = kwargs, timezone  # reserved for future per-run labelling
 
 
+def prune_bronze(**kwargs):
+    """Delete Bronze partitions older than BRONZE_RETENTION_DAYS.
+
+    Bronze is a landing area: once a run has been transformed into Silver and
+    the warehouse, the raw extract has served its purpose. Nothing deleted it,
+    so an hourly pipeline wrote parquet into MinIO forever -- on a single-node
+    cluster that storage is the node's disk, and it is one of the things that
+    put the reporting cluster into DiskPressure.
+
+    Set BRONZE_RETENTION_DAYS=0 to disable if you need the full history.
+    """
+    retention_days = int(os.environ.get('BRONZE_RETENTION_DAYS', '7'))
+    if retention_days <= 0:
+        log.info("BRONZE_RETENTION_DAYS=0 — retaining all Bronze data")
+        return
+
+    cutoff = datetime.utcnow() - timedelta(days=retention_days)
+    s3_hook = S3Hook(aws_conn_id='minio_s3')
+    bucket = 'bronze'
+    if not s3_hook.check_for_bucket(bucket):
+        log.info("Bronze bucket does not exist yet — nothing to prune")
+        return
+
+    keys = s3_hook.list_keys(bucket_name=bucket) or []
+    stale = []
+    for key in keys:
+        # Layout: <table>_source/YYYY/MM/DD/part-*.parquet
+        parts = key.split('/')
+        if len(parts) < 4:
+            continue
+        try:
+            written = datetime(int(parts[1]), int(parts[2]), int(parts[3]))
+        except (ValueError, IndexError):
+            continue  # not a dated partition; leave it alone
+        if written < cutoff:
+            stale.append(key)
+
+    if not stale:
+        log.info(f"No Bronze objects older than {retention_days} days")
+        return
+
+    s3_hook.delete_objects(bucket=bucket, keys=stale)
+    log.info(f"Pruned {len(stale)} Bronze objects older than "
+             f"{retention_days} days (before {cutoff:%Y-%m-%d})")
+
+
 with dag:
     # Dynamically generate tasks for each configured table
     ingestion_tasks = []
@@ -330,6 +376,15 @@ with dag:
         python_callable=emit_data_quality_metrics,
     )
 
+    # Drop Bronze partitions past their retention window. Runs after the
+    # Spark trigger so the current extract is never removed before the
+    # lakehouse has had the chance to read it.
+    prune_bronze_task = PythonOperator(
+        task_id="prune_bronze",
+        python_callable=prune_bronze,
+    )
+
     ingestion_tasks >> dbt_transformations
     ingestion_tasks >> trigger_spark
     ingestion_tasks >> data_quality_metrics
+    trigger_spark >> prune_bronze_task
