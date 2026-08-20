@@ -271,6 +271,10 @@ services:
       # Single file, not the directory: mounting the directory would mask the
       # image's docker_related_config.xml and the server would bind loopback only
       - ./docker/clickhouse/config.d/kafka.xml:/etc/clickhouse-server/config.d/kafka.xml:ro
+      # Bounds ClickHouse's own internal logging (trace_log, metric_log, ...).
+      # Unbounded, these grew to 34G on one node and took it past the
+      # kubelet's eviction threshold -- see #144.
+      - ./docker/clickhouse/config.d/02_system_log_retention.xml:/etc/clickhouse-server/config.d/02_system_log_retention.xml:ro
     networks:
       - etl-network
     healthcheck:
