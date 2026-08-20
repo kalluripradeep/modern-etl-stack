@@ -3,7 +3,14 @@
 # runtime image — it omits faker, which is only used by the standalone
 # seed script (make seed), never inside the Airflow container.
 
-apache-airflow==3.3.0
+apache-airflow==3.3.1
+# Not a direct dependency -- dbt-core pulls it in for SQL parsing, and its own
+# pin was capping the resolver below the version that fixes PYSEC-2026-3696/
+# 3697/3698/3699. Floored explicitly because bumping apache-airflow alone
+# left the resolver free to pick 0.5.5 anyway once the rest of this file's
+# packages were installed together; confirmed by a clean-venv install of the
+# full file, not just apache-airflow in isolation.
+sqlparse>=0.6.0
 pandas>=2.1.4
 psycopg2-binary>=2.9.9
 pyarrow>=14.0.1

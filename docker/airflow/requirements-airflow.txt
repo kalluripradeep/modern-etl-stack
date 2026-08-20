@@ -1,4 +1,8 @@
-apache-airflow==3.3.0
+apache-airflow==3.3.1
+# Not a direct dependency -- dbt-core pulls it in for SQL parsing. See the
+# matching comment in requirements.txt for why this is floored explicitly
+# rather than left to the resolver.
+sqlparse>=0.6.0
 pandas>=2.1.4
 psycopg2-binary>=2.9.9
 pyarrow>=14.0.1
