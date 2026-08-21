@@ -357,6 +357,11 @@ df -h /
 sudo du -xh --max-depth=1 / | sort -h | tail -10
 ```
 
+If that points at a PersistentVolume rather than a Docker or containerd store,
+the workload inside it is the thing to look at. For ClickHouse — the largest
+claim in this stack, and the one that took a node down in #144 — see
+[Which ClickHouse table is using the space](#which-clickhouse-table-is-using-the-space).
+
 Once `DiskPressure` returns to `False`, the rejected pods schedule on their own. This just tidies the list:
 
 ```bash
@@ -401,6 +406,50 @@ The file carries `storageClassName: standard` and `deploy.sh` rewrites that to y
 kubectl patch statefulset clickhouse -n etl --type=json \
   -p='[{"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-","value":{"name":"server-config","mountPath":"/etc/clickhouse-server/config.d/<file>.xml","subPath":"<file>.xml"}}]'
 ```
+
+### Which ClickHouse table is using the space
+
+The node-level `du` above tells you the ClickHouse volume is large. It cannot
+tell you which table filled it, and the answer is rarely the one people expect.
+Ask the server:
+
+```sql
+SELECT database, table,
+       formatReadableSize(sum(bytes_on_disk)) AS size,
+       sum(rows) AS rows, count() AS parts,
+       min(min_date) AS oldest, max(max_date) AS newest
+FROM system.parts
+WHERE active
+GROUP BY database, table
+ORDER BY sum(bytes_on_disk) DESC
+LIMIT 20;
+```
+
+Expect `system` to dominate and `mirror` to be small. On one cluster the four
+mirror tables came to under 600 KiB between them while `system.trace_log` alone
+held 750 MiB. That is the normal shape rather than a fault: the mirror stores
+one row per source row, and the profiler stores a sampled stack trace per
+running query per second — and every Kafka Engine table polls without pause, so
+the server always looks busy to it.
+
+`oldest` and `newest` read `1970-01-01` for the `mirror` tables. Those two
+columns are only populated for a `Date`-derived partition key, and the mirror
+partitions on a `DateTime64` (`PARTITION BY toYYYYMM(created_at)`), so they stay
+at the epoch. It says nothing about the data — read `system.parts.partition`
+instead.
+
+To look at the mirror on its own:
+
+```sql
+SELECT table, formatReadableSize(sum(bytes_on_disk)) AS size,
+       sum(rows) AS rows, count() AS parts
+FROM system.parts WHERE database = 'mirror' AND active
+GROUP BY table ORDER BY sum(bytes_on_disk) DESC;
+```
+
+If a large table under `system` has a name ending in a number, the retention
+config has been applied and the old unbounded copy is still on disk — which is
+the next section.
 
 ### ClickHouse system tables keep their old settings after a config change
 

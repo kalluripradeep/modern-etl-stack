@@ -25,6 +25,19 @@
       touch anything under `mirror`: Kafka Engine, materialized views, and
       the ReplacingMergeTree tables they feed are untouched.
 
+      The daily partitions are also what keeps the TTL itself cheap, which is
+      not automatic. TTL deletion in ClickHouse rewrites whole parts to drop
+      expired rows, so a TTL cutting through the middle of a part pays to
+      rewrite every row it keeps. The pathological report is a 1% delete
+      that wrote 3.17TB to remove 269 million rows out of 27 billion.
+      Partitioning by day and expiring in whole days means every part that
+      expires is entirely past its TTL, so the files are dropped rather than
+      rewritten. Anything added here later needs that same alignment between
+      partition granularity and TTL granularity. The mirror tables carry no TTL
+      at all, deliberately, since a replica holds what the source holds, and they
+      partition monthly, so a TTL added there without changing the partition
+      key would land in exactly the expensive case.
+
       Not every table below is guaranteed to exist in every ClickHouse
       version: system.query_thread_log, for one, was folded into
       system.query_log some releases back, and latency_log and
@@ -85,15 +98,25 @@
          was text_log, not metric_log, which turned out to be under 10 MiB a day.
 
          1 day, not the 3 the rest get, because #144 left behind an actual
-         measurement instead of a guess. After the incident TRUNCATE emptied
-         it, trace_log was back to 645 MiB across 45,012,156 rows in roughly
-         six hours: about 2.4 GiB a day, near 2,000 rows a second. That is the
-         profiler working as designed rather than a fault, since every Kafka
-         Engine table in mirror/01_mirror_schema.sql polls without pause and
-         so always looks like a running query to it. At that rate 3 days is
-         some 7 GiB held permanently, a third of the 20Gi volume, for stack
-         traces nobody on this project has ever read. 1 day keeps it useful
-         for diagnosing something that broke this morning and costs 2.4 GiB.
+         measurement instead of a guess. Two measurements now, and the second
+         corrects the first. Six hours after the incident TRUNCATE emptied it,
+         trace_log held 645 MiB across 45,012,156 rows: near 2,000 rows a
+         second, which extrapolates to about 2.4 GiB a day. A full day of
+         steady state came in well below that: 750 MiB across 51,863,815 rows
+         for a single event_date, about 900 MiB a day at some 735 rows a
+         second. The six-hour window was measured while the server was still
+         working through post-TRUNCATE merges, so it read hot, and
+         extrapolating from it overstated the rate by nearly a factor of
+         three. Sample a partition that has actually finished.
+
+         Either way this is the profiler working as designed rather than a
+         fault, since every Kafka Engine table in mirror/01_mirror_schema.sql
+         polls without pause and so always looks like a running query to it.
+         At the corrected rate 3 days is about 2.7 GiB rather than the 7 GiB
+         the first estimate implied. Affordable at both numbers, so this
+         stays at 1 day for the reason that did not change: nobody on this
+         project has ever read a stack trace out of it. 1 day costs some
+         900 MiB and still answers "what was the server doing this morning".
 
          Turning the profiler off outright would cost nothing measurable and
          reclaim that too, via query_profiler_real_time_period_ns=0 and

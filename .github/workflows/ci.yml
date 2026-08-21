@@ -83,6 +83,25 @@ jobs:
         run: |
           pip install yamllint
           yamllint k8s/ monitoring/ docker-compose.yml .github/
+      - name: XML well-formedness
+        # A malformed file under docker/clickhouse/config.d/ is not a lint
+        # nit: ClickHouse parses config.d at startup and refuses to boot, so
+        # the failure surfaces as an unschedulable pod on deploy rather than
+        # here. Comments in these files carry incident write-ups, and XML
+        # comments cannot contain a double hyphen, which is exactly how one
+        # gets broken while being edited.
+        run: |
+          python -c "
+          import glob, sys, xml.etree.ElementTree as ET
+          bad = 0
+          for f in sorted(glob.glob('docker/**/*.xml', recursive=True)):
+              try:
+                  ET.parse(f)
+                  print('ok   ' + f)
+              except ET.ParseError as e:
+                  print('FAIL ' + f + ': ' + str(e)); bad = 1
+          sys.exit(bad)
+          "
 
   markdown-lint:
     runs-on: ubuntu-latest
