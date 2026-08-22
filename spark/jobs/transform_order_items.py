@@ -5,7 +5,7 @@ Uses Iceberg MERGE INTO for high-performance incremental transaction line-item u
 
 import os
 import sys
-from pyspark.errors import AnalysisException
+from bronze import load_bronze
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, current_timestamp
 
@@ -17,17 +17,6 @@ def create_spark_session():
         .appName("OrderItems-Bronze-to-Silver-Incremental") \
         .master(master_url) \
         .getOrCreate()
-
-
-def read_from_bronze(spark, date_path):
-    bronze_path = f"s3a://bronze/order_items_source/{date_path}/"
-    print(f"Reading OrderItems Bronze layer from: {bronze_path}")
-    try:
-        return spark.read.parquet(bronze_path)
-    except AnalysisException:
-        # Ingestion writes no files on days with zero new rows
-        print(f"No Bronze data at {bronze_path} — nothing to transform today.")
-        return None
 
 
 def transform_order_items(df):
@@ -79,20 +68,14 @@ def upsert_to_iceberg(spark, df):
 
 
 def main():
-    if len(sys.argv) < 2:
-        from datetime import datetime
-        date_str = datetime.now().strftime("%Y%m%d")
-    else:
-        date_str = sys.argv[1]
-
-    # Convert 20260405 to 2026/04/05 for S3 path
-    formatted_date = f"{date_str[:4]}/{date_str[4:6]}/{date_str[6:]}"
-
+    # No date argument: load_bronze reads every retained Bronze
+    # partition, so a day this job missed is merged on the next run
+    # rather than pruned away unmerged.
     spark = create_spark_session()
     
     try:
-        print(f"Starting Spark Job: OrderItems Bronze to Silver — date: {date_str}")
-        bronze_df = read_from_bronze(spark, formatted_date)
+        print("Starting Spark Job: OrderItems Bronze to Silver")
+        bronze_df = load_bronze(spark, "order_items", "silver.lake.order_items")
         if bronze_df is None:
             return
         silver_df = transform_order_items(bronze_df)

@@ -3,13 +3,11 @@ Spark Job: Transform Orders from Bronze to Silver (Elite Scalability)
 Uses Iceberg MERGE INTO for high-performance incremental upserts.
 """
 
-from pyspark.errors import AnalysisException
+from bronze import load_bronze
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, current_timestamp
 from pyspark.sql.types import DecimalType
-from datetime import datetime
 import os
-import sys
 
 
 def create_spark_session():
@@ -19,24 +17,6 @@ def create_spark_session():
         .appName("Orders-Bronze-to-Silver-Incremental") \
         .master(master_url) \
         .getOrCreate()
-
-
-def read_from_minio(spark, date):
-    """Read Bronze layer from MinIO — partitioned by date"""
-    bronze_bucket = os.environ.get('BRONZE_BUCKET', 'bronze')
-    # date format: YYYYMMDD → convert to YYYY/MM/DD partition path
-    year, month, day = date[:4], date[4:6], date[6:]
-    path = f"s3a://{bronze_bucket}/orders_source/{year}/{month}/{day}/"
-
-    print(f"Reading Bronze layer from: {path}")
-    try:
-        df = spark.read.parquet(path)
-    except AnalysisException:
-        # Ingestion writes no files on days with zero new rows
-        print(f"No Bronze data at {path} — nothing to transform today.")
-        return None
-    print(f"Loaded {df.count()} records from Bronze")
-    return df
 
 
 def transform_to_silver(df):
@@ -74,10 +54,6 @@ def upsert_to_iceberg(spark, df):
     table_name = f"{catalog_name}.lake.orders"
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {catalog_name}.lake")
 
-    if df.count() == 0:
-        print(f"No records to upsert to {table_name}. Skipping.")
-        return
-
     # 1. Create table if not exists (first run)
     if not spark.catalog.tableExists(table_name):
         print(f"Creating new Iceberg table: {table_name}")
@@ -110,16 +86,13 @@ def upsert_to_iceberg(spark, df):
 
 
 def main():
-    if len(sys.argv) < 2:
-        date = datetime.now().strftime("%Y%m%d")
-        print(f"No date provided, using today: {date}")
-    else:
-        date = sys.argv[1]
-
+    # No date argument: load_bronze reads every retained Bronze partition, so
+    # a day this job missed is merged on the next run rather than pruned away
+    # unmerged.
     spark = create_spark_session()
 
     try:
-        bronze_df = read_from_minio(spark, date)
+        bronze_df = load_bronze(spark, "orders", "silver.lake.orders")
         if bronze_df is None:
             return
         silver_df = transform_to_silver(bronze_df)

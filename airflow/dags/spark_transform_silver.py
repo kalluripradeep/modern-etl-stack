@@ -48,7 +48,11 @@ with DAG(
     tags=['spark', 'iceberg', 'silver', 'scalability', 'compaction'],
 ) as dag:
 
-    # Every date below falls back to "now" when the run has no interval.
+    # The maintenance gate below falls back to "now" when the run has no
+    # interval. The four transform tasks used to take a date too, and no
+    # longer do: the Spark jobs read every retained Bronze partition rather
+    # than one day's, so a day they missed is merged on the next run instead
+    # of being pruned away unmerged (see spark/jobs/bronze.py).
     #
     # In Airflow 3 a manually triggered run has logical_date=None unless one is
     # passed explicitly, and the whole family of macros derived from it --
@@ -141,28 +145,28 @@ with DAG(
 
     transform_orders = BashOperator(
         task_id='transform_orders',
-        bash_command=get_spark_submit_command('Orders-Bronze-to-Silver', '/opt/spark-jobs/transform_orders.py', '{{ (data_interval_end | default(macros.datetime.utcnow())).strftime("%Y%m%d") }}'),
+        bash_command=get_spark_submit_command('Orders-Bronze-to-Silver', '/opt/spark-jobs/transform_orders.py'),
         env=SPARK_SECRET_ENV,
         append_env=True,
     )
 
     transform_customers = BashOperator(
         task_id='transform_customers',
-        bash_command=get_spark_submit_command('Customers-Bronze-to-Silver', '/opt/spark-jobs/transform_customers.py', '{{ (data_interval_end | default(macros.datetime.utcnow())).strftime("%Y%m%d") }}'),
+        bash_command=get_spark_submit_command('Customers-Bronze-to-Silver', '/opt/spark-jobs/transform_customers.py'),
         env=SPARK_SECRET_ENV,
         append_env=True,
     )
 
     transform_products = BashOperator(
         task_id='transform_products',
-        bash_command=get_spark_submit_command('Products-Bronze-to-Silver', '/opt/spark-jobs/transform_products.py', '{{ (data_interval_end | default(macros.datetime.utcnow())).strftime("%Y%m%d") }}'),
+        bash_command=get_spark_submit_command('Products-Bronze-to-Silver', '/opt/spark-jobs/transform_products.py'),
         env=SPARK_SECRET_ENV,
         append_env=True,
     )
 
     transform_order_items = BashOperator(
         task_id='transform_order_items',
-        bash_command=get_spark_submit_command('OrderItems-Bronze-to-Silver', '/opt/spark-jobs/transform_order_items.py', '{{ (data_interval_end | default(macros.datetime.utcnow())).strftime("%Y%m%d") }}'),
+        bash_command=get_spark_submit_command('OrderItems-Bronze-to-Silver', '/opt/spark-jobs/transform_order_items.py'),
         env=SPARK_SECRET_ENV,
         append_env=True,
     )
