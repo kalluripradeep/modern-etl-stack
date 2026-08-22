@@ -43,6 +43,11 @@ jobs:
         run: |
           pip install requests psycopg2-binary faker
           python scripts/ci/test_e2e_accounting.py
+      - name: Verify the Bronze load contract
+        # A Spark job that succeeds at doing nothing is how Pipe 2 stayed
+        # broken while its DAG was green (#149). Fakes stand in for Spark,
+        # so this needs no cluster.
+        run: python scripts/ci/test_bronze_guard.py
 
   type-check:
     runs-on: ubuntu-latest
