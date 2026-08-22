@@ -45,9 +45,14 @@ jobs:
           python scripts/ci/test_e2e_accounting.py
       - name: Verify the Bronze load contract
         # A Spark job that succeeds at doing nothing is how Pipe 2 stayed
-        # broken while its DAG was green (#149). Fakes stand in for Spark,
-        # so this needs no cluster.
-        run: python scripts/ci/test_bronze_guard.py
+        # broken while its DAG was green (#149). Fakes stand in for a Spark
+        # session, so no cluster is needed -- but pyspark itself is, because
+        # the check that matters asserts recursiveFileLookup is set on the
+        # real reader, and dropping that assertion to avoid the install would
+        # leave the silent-failure mode unguarded.
+        run: |
+          pip install pyspark==3.5.0
+          python scripts/ci/test_bronze_guard.py
 
   type-check:
     runs-on: ubuntu-latest
