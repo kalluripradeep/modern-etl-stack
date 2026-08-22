@@ -11,7 +11,17 @@ What this tests:
   Step 4  Simulate live transactions: UPDATE status, CANCEL orders, DELETE rows
   Step 5  Verify the ClickHouse mirror (Pipe 3's real consumer) reflects
           every change: counts, deletes gone, cancellations applied
-  Step 6  Print pass / fail report
+  Step 6  Verify the Iceberg lakehouse (Pipe 2) is readable through Trino
+  Step 7  Verify the dbt marts (Pipe 1) exist and are populated
+  Step 8  Print pass / fail / skip report
+
+Coverage, stated honestly (#149): Step 3 reproduces the ingestion DAG's
+writes rather than triggering the DAG, so Pipes 1 and 2 are checked by their
+outputs -- the dbt marts and the Iceberg tables can only be there if the real
+DAG and its dbt task group ran. Steps 6 and 7 report SKIP, never PASS, when
+their endpoint is not configured, because a check that cannot run is not a
+check that passed. The final line names what was verified instead of claiming
+the whole pipeline is healthy.
 
 Usage (local docker-compose):
   DEST_DB_PORT=5433 MINIO_ROOT_PASSWORD=minioadmin python scripts/test_transactions.py
@@ -59,6 +69,8 @@ MINIO_PASSWORD  = os.environ.get("MINIO_ROOT_PASSWORD", "minioadmin123")
 CLICKHOUSE_URL  = os.environ.get("CLICKHOUSE_URL", "http://localhost:8123")
 CLICKHOUSE_USER = os.environ.get("CLICKHOUSE_USER", "chuser")
 CLICKHOUSE_PASSWORD = os.environ.get("CLICKHOUSE_PASSWORD", "chpass")
+# Unset means "not deployed here", which is a skip rather than a failure.
+TRINO_URL       = os.environ.get("TRINO_URL", "")
 CHUNK_DIR       = os.path.join(tempfile.gettempdir(), "etl_test_chunks")
 
 STATUSES  = ["pending", "processing", "shipped", "delivered", "cancelled"]
@@ -87,6 +99,20 @@ def fail(msg, detail=""):
         tag += f"  ({detail})"
     print(tag)
     results.append(("FAIL", msg))
+
+
+def skip(msg, detail=""):
+    """Record a check that could not run.
+
+    Deliberately not a pass. Counting an unrunnable check as green is how this
+    suite came to report a healthy pipeline while never reading the lakehouse
+    at all (#149).
+    """
+    tag = f"  ~  {msg}"
+    if detail:
+        tag += f"  ({detail})"
+    print(tag)
+    results.append(("SKIP", msg))
 
 
 # ── Step 1: Seed source database ──────────────────────────────────────────────
@@ -482,20 +508,172 @@ def verify_clickhouse(txn, max_order_id):
         print(f"  {status:<15} {count:>6}")
 
 
-# ── Step 6: Summary ───────────────────────────────────────────────────────────
+# ── Step 6: Lakehouse (Pipe 2) ────────────────────────────────────────────────
+def trino_query(sql):
+    """Run one statement over Trino's REST protocol, following nextUri.
+
+    Results arrive across pages and the first page usually carries no rows at
+    all, so a naive single POST reads an empty result and calls it a passing
+    zero. Follow the chain to the end.
+    """
+    r = requests.post(
+        f"{TRINO_URL}/v1/statement",
+        data=sql.encode("utf-8"),
+        headers={"X-Trino-User": "e2e-test"},
+        timeout=30,
+    )
+    rows = []
+    while True:
+        r.raise_for_status()
+        page = r.json()
+        if page.get("error"):
+            raise RuntimeError(page["error"].get("message", "unknown Trino error"))
+        rows.extend(page.get("data") or [])
+        nxt = page.get("nextUri")
+        if not nxt:
+            return rows
+        r = requests.get(nxt, headers={"X-Trino-User": "e2e-test"}, timeout=30)
+
+
+def verify_lakehouse():
+    step("STEP 6 — Verify the Iceberg lakehouse (Pipe 2) through Trino")
+
+    if not TRINO_URL:
+        skip(
+            "Lakehouse not checked — TRINO_URL unset",
+            "set TRINO_URL (test_e2e.sh port-forwards it) to verify Pipe 2",
+        )
+        return
+
+    try:
+        tables = {r[0] for r in trino_query(
+            "SELECT table_name FROM iceberg.information_schema.tables "
+            "WHERE table_schema = 'lake'"
+        )}
+    except Exception as e:
+        fail("Trino is not answering", str(e)[:200])
+        return
+
+    if "orders" not in tables:
+        fail(
+            "iceberg.lake.orders does not exist",
+            "the Spark silver job has never completed. Check the "
+            "spark_transform_silver DAG, and that the iceberg_catalog schema "
+            "exists in postgres-dest",
+        )
+        return
+    ok("Iceberg tables present", ", ".join(sorted(tables)))
+
+    try:
+        lake_count = int(trino_query("SELECT count(*) FROM iceberg.lake.orders")[0][0])
+    except Exception as e:
+        fail("Could not read iceberg.lake.orders", str(e)[:200])
+        return
+
+    if lake_count > 0:
+        ok("Lakehouse is readable and populated", f"{lake_count} rows in iceberg.lake.orders")
+    else:
+        fail(
+            "iceberg.lake.orders is empty",
+            "the table exists but no Spark run has merged bronze into it",
+        )
+        return
+
+    # Deliberately not asserted equal to the source. Pipe 2 is batch, so it
+    # trails by up to one run -- and the MERGE never deletes, so the five rows
+    # this test hard-deletes from the source stay in the lake for good. A test
+    # demanding equality here would fail correctly-behaving infrastructure.
+    src = psycopg2.connect(**SOURCE)
+    with src.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM orders")
+        src_count = cur.fetchone()[0]
+    src.close()
+    print("")
+    print(f"  source={src_count}  lake={lake_count}  "
+          "(batch lag plus merge-only semantics: the lake keeps deleted rows)")
+
+
+# ── Step 7: Warehouse marts (Pipe 1) ──────────────────────────────────────────
+def verify_warehouse_marts():
+    step("STEP 7 — Verify the dbt marts (Pipe 1) are built and populated")
+
+    # Step 3 writes raw.orders_source itself, so finding rows there proves
+    # nothing about the DAG. int/gold can only exist if the real dbt task
+    # group ran, which makes them the honest signal for Pipe 1.
+    expected = [
+        ("int", "orders_clean"),
+        ("gold", "fact_order_items"),
+        ("gold", "dim_customer"),
+        ("gold", "dim_date"),
+    ]
+    dest = psycopg2.connect(**DEST)
+    try:
+        with dest.cursor() as cur:
+            cur.execute(
+                "SELECT table_schema, table_name FROM information_schema.tables "
+                "WHERE table_schema IN ('int', 'gold')"
+            )
+            present = {(r[0], r[1]) for r in cur.fetchall()}
+
+            missing = [f"{sc}.{tb}" for sc, tb in expected if (sc, tb) not in present]
+            if missing:
+                fail(
+                    "dbt marts missing: " + ", ".join(missing),
+                    "the dbt task group in ingest_source_to_bronze has not run "
+                    "successfully. raw.* being populated says nothing here, "
+                    "because step 3 of this test writes it directly",
+                )
+                return
+            ok("dbt marts present", f"{len(expected)} of {len(expected)} in int/gold")
+
+            empty = []
+            for schema, table in expected:
+                # identifiers come from the list above, never from input
+                cur.execute(f'SELECT count(*) FROM "{schema}"."{table}"')  # nosec B608
+                if cur.fetchone()[0] == 0:
+                    empty.append(f"{schema}.{table}")
+            if empty:
+                fail(
+                    "dbt marts built but empty: " + ", ".join(empty),
+                    "dbt ran against a raw layer it could not read, or the "
+                    "quality filters in the int models dropped every row",
+                )
+            else:
+                ok("dbt marts populated", "int and gold both hold rows")
+    finally:
+        dest.close()
+
+
+# ── Step 8: Summary ───────────────────────────────────────────────────────────
 def summary():
-    step("STEP 6 — Test Summary")
+    step("STEP 8 — Test Summary")
     passed = sum(1 for r in results if r[0] == "PASS")
     failed = sum(1 for r in results if r[0] == "FAIL")
+    skipped = sum(1 for r in results if r[0] == "SKIP")
+    icons = {"PASS": "✓", "FAIL": "✗", "SKIP": "~"}
     for status, msg in results:
-        icon = "✓" if status == "PASS" else "✗"
-        print(f"  {icon}  {msg}")
-    print(f"\n  Total: {passed} passed, {failed} failed")
+        print(f"  {icons[status]}  {msg}")
+    print("")
+    print(f"  Total: {passed} passed, {failed} failed, {skipped} skipped")
+
     if failed:
-        print("\n  Some checks failed — review the output above for details.")
+        print("")
+        print("  Some checks failed — review the output above for details.")
         sys.exit(1)
+
+    # A green run has to say what it actually covered. Reporting "pipeline is
+    # healthy" off a suite that never read the lakehouse is the whole of #149,
+    # and it held for weeks while Pipe 2 had no successful Trino read at all.
+    print("")
+    if skipped:
+        print(f"  {passed} passed, but {skipped} skipped — the "
+              f"pipelines behind them are UNVERIFIED, not healthy.")
+        print("  Configure the endpoints named above and re-run to cover all three.")
     else:
-        print("\n  All checks passed — pipeline is healthy!")
+        print("  All checks passed — all three pipelines verified end to end:")
+        print("    Pipe 1  warehouse: dbt int/gold marts built and populated")
+        print("    Pipe 2  lakehouse: iceberg.lake.orders readable through Trino")
+        print("    Pipe 3  mirror:    counts, deletes and cancellations in ClickHouse")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -515,4 +693,6 @@ if __name__ == "__main__":
     txn = simulate_transactions()
 
     verify_clickhouse(txn, max_order_id=200)
+    verify_lakehouse()
+    verify_warehouse_marts()
     summary()

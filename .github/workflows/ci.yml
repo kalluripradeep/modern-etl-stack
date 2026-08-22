@@ -37,6 +37,12 @@ jobs:
           python scripts/generate_pipeline_assets.py --check
       - name: Verify dashboard and alert metrics exist in the statsd mapping
         run: python scripts/check_dashboard_metrics.py
+      - name: Verify the e2e suite cannot report a pass it did not earn
+        # See #149: the suite reported a healthy pipeline while never
+        # reading the lakehouse. Runs offline, no cluster needed.
+        run: |
+          pip install requests psycopg2-binary faker
+          python scripts/ci/test_e2e_accounting.py
 
   type-check:
     runs-on: ubuntu-latest

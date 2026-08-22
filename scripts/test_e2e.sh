@@ -62,6 +62,10 @@ fwd postgres-dest   5434 5432
 fwd kafka-connect   8084 8083
 fwd minio           9000 9000
 fwd clickhouse      8123 8123
+# Pipe 2 lives behind Trino. Without this forward the lakehouse check cannot
+# run at all, which is exactly how it went unnoticed that it never ran (#149).
+# 8085 locally because 8082 is Trino under docker-compose and may be in use.
+fwd trino           8085 8080
 
 # Give port-forwards a moment to settle
 sleep 3
@@ -125,6 +129,7 @@ export DEST_DB_PORT=5434
 export KAFKA_CONNECT_URL="http://localhost:8084"
 export MINIO_ENDPOINT="http://localhost:9000"
 export CLICKHOUSE_URL="http://localhost:8123"
+export TRINO_URL="http://localhost:8085"
 
 SOURCE_DB_NAME=$(sv SOURCE_DB_NAME sourcedb);            export SOURCE_DB_NAME
 SOURCE_DB_USER=$(sv SOURCE_DB_USER sourceuser);          export SOURCE_DB_USER
@@ -146,7 +151,7 @@ set -e
 echo ""
 if [ $TEST_EXIT -eq 0 ]; then
   echo -e "${GREEN}============================================================${NC}"
-  echo -e "${GREEN}  ALL TESTS PASSED — pipeline is healthy!${NC}"
+  echo -e "${GREEN}  ALL CHECKS PASSED — see the per-pipeline summary above${NC}"
   echo -e "${GREEN}============================================================${NC}"
 else
   echo -e "${RED}============================================================${NC}"
