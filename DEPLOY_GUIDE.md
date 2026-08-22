@@ -155,7 +155,11 @@ trino-worker-xxx (x2)               1/1     Running
 bash scripts/test_e2e.sh
 ```
 
-This port-forwards the services, seeds 200 orders, runs the extract → MinIO → warehouse pipeline, fires live transactions (updates, cancellations, hard deletes), and verifies the ClickHouse mirror caught every change. Expected ending:
+This port-forwards the services, seeds 200 orders, runs the extract → MinIO →
+warehouse pipeline, fires live transactions (updates, cancellations, hard
+deletes), verifies the ClickHouse mirror caught every change, reads the Iceberg
+lakehouse through Trino, and checks the dbt marts are built and populated —
+one assertion per pipeline. Expected ending:
 
 ```text
   ✓  Seeded 200 orders into postgres-source
@@ -166,10 +170,29 @@ This port-forwards the services, seeds 200 orders, runs the extract → MinIO �
   ✓  Row count matches
   ✓  All 5 deleted orders are gone from the mirror
   ✓  All 10 cancellations reflected in the mirror
+  ✓  Iceberg tables present
+  ✓  Lakehouse is readable and populated
+  ✓  dbt marts present
+  ✓  dbt marts populated
 
-  Total: 9 passed, 0 failed
-  All checks passed — pipeline is healthy!
+  Total: 12 passed, 0 failed, 0 skipped
+
+  All checks passed — all three pipelines verified end to end:
+    Pipe 1  warehouse: dbt int/gold marts built and populated
+    Pipe 2  lakehouse: iceberg.lake.orders readable through Trino
+    Pipe 3  mirror:    counts, deletes and cancellations in ClickHouse
 ```
+
+A **skipped** check is not a passing one. If Trino is unreachable the lakehouse
+step reports `~` and the summary says the pipeline behind it is UNVERIFIED,
+rather than counting it green and claiming the stack is healthy — which is what
+it used to do, for as long as it never read the lakehouse at all (#149).
+
+The lakehouse and mart checks read what the DAGs produced, so they need at least
+one successful run of `ingest_source_to_bronze` and `spark_transform_silver`
+behind them. On a cluster deployed minutes ago they will fail honestly rather
+than pass vacuously; give the hourly schedules a run, or trigger both DAGs from
+the Airflow UI first.
 
 ### Step 6 — Open the dashboards
 
