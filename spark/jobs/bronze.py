@@ -66,7 +66,7 @@ def load_bronze(spark, source_table, iceberg_table):
     count = df.count() if df is not None else 0
 
     if count == 0:
-        if not spark.catalog.tableExists(iceberg_table):
+        if not _table_exists(spark, iceberg_table):
             raise RuntimeError(
                 f"No Bronze data for '{source_table}' and {iceberg_table} does "
                 f"not exist, so the lakehouse has never been initialised. This "
@@ -82,3 +82,33 @@ def load_bronze(spark, source_table, iceberg_table):
 
     print(f"Loaded {count} records from Bronze")
     return df
+
+
+def _table_exists(spark, iceberg_table):
+    """tableExists, treating a catalog that cannot answer as "no".
+
+    An Iceberg JDBC catalog creates its `iceberg_tables` relation lazily, on
+    the first write. Until something has created a table, tableExists does not
+    return False -- it raises:
+
+        org.apache.iceberg.jdbc.UncheckedSQLException:
+            Failed to get table lake.orders from catalog silver
+        Caused by: PSQLException: relation "iceberg_tables" does not exist
+
+    Which is the exact condition this function is asked about on a cluster
+    where nothing has run yet, so letting it propagate turns "the lakehouse is
+    uninitialised" -- a state with a clear message to print -- back into an
+    opaque Py4J stack trace. An unanswerable catalog holds no tables, so the
+    answer is no.
+
+    Deliberately broad: the failures worth distinguishing here (bad JDBC
+    credentials, unreachable Postgres) surface immediately afterwards on the
+    write path with their own errors, and none of them are made worse by
+    having concluded the table is absent.
+    """
+    try:
+        return spark.catalog.tableExists(iceberg_table)
+    except Exception as e:  # noqa: BLE001 - see above
+        print(f"Could not query the catalog for {iceberg_table} "
+              f"({type(e).__name__}); treating it as absent.")
+        return False
