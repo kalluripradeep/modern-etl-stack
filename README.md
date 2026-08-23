@@ -43,6 +43,54 @@ Debezium captures every insert/update/delete from the source WAL into Kafka, and
 
 A Next.js dashboard with an agentic analyst: it introspects the schemas of all three stores, decides which engine fits the question (warehouse, lakehouse via Trino, or the ClickHouse mirror), runs read-only SQL with automatic error-retry, and answers in plain language. Runs in demo mode without an API key; add an Anthropic API key to enable it, and set `DASHBOARD_AUTH_PASSWORD` to require a login.
 
+### dbt MCP Server
+
+The transformation layer is exposed over the **Model Context Protocol** by
+[dbt-mcp](https://docs.getdbt.com/docs/dbt-ai/about-mcp), dbt Labs' own server,
+so an assistant can *operate* dbt — run, build, test, compile, inspect lineage,
+generate model YAML — rather than only read the tables dbt produced.
+
+```bash
+make mcp-dbt      # checks prerequisites, prints the client config
+```
+
+It is intentionally not vendored. A copy lived in this repository until #70
+deleted 469 files that nothing consumed — no image build, no manifest, no
+import. It is a published package, so `uvx dbt-mcp` fetches it and the repo
+only owns the wiring.
+
+**Two flags matter more than the rest.** Semantic Layer, Discovery, Admin API
+and SQL tools all require a dbt Cloud account (`DBT_HOST`, `DBT_TOKEN`,
+`DBT_PROD_ENV_ID`…). Left enabled against dbt Core they are still advertised
+and fail on the first call: 49 tools of which roughly 30 are dead. Disabling
+them leaves **16 that all work**. `DISABLE_DBT_CODEGEN` is inverted — it
+defaults to true, so codegen has to be switched on.
+
+| Group | Works on dbt Core | Tools |
+|---|---|---|
+| dbt CLI | yes | `run`, `build`, `test`, `compile`, `parse`, `list`, `docs`, `clone`, `show` |
+| Codegen | yes, once enabled | `generate_model_yaml`, `generate_source`, `generate_staging_model` |
+| Dev lineage / docs | yes | `get_lineage_dev`, `get_node_details_dev`, `search_product_docs` |
+| Semantic Layer, Discovery, Admin API, SQL | **no — dbt Cloud** | `query_metrics`, `get_model_health`, `execute_sql`, `text_to_sql`, … |
+
+**Scope.** `show` runs SQL via `dbt show --inline` against the dbt target, so it
+reaches the **warehouse only**. The Iceberg lakehouse and the ClickHouse mirror
+are invisible to dbt, and therefore to dbt-mcp — for those, query Trino and
+ClickHouse directly, or use the AI dashboard, which talks to all three.
+
+**A working `dbt` is the one real prerequisite,** and `make mcp-dbt` checks it
+by running it rather than by finding it on `PATH`. An editable install from a
+source checkout can be present and still fail on import, in which case every
+dbt-mcp tool returns a Python traceback that reads like an MCP fault. If you
+need a clean one, pin it — an unpinned `pip install dbt-core` can resolve to a
+2.0 pre-release that ships no `dbt` console script at all:
+
+```bash
+python -m venv .venv-dbt
+.venv-dbt/bin/pip install 'dbt-core==1.9.*' 'dbt-postgres==1.9.*'
+DBT_PATH=$PWD/.venv-dbt/bin/dbt make mcp-dbt
+```
+
 ## Adding a Source Table
 
 Tables are defined once in [`airflow/dags/config/pipelines.yml`](airflow/dags/config/pipelines.yml) — the single source of truth. The ingestion DAG reads it directly; the ClickHouse mirror schema and Debezium connector are generated from it:

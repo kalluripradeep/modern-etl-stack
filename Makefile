@@ -1,4 +1,4 @@
-.PHONY: up down restart logs seed dbt-run dbt-test register-connector ps help generate
+.PHONY: up down restart logs seed dbt-run dbt-test register-connector ps help generate mcp-dbt
 
 # Copy .env.example to .env if it doesn't exist yet
 .env:
@@ -52,6 +52,10 @@ register-connector:
 ## Regenerate pipeline artifacts from airflow/dags/config/pipelines.yml
 generate:
 	python3 scripts/generate_pipeline_assets.py
+
+## Check prerequisites for the dbt MCP server, print its client config
+mcp-dbt:
+	@bash scripts/mcp_dbt_config.sh
 
 ## Show this help
 help:
