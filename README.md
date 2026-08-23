@@ -43,6 +43,27 @@ Debezium captures every insert/update/delete from the source WAL into Kafka, and
 
 A Next.js dashboard with an agentic analyst: it introspects the schemas of all three stores, decides which engine fits the question (warehouse, lakehouse via Trino, or the ClickHouse mirror), runs read-only SQL with automatic error-retry, and answers in plain language. Runs in demo mode without an API key; add an Anthropic API key to enable it, and set `DASHBOARD_AUTH_PASSWORD` to require a login.
 
+### MCP Server
+
+The same three-store query layer is also exposed over the **Model Context
+Protocol**, so Claude Code, Claude Desktop or any MCP client can query the
+platform directly rather than through the dashboard:
+
+```bash
+cd ui && npm run build:mcp
+claude mcp add modern-etl-stack -- node "$PWD/dist/mcp/server.js"
+```
+
+Four tools — `get_schema`, `query_warehouse`, `query_lakehouse`,
+`query_mirror`. It is an adapter over the module the dashboard already uses,
+so both inherit one set of rules: single-statement SELECT-only gate, read-only
+enforced server-side by each store, statement timeout, row cap. Full setup and
+the client JSON are in [ui/README.md](ui/README.md#mcp-server).
+
+This is not [dbt-mcp](https://docs.getdbt.com/docs/dbt-ai/about-mcp), which
+exposes dbt itself and installs separately (`uvx dbt-mcp`). This one exposes
+the stores.
+
 ## Adding a Source Table
 
 Tables are defined once in [`airflow/dags/config/pipelines.yml`](airflow/dags/config/pipelines.yml) — the single source of truth. The ingestion DAG reads it directly; the ClickHouse mirror schema and Debezium connector are generated from it:

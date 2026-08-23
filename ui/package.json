@@ -6,17 +6,22 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "build:mcp": "tsc -p tsconfig.mcp.json",
+    "mcp": "node dist/mcp/server.js",
+    "mcp:smoke": "node src/mcp/smoke.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@types/pg": "^8.20.0",
     "next": "16.2.12",
     "pg": "^8.20.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^20",

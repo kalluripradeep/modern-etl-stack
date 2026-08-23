@@ -1,0 +1,22 @@
+{
+  // The Next config is noEmit with bundler resolution, which is right for the
+  // app and useless for a standalone Node process. This emits CommonJS: the
+  // MCP SDK ships both builds, and CJS avoids needing "type": "module" in a
+  // package.json that Next also reads.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "node16",
+    "moduleResolution": "node16",
+    "outDir": "dist",
+    "rootDir": "src",
+    "incremental": false,
+    // Emit nothing on a type error. tsc emits by default, so a broken
+    // server would still be produced and only fail at runtime.
+    "noEmitOnError": true,
+    "plugins": []
+  },
+  "include": ["src/mcp/**/*.ts", "src/lib/**/*.ts"]
+}

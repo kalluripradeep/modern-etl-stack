@@ -77,6 +77,17 @@ export function trinoConfigured(): boolean {
   return Boolean(process.env.TRINO_URL);
 }
 
+/** The subset of Trino's REST response this client reads. `Response.json()`
+ *  is `unknown` under Node's own types -- the DOM lib types it `any`, which is
+ *  what let these fields go unchecked. Naming them makes a protocol change
+ *  fail at build time instead of at the first null dereference. */
+interface TrinoPage {
+  error?: { message?: string };
+  columns?: { name: string }[];
+  data?: unknown[][];
+  nextUri?: string;
+}
+
 export async function queryLakehouse(sql: string): Promise<SqlResult> {
   const base = process.env.TRINO_URL;
   if (!base) {
@@ -98,9 +109,9 @@ export async function queryLakehouse(sql: string): Promise<SqlResult> {
   // Trino's REST protocol pages results: follow nextUri until absent
   for (;;) {
     if (!res.ok) throw new Error(`Trino HTTP ${res.status}: ${await res.text()}`);
-    const page = await res.json();
+    const page = (await res.json()) as TrinoPage;
     if (page.error) {
-      throw new Error(`Trino: ${page.error.message}`);
+      throw new Error(`Trino: ${page.error.message ?? 'unknown error'}`);
     }
     if (page.columns && columns.length === 0) {
       for (const c of page.columns) columns.push(c.name);
@@ -142,8 +153,11 @@ export async function queryMirror(sql: string): Promise<SqlResult> {
   if (!res.ok) {
     throw new Error(`ClickHouse: ${(await res.text()).slice(0, 500)}`);
   }
-  const body = await res.json();
-  const columns = (body.meta || []).map((m: { name: string }) => m.name);
+  const body = (await res.json()) as {
+    meta?: { name: string }[];
+    data?: unknown[][];
+  };
+  const columns = (body.meta || []).map((m) => m.name);
   return truncate(columns, body.data || []);
 }
 

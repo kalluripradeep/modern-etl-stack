@@ -238,6 +238,14 @@ jobs:
         run: npx eslint .
       - name: Build
         run: npm run build
+      - name: Build the MCP server
+        run: npm run build:mcp
+      - name: MCP server contract
+        # Drives the built server over a real stdio transport: tool list plus
+        # the single-statement read-only gate. No database needed -- the gate
+        # rejects a write before anything connects. Live store queries are
+        # opt-in via MCP_SMOKE_LIVE=1 and report as skips here, never passes.
+        run: npm run mcp:smoke
 
   dbt-integration:
     runs-on: ubuntu-latest

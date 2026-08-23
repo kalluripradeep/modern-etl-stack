@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Compiled MCP server output (tsconfig.mcp.json). Emitted CommonJS, so
+    // every import trips no-require-imports if it is linted.
+    "dist/**",
   ]),
 ]);
 
