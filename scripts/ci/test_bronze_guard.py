@@ -30,6 +30,8 @@ class FakeCatalog:
 
     def tableExists(self, name):   # noqa: N802 - mirrors the PySpark API
         self.asked.append(name)
+        if isinstance(self._exists, Exception):
+            raise self._exists
         return self._exists
 
 
@@ -94,6 +96,24 @@ def main():
     )
     path = spark.read.option.return_value.parquet.call_args[0][0]
     assert path == "s3a://bronze/orders_source/", path
+
+    # 6. A catalog that cannot answer must read as "no table", not blow up.
+    #    An Iceberg JDBC catalog creates iceberg_tables lazily on first write,
+    #    so on a cluster where nothing has run yet tableExists raises
+    #    UncheckedSQLException instead of returning False. Letting that
+    #    propagate turned "the lakehouse is uninitialised" back into a Py4J
+    #    stack trace. Reproduced against a real fresh catalog before fixing.
+    boom = RuntimeError("UncheckedSQLException: relation iceberg_tables does not exist")
+    with mock.patch.object(bronze, "read_all_partitions", return_value=None):
+        try:
+            bronze.load_bronze(FakeSpark(table_exists=boom), "orders", "silver.lake.orders")
+        except RuntimeError as e:
+            assert "never been initialised" in str(e), (
+                "a catalog that raises should still produce the actionable "
+                f"message, got: {e}"
+            )
+        else:
+            raise AssertionError("a raising catalog must still raise on no data")
 
     print("bronze load contract: OK")
 

@@ -155,6 +155,7 @@ with DAG(
         bash_command=get_spark_submit_command('Customers-Bronze-to-Silver', '/opt/spark-jobs/transform_customers.py'),
         env=SPARK_SECRET_ENV,
         append_env=True,
+        trigger_rule='all_done',
     )
 
     transform_products = BashOperator(
@@ -162,6 +163,7 @@ with DAG(
         bash_command=get_spark_submit_command('Products-Bronze-to-Silver', '/opt/spark-jobs/transform_products.py'),
         env=SPARK_SECRET_ENV,
         append_env=True,
+        trigger_rule='all_done',
     )
 
     transform_order_items = BashOperator(
@@ -169,6 +171,7 @@ with DAG(
         bash_command=get_spark_submit_command('OrderItems-Bronze-to-Silver', '/opt/spark-jobs/transform_order_items.py'),
         env=SPARK_SECRET_ENV,
         append_env=True,
+        trigger_rule='all_done',
     )
 
     # Weekly Maintenance: Compaction & Z-Ordering (Essential for 1 Billion+ records)
@@ -196,9 +199,27 @@ with DAG(
         append_env=True,
         # Run only on Sundays to optimize storage after weekly activity
         execution_timeout=timedelta(hours=2),
+        trigger_rule='all_done',
     )
 
-    # Transformation happens sequentially to prevent Maven/Ivy cache download collisions
+    # Still sequential, but no longer all-or-nothing.
+    #
+    # The chain's original reason -- Maven/Ivy cache collisions between
+    # concurrent spark-submits -- went away when #133 baked the JARs into the
+    # image. It stays sequential for a different reason: a standalone Spark
+    # cluster gives an application every free core it can, and the workers here
+    # hold 2 cores and 2GB each, so four concurrent applications would leave
+    # some sitting in "Initial job has not accepted any resources" -- the same
+    # symptom #126 spent days on. One at a time is the safe shape.
+    #
+    # trigger_rule='all_done' is the part that changed. The default,
+    # all_success, meant a failure in the first task marked the other three
+    # upstream_failed, so one table's problem hid the state of every other
+    # table. #151 made that worse rather than better: it turned Bronze-missing
+    # from a silent skip into a real failure, which is correct in itself, but
+    # under all_success it would have taken three healthy tables down with the
+    # one broken one. Maintenance runs too, because expiring snapshots is what
+    # releases disk and a failed transform is no reason to stop reclaiming it.
     transform_orders >> transform_customers >> transform_products >> transform_order_items >> maintenance_task
 
     # Maintenance is logically downstream, but you can schedule it separately.

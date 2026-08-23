@@ -314,8 +314,22 @@ def run_extract_pipeline():
             client.make_bucket("bronze")
         date_prefix = datetime.now().strftime("%Y/%m/%d")
         for i, fp in enumerate(chunk_files):
-            client.fput_object("bronze", f"orders/{date_prefix}/part-{i:05d}.parquet", fp)
-        ok(f"Uploaded {len(chunk_files)} parquet file(s) to MinIO s3://bronze/orders/{date_prefix}/")
+            # orders_source/, not orders/. The ingest DAG writes
+            # "<table>_source/YYYY/MM/DD/" and the Spark silver job reads that
+            # prefix, so parquet under "orders/" was invisible to Pipe 2.
+            #
+            # That alone would be a harmless naming slip. What made it a bug is
+            # the COPY below: it upserts these rows into raw.orders_source,
+            # which is where the ingest DAG reads its high-water mark
+            # (SELECT MAX(updated_at) FROM raw.orders_source). So every run of
+            # this test advanced the orders watermark while writing no Bronze
+            # the lakehouse could see, and the next real ingest found nothing
+            # new to extract. orders starved; the other three tables, which
+            # this test never loads into raw, kept flowing. That is exactly the
+            # state #144 reported -- silver.lake held customers, products and
+            # order_items, and never orders.
+            client.fput_object("bronze", f"orders_source/{date_prefix}/part-{i:05d}.parquet", fp)
+        ok(f"Uploaded {len(chunk_files)} parquet file(s) to MinIO s3://bronze/orders_source/{date_prefix}/")
     except Exception as e:
         fail("MinIO upload failed", str(e))
         print("  → Make sure MinIO is running and port-forwarded if using K8s")
