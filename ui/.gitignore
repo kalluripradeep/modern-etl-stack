@@ -40,3 +40,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Compiled output of any tsc build in this package (e.g. tsconfig.mcp.json)
+dist/
