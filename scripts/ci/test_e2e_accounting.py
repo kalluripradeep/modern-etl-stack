@@ -89,7 +89,7 @@ def main():
             mock.patch.object(tt, "DAG_WAIT_SECONDS", 1),
             mock.patch.object(tt, "_airflow_cli", return_value=cli),
             mock.patch.object(
-                tt, "_run_states",
+                tt, "_runs",
                 side_effect=lambda _: seq.pop(0) if seq else [],
             ),
             mock.patch.object(tt.subprocess, "run", return_value=fake_proc),
@@ -101,20 +101,21 @@ def main():
 
     CLI = ["fake", "airflow"]
     assert outcome(None, []) == ["SKIP"], "no Airflow reachable must skip, not pass"
-    assert outcome(CLI, [[], ["success"]]) == ["PASS"], "a drained queue ending in success must pass"
-    assert outcome(CLI, [[], ["failed"]]) == ["FAIL"], "a failed DAG must fail"
+    assert outcome(CLI, [[], [{"state": "success"}]]) == ["PASS"], "a drained queue ending in success must pass"
+    assert outcome(CLI, [[], [{"state": "failed"}]]) == ["FAIL"], "a failed DAG must fail"
     # Never draining is a failure, not a pass: Pipe 2 is unverified either way.
-    assert outcome(CLI, [["queued"]] * 50) == ["FAIL"], "a queue that never drains must fail"
+    assert outcome(CLI, [[{"state": "queued"}]] * 50) == ["FAIL"], "a queue that never drains must fail"
 
     # The reason #155 timed out on a healthy cluster: it triggered a run behind
     # an existing backlog and then waited for that run, so the step blocked on
     # the whole queue. With work already pending it must wait, not pile on.
     tt.results[:] = []
-    seq = [["queued", "running"], ["success", "success"]]
+    seq = [[{"state": "queued"}, {"state": "running"}],
+           [{"state": "success"}, {"state": "success"}]]
     with (
         mock.patch.object(tt, "DAG_WAIT_SECONDS", 1),
         mock.patch.object(tt, "_airflow_cli", return_value=CLI),
-        mock.patch.object(tt, "_run_states", side_effect=lambda _: seq.pop(0) if seq else []),
+        mock.patch.object(tt, "_runs", side_effect=lambda _: seq.pop(0) if seq else []),
         mock.patch.object(tt.subprocess, "run") as spawned,
         mock.patch.object(tt.time, "sleep"),
         contextlib.redirect_stdout(io.StringIO()),
@@ -122,6 +123,26 @@ def main():
         tt.run_silver_pipeline()
     assert spawned.call_count == 0, "must not trigger when a run is already pending"
     assert [r[0] for r in tt.results] == ["PASS"], tt.results
+
+    # A wedged run and a deep queue look identical from outside -- both report
+    # "queued" forever -- but the remedies are opposite. The message has to
+    # tell them apart, which is the round trip #144 spent.
+    day_old = [{"state": "running", "start_date": "2026-08-15T00:00:00+00:00"},
+               {"state": "queued", "start_date": ""}]
+    detail = tt._stuck_detail(day_old)
+    assert "stuck run" in detail, detail
+    assert "Mark it failed" in detail, detail
+    assert "raise SILVER_DAG_TIMEOUT" not in detail, (
+        "a nine-day-old run is not a backlog; telling someone to wait longer "
+        f"is the wrong remedy: {detail}"
+    )
+
+    from datetime import datetime, timezone
+    fresh = [{"state": "queued",
+              "start_date": datetime.now(timezone.utc).isoformat()}]
+    detail = tt._stuck_detail(fresh)
+    assert "backlog drains" in detail, detail
+    assert "stuck run" not in detail, detail
 
     print("e2e result accounting: OK")
 

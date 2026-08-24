@@ -115,6 +115,19 @@ dag = DAG(
     # Never let a slow run overlap the next one: concurrent runs would race
     # on the same raw tables and high-water mark.
     max_active_runs=1,
+    # A run that never reaches a terminal state holds the single active slot
+    # for good. #144 hit exactly that: a scheduled run from 2026-08-15 sat in
+    # "running" for nine days after its task hit
+    #   state mismatch ... Executor reported ... finished with state failed,
+    #   but the task instance's state attribute is queued
+    # so every later run stayed queued behind it and the lakehouse silently
+    # stopped being built. Nothing surfaced it, because a queued run is not an
+    # error -- there is simply no error anywhere to find.
+    #
+    # dagrun_timeout makes the scheduler fail such a run instead of waiting on
+    # it forever. Two hours is well clear of a real run (minutes) while still
+    # clearing a zombie the same day.
+    dagrun_timeout=timedelta(hours=2),
     tags=['etl', 'bronze', 'multi-table'],
 )
 

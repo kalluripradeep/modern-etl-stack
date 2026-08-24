@@ -554,8 +554,8 @@ def _airflow_cli():
     return None
 
 
-def _run_states(cli):
-    """Every spark_transform_silver run state, newest first, or None."""
+def _runs(cli):
+    """Every spark_transform_silver run, newest first, or None."""
     out = subprocess.run(  # nosec B603 - fixed argv, no shell
         # dag_id is positional in Airflow 3; "-d" makes the CLI print help
         # and exit 2, which read as "no runs" rather than as a broken command.
@@ -580,7 +580,7 @@ def _run_states(cli):
         runs = json.loads(out.stdout[start:])
     except ValueError:
         return None
-    return [r.get("state") for r in runs]
+    return runs
 
 
 def run_silver_pipeline():
@@ -614,7 +614,7 @@ def run_silver_pipeline():
     # already queued or running will pick up the Bronze just written anyway,
     # because the jobs read every retained partition, so waiting for it is both
     # faster and a truer test than triggering another.
-    pending = [st for st in (_run_states(cli) or []) if st in ("queued", "running")]
+    pending = [r for r in (_runs(cli) or []) if r.get("state") in ("queued", "running")]
     if pending:
         print(f"  {len(pending)} run(s) already queued or running; waiting for "
               f"those rather than adding another")
@@ -634,30 +634,62 @@ def run_silver_pipeline():
     # Done when nothing is queued or running any more. Watching one run's id
     # would still have meant waiting out the backlog ahead of it.
     deadline = time.time() + DAG_WAIT_SECONDS
-    states = []
+    runs = []
     while time.time() < deadline:
         time.sleep(15)
-        states = _run_states(cli) or []
-        outstanding = [st for st in states if st in ("queued", "running")]
+        runs = _runs(cli) or []
+        outstanding = [r for r in runs if r.get("state") in ("queued", "running")]
         if not outstanding:
             break
-        print(f"    {len(outstanding)} outstanding ({', '.join(sorted(set(outstanding)))})...")
+        print(f"    {len(outstanding)} outstanding "
+              f"({', '.join(sorted({r['state'] for r in outstanding}))})...")
 
-    outstanding = [st for st in states if st in ("queued", "running")]
+    outstanding = [r for r in runs if r.get("state") in ("queued", "running")]
     if outstanding:
         fail(f"spark_transform_silver still busy after {DAG_WAIT_SECONDS}s",
-             f"{len(outstanding)} run(s) {', '.join(sorted(set(outstanding)))}. A "
-             f"backlog drains one run at a time (max_active_runs=1); raise "
-             f"SILVER_DAG_TIMEOUT, or clear old runs in the Airflow UI")
-    elif states and states[0] == "success":
+             _stuck_detail(outstanding))
+    elif runs and runs[0].get("state") == "success":
         ok("spark_transform_silver completed")
-    elif states and states[0] == "failed":
+    elif runs and runs[0].get("state") == "failed":
         fail("spark_transform_silver failed",
              "read the transform_orders task log -- 'Loaded N records from "
              "Bronze' says whether Bronze reached it")
     else:
         fail("Could not read spark_transform_silver run state",
-             f"last seen: {states[:1] or 'nothing'}")
+             f"last seen: {runs[:1] or 'nothing'}")
+
+
+def _stuck_detail(outstanding):
+    """Say whether the queue is merely deep or wedged behind a zombie run.
+
+    A backlog and a run stuck in "running" since last week look identical from
+    the outside -- both report "queued" forever -- but the remedies are
+    opposite: wait longer, versus go and kill something. #144 spent a round
+    trip on that, because the message only offered "raise the timeout" while
+    the real blocker was a run that had been running for nine days.
+    """
+    kinds = ', '.join(sorted({r['state'] for r in outstanding}))
+    oldest = min((r for r in outstanding if r.get('start_date')),
+                 key=lambda r: r['start_date'], default=None)
+    detail = f"{len(outstanding)} run(s) {kinds}. "
+    if oldest:
+        started = oldest['start_date'][:19]
+        age_days = 0
+        try:
+            started_at = datetime.fromisoformat(oldest['start_date'].replace('Z', '+00:00'))
+            age_days = (datetime.now(started_at.tzinfo) - started_at).days
+        except ValueError:
+            pass
+        if age_days >= 1:
+            return (detail + f"The oldest has been running since {started} "
+                    f"({age_days} day(s)) -- that is a stuck run holding the "
+                    f"only active slot (max_active_runs=1), not a backlog. "
+                    f"Mark it failed in the Airflow UI; deleting it often "
+                    f"errors while it is still active.")
+        detail += f"Oldest started {started}. "
+    return (detail + "A backlog drains one run at a time "
+            "(max_active_runs=1); raise SILVER_DAG_TIMEOUT, or clear old runs "
+            "in the Airflow UI.")
 
 
 
