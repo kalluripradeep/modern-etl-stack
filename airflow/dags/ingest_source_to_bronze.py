@@ -186,6 +186,27 @@ def extract_and_load_table(table_name, **kwargs):
         log.info(f"Starting extraction for table: {table_name}")
         
         for chunk_idx, df_chunk in enumerate(pd.read_sql(query, source_engine, chunksize=chunk_size)):
+            # Skip empty chunks. pd.read_sql(chunksize=...) yields one empty
+            # DataFrame when the query matches nothing, which an incremental
+            # run with no new rows does constantly. Writing that produced a
+            # 0-row parquet whose every column is null-typed, and pyarrow has
+            # no dtype to infer from.
+            #
+            # Spark then reads such a file as INT for every column -- email
+            # INT, created_at INT -- and merging that with a real partition
+            # fails outright:
+            #   CANNOT_MERGE_INCOMPATIBLE_DATA_TYPE "INT" and "BIGINT"
+            #   Parquet column cannot be converted ... Expected: int, Found: INT64
+            # mergeSchema does not rescue it; the degenerate schema is the
+            # problem, not the merge.
+            #
+            # This was harmless while each Spark job read only its own day.
+            # Once #151 made them read every retained partition, one empty file
+            # anywhere under the prefix broke the whole table's transform. The
+            # file has no business existing either way: Bronze is a record of
+            # rows extracted, and there were none.
+            if df_chunk.empty:
+                continue
             out_path = os.path.join(tmpdirname, f'part-{chunk_idx:05d}.parquet')
             df_chunk.to_parquet(out_path, index=False, compression='snappy', coerce_timestamps='us', allow_truncated_timestamps=True)
             total_rows += len(df_chunk)
@@ -334,6 +355,16 @@ def prune_bronze(**kwargs):
         if written < cutoff:
             stale.append(key)
 
+    empties = _empty_parquet_keys(s3_hook, bucket, set(keys) - set(stale))
+    if empties:
+        # 0-row parquet written before the guard in extract_and_load_table.
+        # Every column in one is null-typed, which Spark reads as INT, so a
+        # single leftover breaks the transform for that whole table until
+        # retention ages it out -- up to BRONZE_RETENTION_DAYS of a broken
+        # lakehouse. Cheaper to remove them than to wait.
+        s3_hook.delete_objects(bucket=bucket, keys=empties)
+        log.info(f"Removed {len(empties)} empty Bronze object(s)")
+
     if not stale:
         log.info(f"No Bronze objects older than {retention_days} days")
         return
@@ -341,6 +372,28 @@ def prune_bronze(**kwargs):
     s3_hook.delete_objects(bucket=bucket, keys=stale)
     log.info(f"Pruned {len(stale)} Bronze objects older than "
              f"{retention_days} days (before {cutoff:%Y-%m-%d})")
+
+
+def _empty_parquet_keys(s3_hook, bucket, keys):
+    """Keys under `bucket` whose parquet holds no rows.
+
+    Reads footers only -- these files are a few KB -- and treats anything it
+    cannot parse as "leave alone", since deleting on a read error would turn a
+    transient S3 problem into data loss.
+    """
+    import pyarrow.parquet as pq
+
+    empty = []
+    for key in keys:
+        if not key.endswith('.parquet'):
+            continue
+        try:
+            body = s3_hook.get_key(key, bucket_name=bucket).get()['Body'].read()
+            if pq.ParquetFile(io.BytesIO(body)).metadata.num_rows == 0:
+                empty.append(key)
+        except Exception as e:
+            log.warning(f"Could not inspect {key}, leaving it: {e}")
+    return empty
 
 
 with dag:
