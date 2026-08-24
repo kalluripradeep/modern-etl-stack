@@ -157,9 +157,16 @@ bash scripts/test_e2e.sh
 
 This port-forwards the services, seeds 200 orders, runs the extract → MinIO →
 warehouse pipeline, fires live transactions (updates, cancellations, hard
-deletes), verifies the ClickHouse mirror caught every change, reads the Iceberg
-lakehouse through Trino, and checks the dbt marts are built and populated —
-one assertion per pipeline. Expected ending:
+deletes), verifies the ClickHouse mirror caught every change, **triggers
+`spark_transform_silver` and waits for it**, then reads the Iceberg lakehouse
+through Trino and checks the dbt marts — one assertion per pipeline.
+
+The Spark trigger matters. Without it the lakehouse check asserted a result
+nothing in the test causes: the silver DAG runs on its own hourly schedule, so
+on any cluster where `iceberg.lake.orders` did not already exist the check
+failed however healthy Pipe 2 was — reporting a broken pipeline when the truth
+was an unfinished one. Waiting can take a few minutes; `SILVER_DAG_TIMEOUT`
+(default 900s) bounds it.
 
 ```text
   ✓  Seeded 200 orders into postgres-source
@@ -170,12 +177,13 @@ one assertion per pipeline. Expected ending:
   ✓  Row count matches
   ✓  All 5 deleted orders are gone from the mirror
   ✓  All 10 cancellations reflected in the mirror
+  ✓  spark_transform_silver completed
   ✓  Iceberg tables present
   ✓  Lakehouse is readable and populated
   ✓  dbt marts present
   ✓  dbt marts populated
 
-  Total: 12 passed, 0 failed, 0 skipped
+  Total: 13 passed, 0 failed, 0 skipped
 
   All checks passed — all three pipelines verified end to end:
     Pipe 1  warehouse: dbt int/gold marts built and populated
@@ -183,16 +191,15 @@ one assertion per pipeline. Expected ending:
     Pipe 3  mirror:    counts, deletes and cancellations in ClickHouse
 ```
 
-A **skipped** check is not a passing one. If Trino is unreachable the lakehouse
-step reports `~` and the summary says the pipeline behind it is UNVERIFIED,
-rather than counting it green and claiming the stack is healthy — which is what
-it used to do, for as long as it never read the lakehouse at all (#149).
+A **skipped** check is not a passing one. If Trino is unreachable, or Airflow
+cannot be reached to trigger the silver DAG, those steps report `~` and the
+summary says the pipeline behind them is UNVERIFIED rather than counting them
+green — which is what it used to do, for as long as it never read the lakehouse
+at all (#149).
 
-The lakehouse and mart checks read what the DAGs produced, so they need at least
-one successful run of `ingest_source_to_bronze` and `spark_transform_silver`
-behind them. On a cluster deployed minutes ago they will fail honestly rather
-than pass vacuously; give the hourly schedules a run, or trigger both DAGs from
-the Airflow UI first.
+The mart check reads what the ingest DAG produced, so it still needs one
+successful run of `ingest_source_to_bronze` behind it. On a cluster deployed
+minutes ago it fails honestly rather than passing vacuously.
 
 ### Step 6 — Open the dashboards
 

@@ -70,6 +70,42 @@ def main():
     assert "Some checks failed" in out, out
     assert "all three pipelines verified" not in out, out
 
+    # The silver-trigger step decides whether Pipe 2 gets a chance to run at
+    # all before it is asserted. Its branches need a cluster to exercise, so
+    # they are pinned here with fakes instead.
+    from unittest import mock
+
+    def outcome(cli, states):
+        """Run run_silver_pipeline with a canned CLI and state sequence."""
+        tt.results[:] = []
+        seq = list(states)
+        # DAG_WAIT_SECONDS is pinned short. Left at its 900s default the
+        # timeout case spins on real wall-clock -- sleep is mocked, time.time
+        # is not -- so this would only finish quickly if the caller happened
+        # to export SILVER_DAG_TIMEOUT. A check that needs the environment to
+        # terminate is not a check.
+        fake_proc = mock.Mock(returncode=0, stdout="", stderr="")
+        with (
+            mock.patch.object(tt, "DAG_WAIT_SECONDS", 1),
+            mock.patch.object(tt, "_airflow_cli", return_value=cli),
+            mock.patch.object(
+                tt, "_latest_run_state",
+                side_effect=lambda _: seq.pop(0) if seq else None,
+            ),
+            mock.patch.object(tt.subprocess, "run", return_value=fake_proc),
+            mock.patch.object(tt.time, "sleep"),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            tt.run_silver_pipeline()
+        return [r[0] for r in tt.results]
+
+    CLI = ["fake", "airflow"]
+    assert outcome(None, []) == ["SKIP"], "no Airflow reachable must skip, not pass"
+    assert outcome(CLI, ["queued", "success"]) == ["PASS"], "a successful run must pass"
+    assert outcome(CLI, ["running", "failed"]) == ["FAIL"], "a failed DAG must fail"
+    # Never settling is a failure, not a pass: Pipe 2 is unverified either way.
+    assert outcome(CLI, ["queued"] * 50) == ["FAIL"], "a run that never settles must fail"
+
     print("e2e result accounting: OK")
 
 

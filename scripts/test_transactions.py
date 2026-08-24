@@ -36,8 +36,11 @@ Usage (Kubernetes — port-forward first):
 """
 
 import io
+import json
 import os
 import random
+import shutil
+import subprocess  # nosec B404 - fixed argv, no shell
 import sys
 import tempfile
 import time
@@ -522,6 +525,121 @@ def verify_clickhouse(txn, max_order_id):
         print(f"  {status:<15} {count:>6}")
 
 
+DAG_WAIT_SECONDS = int(os.environ.get("SILVER_DAG_TIMEOUT", "900"))
+
+
+def _airflow_cli():
+    """How to reach the Airflow CLI here, or None.
+
+    Checked in the order the platform is usually run: a Kubernetes cluster with
+    the etl namespace, then docker-compose. Returns the argv prefix that a dag
+    subcommand is appended to.
+    """
+    if shutil.which("kubectl"):
+        probe = subprocess.run(  # nosec B603 B607 - fixed argv, no shell
+            ["kubectl", "get", "deploy/airflow-scheduler", "-n", "etl"],
+            capture_output=True, text=True,
+        )
+        if probe.returncode == 0:
+            return ["kubectl", "exec", "-n", "etl", "deploy/airflow-scheduler",
+                    "--", "airflow"]
+    if shutil.which("docker"):
+        probe = subprocess.run(  # nosec B603 B607 - fixed argv, no shell
+            ["docker", "compose", "ps", "-q", "airflow-scheduler"],
+            capture_output=True, text=True,
+        )
+        if probe.returncode == 0 and probe.stdout.strip():
+            return ["docker", "compose", "exec", "-T", "airflow-scheduler",
+                    "airflow"]
+    return None
+
+
+def _latest_run_state(cli):
+    """State of the most recent spark_transform_silver run, or None."""
+    out = subprocess.run(  # nosec B603 - fixed argv, no shell
+        # dag_id is positional in Airflow 3; "-d" makes the CLI print help
+        # and exit 2, which read as "no runs" rather than as a broken command.
+        cli + ["dags", "list-runs", "spark_transform_silver",
+               "--no-backfill", "-o", "json"],
+        capture_output=True, text=True,
+    )
+    if out.returncode != 0:
+        return None
+    # Airflow writes its own log lines to stdout ahead of the JSON, and they
+    # contain brackets -- "[error    ] Could not configure StatsClient: [Errno
+    # -2]". Slicing from the first "[" parsed that instead of the payload and
+    # returned None every time, which the caller could not distinguish from
+    # "no runs yet": the wait loop would have polled until it timed out and
+    # then reported a healthy DAG as a failure.
+    start = out.stdout.find("[{")
+    if start == -1:
+        start = out.stdout.find("[]")
+    if start == -1:
+        return None
+    try:
+        runs = json.loads(out.stdout[start:])
+    except ValueError:
+        return None
+    return runs[0].get("state") if runs else None
+
+
+def run_silver_pipeline():
+    """Trigger spark_transform_silver and wait, before checking Trino.
+
+    Step 3 has just written Bronze. Without this, the lakehouse check asserted
+    a result nothing in the test causes: the Spark DAG runs on its own hourly
+    schedule, so on any cluster where iceberg.lake.orders did not already exist
+    it failed no matter how healthy Pipe 2 was. It reported a broken pipeline
+    when the truth was an unfinished one -- the inverse of #149 and just as
+    misleading.
+
+    Unreachable Airflow is a skip, never a pass.
+    """
+    step("STEP 6 — Run the Spark silver pipeline over the Bronze just written")
+
+    cli = _airflow_cli()
+    if cli is None:
+        skip(
+            "Could not reach Airflow to trigger spark_transform_silver",
+            "needs kubectl with the etl namespace, or a running docker-compose "
+            "airflow-scheduler. Trigger by hand and re-run: "
+            "airflow dags trigger spark_transform_silver",
+        )
+        return
+
+    before = _latest_run_state(cli)
+    trigger = subprocess.run(  # nosec B603 - fixed argv, no shell
+        cli + ["dags", "trigger", "spark_transform_silver"],
+        capture_output=True, text=True,
+    )
+    if trigger.returncode != 0:
+        fail("Could not trigger spark_transform_silver",
+             (trigger.stderr or trigger.stdout).strip()[:200])
+        return
+    print(f"  triggered; waiting up to {DAG_WAIT_SECONDS}s "
+          f"(SILVER_DAG_TIMEOUT to change)")
+
+    deadline = time.time() + DAG_WAIT_SECONDS
+    state = None
+    while time.time() < deadline:
+        time.sleep(15)
+        state = _latest_run_state(cli)
+        if state in ("success", "failed"):
+            break
+        print(f"    still {state or 'starting'}...")
+
+    if state == "success":
+        ok("spark_transform_silver completed", f"was {before or 'never run'} before")
+    elif state == "failed":
+        fail("spark_transform_silver failed",
+             "read the transform_orders task log -- 'Loaded N records from "
+             "Bronze' says whether Bronze reached it")
+    else:
+        fail(f"spark_transform_silver did not finish within {DAG_WAIT_SECONDS}s",
+             f"last state: {state or 'unknown'}")
+
+
+
 # ── Step 6: Lakehouse (Pipe 2) ────────────────────────────────────────────────
 def trino_query(sql):
     """Run one statement over Trino's REST protocol, following nextUri.
@@ -550,7 +668,7 @@ def trino_query(sql):
 
 
 def verify_lakehouse():
-    step("STEP 6 — Verify the Iceberg lakehouse (Pipe 2) through Trino")
+    step("STEP 7 — Verify the Iceberg lakehouse (Pipe 2) through Trino")
 
     if not TRINO_URL:
         skip(
@@ -607,9 +725,9 @@ def verify_lakehouse():
           "(batch lag plus merge-only semantics: the lake keeps deleted rows)")
 
 
-# ── Step 7: Warehouse marts (Pipe 1) ──────────────────────────────────────────
+# ── Step 8: Warehouse marts (Pipe 1) ──────────────────────────────────────────
 def verify_warehouse_marts():
-    step("STEP 7 — Verify the dbt marts (Pipe 1) are built and populated")
+    step("STEP 8 — Verify the dbt marts (Pipe 1) are built and populated")
 
     # Step 3 writes raw.orders_source itself, so finding rows there proves
     # nothing about the DAG. int/gold can only exist if the real dbt task
@@ -658,9 +776,9 @@ def verify_warehouse_marts():
         dest.close()
 
 
-# ── Step 8: Summary ───────────────────────────────────────────────────────────
+# ── Step 9: Summary ───────────────────────────────────────────────────────────
 def summary():
-    step("STEP 8 — Test Summary")
+    step("STEP 9 — Test Summary")
     passed = sum(1 for r in results if r[0] == "PASS")
     failed = sum(1 for r in results if r[0] == "FAIL")
     skipped = sum(1 for r in results if r[0] == "SKIP")
@@ -707,6 +825,7 @@ if __name__ == "__main__":
     txn = simulate_transactions()
 
     verify_clickhouse(txn, max_order_id=200)
+    run_silver_pipeline()
     verify_lakehouse()
     verify_warehouse_marts()
     summary()
