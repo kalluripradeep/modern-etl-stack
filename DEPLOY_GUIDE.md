@@ -168,6 +168,14 @@ failed however healthy Pipe 2 was — reporting a broken pipeline when the truth
 was an unfinished one. Waiting can take a few minutes; `SILVER_DAG_TIMEOUT`
 (default 900s) bounds it.
 
+If runs are already queued or running, the step waits for those instead of
+triggering another. The DAG is `max_active_runs=1`, so a new run joins the back
+of the queue and the step would then block on the whole backlog — which is how
+a healthy cluster reported `did not finish within 900s (last state: queued)`.
+A pending run picks up the Bronze just written anyway, since the Spark jobs read
+every retained partition. If the queue is deep, raise `SILVER_DAG_TIMEOUT` or
+clear old runs in the Airflow UI.
+
 ```text
   ✓  Seeded 200 orders into postgres-source
   ✓  Validation passed
