@@ -554,8 +554,8 @@ def _airflow_cli():
     return None
 
 
-def _latest_run_state(cli):
-    """State of the most recent spark_transform_silver run, or None."""
+def _run_states(cli):
+    """Every spark_transform_silver run state, newest first, or None."""
     out = subprocess.run(  # nosec B603 - fixed argv, no shell
         # dag_id is positional in Airflow 3; "-d" makes the CLI print help
         # and exit 2, which read as "no runs" rather than as a broken command.
@@ -580,7 +580,7 @@ def _latest_run_state(cli):
         runs = json.loads(out.stdout[start:])
     except ValueError:
         return None
-    return runs[0].get("state") if runs else None
+    return [r.get("state") for r in runs]
 
 
 def run_silver_pipeline():
@@ -607,36 +607,57 @@ def run_silver_pipeline():
         )
         return
 
-    before = _latest_run_state(cli)
-    trigger = subprocess.run(  # nosec B603 - fixed argv, no shell
-        cli + ["dags", "trigger", "spark_transform_silver"],
-        capture_output=True, text=True,
-    )
-    if trigger.returncode != 0:
-        fail("Could not trigger spark_transform_silver",
-             (trigger.stderr or trigger.stdout).strip()[:200])
-        return
-    print(f"  triggered; waiting up to {DAG_WAIT_SECONDS}s "
+    # Do not add to the queue when something is already pending. The DAG runs
+    # max_active_runs=1, so a new run goes to the BACK of whatever is waiting
+    # and this step then blocks on the entire backlog -- which is how a healthy
+    # cluster reported "did not finish within 900s (last state: queued)". A run
+    # already queued or running will pick up the Bronze just written anyway,
+    # because the jobs read every retained partition, so waiting for it is both
+    # faster and a truer test than triggering another.
+    pending = [st for st in (_run_states(cli) or []) if st in ("queued", "running")]
+    if pending:
+        print(f"  {len(pending)} run(s) already queued or running; waiting for "
+              f"those rather than adding another")
+    else:
+        trigger = subprocess.run(  # nosec B603 - fixed argv, no shell
+            cli + ["dags", "trigger", "spark_transform_silver"],
+            capture_output=True, text=True,
+        )
+        if trigger.returncode != 0:
+            fail("Could not trigger spark_transform_silver",
+                 (trigger.stderr or trigger.stdout).strip()[:200])
+            return
+        print("  triggered")
+    print(f"  waiting up to {DAG_WAIT_SECONDS}s for the queue to drain "
           f"(SILVER_DAG_TIMEOUT to change)")
 
+    # Done when nothing is queued or running any more. Watching one run's id
+    # would still have meant waiting out the backlog ahead of it.
     deadline = time.time() + DAG_WAIT_SECONDS
-    state = None
+    states = []
     while time.time() < deadline:
         time.sleep(15)
-        state = _latest_run_state(cli)
-        if state in ("success", "failed"):
+        states = _run_states(cli) or []
+        outstanding = [st for st in states if st in ("queued", "running")]
+        if not outstanding:
             break
-        print(f"    still {state or 'starting'}...")
+        print(f"    {len(outstanding)} outstanding ({', '.join(sorted(set(outstanding)))})...")
 
-    if state == "success":
-        ok("spark_transform_silver completed", f"was {before or 'never run'} before")
-    elif state == "failed":
+    outstanding = [st for st in states if st in ("queued", "running")]
+    if outstanding:
+        fail(f"spark_transform_silver still busy after {DAG_WAIT_SECONDS}s",
+             f"{len(outstanding)} run(s) {', '.join(sorted(set(outstanding)))}. A "
+             f"backlog drains one run at a time (max_active_runs=1); raise "
+             f"SILVER_DAG_TIMEOUT, or clear old runs in the Airflow UI")
+    elif states and states[0] == "success":
+        ok("spark_transform_silver completed")
+    elif states and states[0] == "failed":
         fail("spark_transform_silver failed",
              "read the transform_orders task log -- 'Loaded N records from "
              "Bronze' says whether Bronze reached it")
     else:
-        fail(f"spark_transform_silver did not finish within {DAG_WAIT_SECONDS}s",
-             f"last state: {state or 'unknown'}")
+        fail("Could not read spark_transform_silver run state",
+             f"last seen: {states[:1] or 'nothing'}")
 
 
 

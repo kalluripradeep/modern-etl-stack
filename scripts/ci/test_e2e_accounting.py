@@ -89,8 +89,8 @@ def main():
             mock.patch.object(tt, "DAG_WAIT_SECONDS", 1),
             mock.patch.object(tt, "_airflow_cli", return_value=cli),
             mock.patch.object(
-                tt, "_latest_run_state",
-                side_effect=lambda _: seq.pop(0) if seq else None,
+                tt, "_run_states",
+                side_effect=lambda _: seq.pop(0) if seq else [],
             ),
             mock.patch.object(tt.subprocess, "run", return_value=fake_proc),
             mock.patch.object(tt.time, "sleep"),
@@ -101,10 +101,27 @@ def main():
 
     CLI = ["fake", "airflow"]
     assert outcome(None, []) == ["SKIP"], "no Airflow reachable must skip, not pass"
-    assert outcome(CLI, ["queued", "success"]) == ["PASS"], "a successful run must pass"
-    assert outcome(CLI, ["running", "failed"]) == ["FAIL"], "a failed DAG must fail"
-    # Never settling is a failure, not a pass: Pipe 2 is unverified either way.
-    assert outcome(CLI, ["queued"] * 50) == ["FAIL"], "a run that never settles must fail"
+    assert outcome(CLI, [[], ["success"]]) == ["PASS"], "a drained queue ending in success must pass"
+    assert outcome(CLI, [[], ["failed"]]) == ["FAIL"], "a failed DAG must fail"
+    # Never draining is a failure, not a pass: Pipe 2 is unverified either way.
+    assert outcome(CLI, [["queued"]] * 50) == ["FAIL"], "a queue that never drains must fail"
+
+    # The reason #155 timed out on a healthy cluster: it triggered a run behind
+    # an existing backlog and then waited for that run, so the step blocked on
+    # the whole queue. With work already pending it must wait, not pile on.
+    tt.results[:] = []
+    seq = [["queued", "running"], ["success", "success"]]
+    with (
+        mock.patch.object(tt, "DAG_WAIT_SECONDS", 1),
+        mock.patch.object(tt, "_airflow_cli", return_value=CLI),
+        mock.patch.object(tt, "_run_states", side_effect=lambda _: seq.pop(0) if seq else []),
+        mock.patch.object(tt.subprocess, "run") as spawned,
+        mock.patch.object(tt.time, "sleep"),
+        contextlib.redirect_stdout(io.StringIO()),
+    ):
+        tt.run_silver_pipeline()
+    assert spawned.call_count == 0, "must not trigger when a run is already pending"
+    assert [r[0] for r in tt.results] == ["PASS"], tt.results
 
     print("e2e result accounting: OK")
 
