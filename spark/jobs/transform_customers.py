@@ -83,7 +83,7 @@ def main():
     
     try:
         print("Starting Spark Job: Customer Bronze to Silver")
-        bronze_df = load_bronze(spark, "customers", "silver.lake.customers")
+        bronze_df = load_bronze(spark, "customers", "silver.lake.customers", "customer_id")
         if bronze_df is None:
             return
         silver_df = transform_customers(bronze_df)

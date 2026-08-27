@@ -92,7 +92,7 @@ def main():
     spark = create_spark_session()
 
     try:
-        bronze_df = load_bronze(spark, "orders", "silver.lake.orders")
+        bronze_df = load_bronze(spark, "orders", "silver.lake.orders", "order_id")
         if bronze_df is None:
             return
         silver_df = transform_to_silver(bronze_df)

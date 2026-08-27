@@ -75,7 +75,7 @@ def main():
     
     try:
         print("Starting Spark Job: OrderItems Bronze to Silver")
-        bronze_df = load_bronze(spark, "order_items", "silver.lake.order_items")
+        bronze_df = load_bronze(spark, "order_items", "silver.lake.order_items", "item_id")
         if bronze_df is None:
             return
         silver_df = transform_order_items(bronze_df)

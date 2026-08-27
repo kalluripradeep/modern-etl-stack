@@ -55,7 +55,7 @@ def main():
     #    This is the case that used to exit 0 and take Pipe 2 down silently.
     with mock.patch.object(bronze, "read_all_partitions", return_value=None):
         try:
-            bronze.load_bronze(FakeSpark(table_exists=False), "orders", "silver.lake.orders")
+            bronze.load_bronze(FakeSpark(table_exists=False), "orders", "silver.lake.orders", "order_id")
         except RuntimeError as e:
             assert "never been initialised" in str(e), str(e)
             assert "silver.lake.orders" in str(e), str(e)
@@ -64,9 +64,10 @@ def main():
             raise AssertionError("no data and no table must raise, not return")
 
     # 2. An empty frame is the same condition as no frame at all.
-    with mock.patch.object(bronze, "read_all_partitions", return_value=FakeDF(0)):
+    with (mock.patch.object(bronze, "read_all_partitions", return_value=FakeDF(0)),
+          mock.patch.object(bronze, "_latest_per_key", side_effect=lambda d, k: d)):
         try:
-            bronze.load_bronze(FakeSpark(table_exists=False), "orders", "silver.lake.orders")
+            bronze.load_bronze(FakeSpark(table_exists=False), "orders", "silver.lake.orders", "order_id")
         except RuntimeError:
             pass
         else:
@@ -75,14 +76,15 @@ def main():
     # 3. No Bronze data but the table exists: a genuinely quiet run.
     with mock.patch.object(bronze, "read_all_partitions", return_value=None):
         assert bronze.load_bronze(
-            FakeSpark(table_exists=True), "orders", "silver.lake.orders"
+            FakeSpark(table_exists=True), "orders", "silver.lake.orders", "order_id"
         ) is None
 
     # 4. Rows present: hand them back, and do not consult the catalog at all.
     df = FakeDF(42)
     spark = FakeSpark(table_exists=False)
-    with mock.patch.object(bronze, "read_all_partitions", return_value=df):
-        assert bronze.load_bronze(spark, "orders", "silver.lake.orders") is df
+    with (mock.patch.object(bronze, "read_all_partitions", return_value=df),
+          mock.patch.object(bronze, "_latest_per_key", side_effect=lambda d, k: d)):
+        assert bronze.load_bronze(spark, "orders", "silver.lake.orders", "order_id") is df
     assert spark.catalog.asked == [], "the happy path should not need tableExists"
 
     # 5. The reader must target the table prefix, not one dated partition.
@@ -106,7 +108,7 @@ def main():
     boom = RuntimeError("UncheckedSQLException: relation iceberg_tables does not exist")
     with mock.patch.object(bronze, "read_all_partitions", return_value=None):
         try:
-            bronze.load_bronze(FakeSpark(table_exists=boom), "orders", "silver.lake.orders")
+            bronze.load_bronze(FakeSpark(table_exists=boom), "orders", "silver.lake.orders", "order_id")
         except RuntimeError as e:
             assert "never been initialised" in str(e), (
                 "a catalog that raises should still produce the actionable "
@@ -114,6 +116,54 @@ def main():
             )
         else:
             raise AssertionError("a raising catalog must still raise on no data")
+
+    # 7. Reading every partition means a key recurs once per run that touched
+    #    it, and MERGE INTO rejects that with MERGE_CARDINALITY_VIOLATION.
+    #    Deduping to the newest row per key is what makes the prefix read
+    #    usable at all, so it is asserted rather than assumed.
+    calls = {}
+
+    class FakeCol:
+        def __init__(self, name):
+            self.name = name
+
+        def desc(self):
+            calls["ordered_desc_on"] = self.name
+            return self
+
+        def __eq__(self, other):
+            return ("eq", self.name, other)
+
+    class DedupeDF:
+        def __init__(self):
+            self.dropped = None
+
+        def withColumn(self, *_):
+            return self
+
+        def filter(self, cond):
+            calls["filtered"] = cond
+            return self
+
+        def drop(self, name):
+            self.dropped = name
+            return self
+
+    fake_window = mock.MagicMock()
+    fake_window.partitionBy.return_value.orderBy.return_value = "w"
+    with mock.patch.dict(sys.modules, {
+        "pyspark.sql": mock.MagicMock(Window=fake_window),
+        "pyspark.sql.functions": mock.MagicMock(
+            col=FakeCol, row_number=mock.MagicMock()),
+    }):
+        out = bronze._latest_per_key(DedupeDF(), "order_id")
+
+    assert fake_window.partitionBy.call_args[0][0] == "order_id", (
+        "must partition by the primary key")
+    assert calls.get("ordered_desc_on") == "updated_at", (
+        "must keep the newest row, ordering by updated_at descending, "
+        f"got {calls.get('ordered_desc_on')!r}")
+    assert out.dropped == "_row", "the helper column must not reach the MERGE"
 
     print("bronze load contract: OK")
 

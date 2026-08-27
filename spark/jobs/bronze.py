@@ -54,7 +54,7 @@ def read_all_partitions(spark, source_table):
     return df
 
 
-def load_bronze(spark, source_table, iceberg_table):
+def load_bronze(spark, source_table, iceberg_table, primary_key):
     """Return the Bronze DataFrame, or None when there is genuinely nothing to do.
 
     Raises when there is no Bronze data *and* the target Iceberg table does not
@@ -63,6 +63,8 @@ def load_bronze(spark, source_table, iceberg_table):
     for as long as it did.
     """
     df = read_all_partitions(spark, source_table)
+    if df is not None:
+        df = _latest_per_key(df, primary_key)
     count = df.count() if df is not None else 0
 
     if count == 0:
@@ -112,3 +114,34 @@ def _table_exists(spark, iceberg_table):
         print(f"Could not query the catalog for {iceberg_table} "
               f"({type(e).__name__}); treating it as absent.")
         return False
+
+
+def _latest_per_key(df, primary_key):
+    """Keep one row per key, the most recently updated.
+
+    Reading every retained partition means the same key appears once per run
+    that touched it: a row extracted on Monday and updated on Wednesday is in
+    both days' Bronze. MERGE INTO refuses that outright --
+
+      [MERGE_CARDINALITY_VIOLATION] The ON search condition of the MERGE
+      statement matched a single row from the target table with multiple rows
+      of the source table
+
+    -- and it is right to, because which of the duplicates should win is not
+    something SQL can guess. Reading a single day never hit this, so it arrived
+    with #151 rather than being latent.
+
+    updated_at is the answer: the ingestion DAG extracts on it as its
+    high-water mark, so the largest value is the newest version of the row by
+    the same definition the pipeline already uses. Ties keep an arbitrary row,
+    which is correct -- rows sharing a key and an updated_at are the same
+    version extracted twice.
+    """
+    from pyspark.sql import Window
+    from pyspark.sql.functions import col, row_number
+
+    ordering = Window.partitionBy(primary_key).orderBy(col("updated_at").desc())
+    deduped = (df.withColumn("_row", row_number().over(ordering))
+                 .filter(col("_row") == 1)
+                 .drop("_row"))
+    return deduped
