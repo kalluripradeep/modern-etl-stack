@@ -155,11 +155,18 @@ trino-worker-xxx (x2)               1/1     Running
 bash scripts/test_e2e.sh
 ```
 
-This port-forwards the services, seeds 200 orders, runs the extract → MinIO →
-warehouse pipeline, fires live transactions (updates, cancellations, hard
-deletes), verifies the ClickHouse mirror caught every change, **triggers
-`spark_transform_silver` and waits for it**, then reads the Iceberg lakehouse
-through Trino and checks the dbt marts — one assertion per pipeline.
+This port-forwards the services, seeds 200 orders, **triggers
+`ingest_source_to_bronze` and waits**, fires live transactions (updates,
+cancellations, hard deletes), verifies the ClickHouse mirror caught every
+change, **triggers `spark_transform_silver` and waits**, then reads the Iceberg
+lakehouse through Trino and checks the dbt marts — one assertion per pipeline.
+
+Both DAGs are triggered rather than re-implemented. The test used to extract and
+write its own Bronze parquet, which put a second writer in the DAG's own prefix:
+files named without a run stamp, so each run overwrote the last, and a different
+type inference to the DAG's, so Spark refused the whole prefix with
+`SchemaColumnConvertNotSupportedException: column: [order_id]`. One writer avoids
+the class.
 
 The Spark trigger matters. Without it the lakehouse check asserted a result
 nothing in the test causes: the silver DAG runs on its own hourly schedule, so

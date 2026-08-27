@@ -90,7 +90,7 @@ def main():
             mock.patch.object(tt, "_airflow_cli", return_value=cli),
             mock.patch.object(
                 tt, "_runs",
-                side_effect=lambda _: seq.pop(0) if seq else [],
+                side_effect=lambda *_: seq.pop(0) if seq else [],
             ),
             mock.patch.object(tt.subprocess, "run", return_value=fake_proc),
             mock.patch.object(tt.time, "sleep"),
@@ -115,7 +115,7 @@ def main():
     with (
         mock.patch.object(tt, "DAG_WAIT_SECONDS", 1),
         mock.patch.object(tt, "_airflow_cli", return_value=CLI),
-        mock.patch.object(tt, "_runs", side_effect=lambda _: seq.pop(0) if seq else []),
+        mock.patch.object(tt, "_runs", side_effect=lambda *_: seq.pop(0) if seq else []),
         mock.patch.object(tt.subprocess, "run") as spawned,
         mock.patch.object(tt.time, "sleep"),
         contextlib.redirect_stdout(io.StringIO()),
@@ -143,6 +143,28 @@ def main():
     detail = tt._stuck_detail(fresh)
     assert "backlog drains" in detail, detail
     assert "stuck run" not in detail, detail
+
+    # Step 3 delegates to the ingestion DAG now, so the same helper drives two
+    # DAGs. It must return False on anything but success -- run_extract_pipeline
+    # only checks the warehouse when it returns True, and a truthy return on a
+    # failed run would put us back to asserting a result nothing caused.
+    for states, expected, why in [
+        ([[], [{"state": "success"}]], True, "success must report True"),
+        ([[], [{"state": "failed"}]], False, "a failed DAG must report False"),
+        ([[{"state": "queued"}]] * 40, False, "a queue that never drains must report False"),
+    ]:
+        tt.results[:] = []
+        seq = list(states)
+        with (
+            mock.patch.object(tt, "DAG_WAIT_SECONDS", 1),
+            mock.patch.object(tt, "_runs", side_effect=lambda *_: seq.pop(0) if seq else []),
+            mock.patch.object(tt.subprocess, "run",
+                              return_value=mock.Mock(returncode=0, stdout="", stderr="")),
+            mock.patch.object(tt.time, "sleep"),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            got = tt._wait_for_dag(["fake"], "ingest_source_to_bronze")
+        assert got is expected, f"{why}: got {got!r}"
 
     print("e2e result accounting: OK")
 

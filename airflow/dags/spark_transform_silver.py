@@ -6,7 +6,9 @@ Parallelized transformation tasks with NEW Weekly Iceberg Maintenance.
 import os
 from datetime import datetime, timedelta
 from airflow import DAG
+from airflow.exceptions import AirflowException
 from airflow.providers.standard.operators.bash import BashOperator
+from airflow.providers.standard.operators.python import PythonOperator
 
 # Fetch cluster-specific configurations from environment (set via Docker or Helm)
 SPARK_MASTER_URL = os.getenv('SPARK_MASTER_URL', 'spark://spark-master:7077')
@@ -233,7 +235,35 @@ with DAG(
     # under all_success it would have taken three healthy tables down with the
     # one broken one. Maintenance runs too, because expiring snapshots is what
     # releases disk and a failed transform is no reason to stop reclaiming it.
+    def _surface_transform_failure(**_):
+        """Fail the run when any transform failed.
+
+        trigger_rule='all_done' on the downstream tasks stops one table's
+        failure blocking the other three, which is what it is there for. It
+        also means the last task in the chain succeeds regardless, and the DAG
+        run takes its state from that -- so #144 saw transform_orders red and
+        the run green at the same time, which is the worst of both.
+
+        This task runs only when something upstream failed (one_failed) and is
+        skipped otherwise, so a clean run stays green while a broken table can
+        no longer hide behind a successful maintenance step.
+        """
+        raise AirflowException(
+            "At least one silver transform failed - see the red task above. "
+            "The run is failed here because trigger_rule='all_done' lets the "
+            "rest of the chain finish, which would otherwise leave the run "
+            "green with a broken table."
+        )
+
+    surface_failure = PythonOperator(
+        task_id='surface_transform_failure',
+        python_callable=_surface_transform_failure,
+        trigger_rule='one_failed',
+    )
+
     transform_orders >> transform_customers >> transform_products >> transform_order_items >> maintenance_task
+    [transform_orders, transform_customers, transform_products,
+     transform_order_items, maintenance_task] >> surface_failure
 
     # Maintenance is logically downstream, but you can schedule it separately.
     # Here, we trigger it once a week, but the task exists in the same DAG for visibility.

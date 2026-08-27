@@ -35,14 +35,12 @@ Usage (Kubernetes — port-forward first):
   SOURCE_DB_PORT=5433 DEST_DB_PORT=5434 python scripts/test_transactions.py
 """
 
-import io
 import json
 import os
 import random
 import shutil
 import subprocess  # nosec B404 - fixed argv, no shell
 import sys
-import tempfile
 import time
 from datetime import datetime, timedelta
 
@@ -74,7 +72,6 @@ CLICKHOUSE_USER = os.environ.get("CLICKHOUSE_USER", "chuser")
 CLICKHOUSE_PASSWORD = os.environ.get("CLICKHOUSE_PASSWORD", "chpass")
 # Unset means "not deployed here", which is a skip rather than a failure.
 TRINO_URL       = os.environ.get("TRINO_URL", "")
-CHUNK_DIR       = os.path.join(tempfile.gettempdir(), "etl_test_chunks")
 
 STATUSES  = ["pending", "processing", "shipped", "delivered", "cancelled"]
 fake = Faker()
@@ -275,110 +272,64 @@ def register_connector():
 
 # ── Step 3: Run extract pipeline ──────────────────────────────────────────────
 def run_extract_pipeline():
-    step("STEP 3 — Extract → Validate → Load (Bronze)")
+    """Run the real ingestion DAG over the rows step 1 seeded.
 
-    import glob as glob_module
-    import pandas as pd
-    from minio import Minio
+    This used to re-implement the extract: read the source with pandas, write
+    parquet, upload it, COPY into raw. Every part of that was a second
+    implementation of something the platform already does, and each one caused
+    a bug.
 
-    os.makedirs(CHUNK_DIR, exist_ok=True)
+    It wrote to bronze/orders/ while the DAG writes <table>_source/, so Pipe 2
+    never saw any of it (#152). Pointing it at orders_source/ fixed that and
+    created two worse problems: the files were named part-00000.parquet with no
+    run stamp, so every run overwrote the last -- the exact collision the DAG's
+    run stamp exists to prevent -- and pandas over a raw psycopg2 connection
+    infers different types than the DAG's SQLAlchemy engine, so the two writers
+    disagreed on order_id and Spark refused the whole prefix:
 
-    # --- Extract ---
-    conn = psycopg2.connect(**SOURCE)
-    chunk_num, total_rows = 0, 0
-    for chunk in pd.read_sql("SELECT order_id,customer_id,order_date,total_amount,status,created_at,updated_at FROM orders ORDER BY order_id", conn, chunksize=50):
-        path = f"{CHUNK_DIR}/part-{chunk_num:05d}.parquet"
-        chunk.to_parquet(path, index=False, compression="snappy")
-        total_rows += len(chunk)
-        chunk_num += 1
-    conn.close()
-    print(f"  extracted {total_rows} rows into {chunk_num} parquet chunk(s)")
+      SchemaColumnConvertNotSupportedException: column: [order_id],
+      physicalType: INT64, logicalType: int
 
-    # --- Validate ---
-    chunk_files = sorted(glob_module.glob(f"{CHUNK_DIR}/part-*.parquet"))
-    revenue = 0.0
-    for f in chunk_files:
-        df = pd.read_parquet(f)
-        assert df["order_id"].notna().all(), f"null order_id in {f}"
-        assert (df["total_amount"] >= 0).all(), f"negative amount in {f}"
-        revenue += float(df["total_amount"].sum())
-        del df
-    ok("Validation passed", f"{total_rows} rows, ${revenue:,.2f} revenue")
+    And the COPY into raw.orders_source moved the ingest DAG's high-water mark
+    without leaving Bronze behind, which starved Pipe 2 of orders entirely
+    (#144).
 
-    # --- Load to MinIO bronze ---
+    One writer, then. Triggering the DAG also answers the original complaint in
+    #149 -- that this step proved the pattern worked rather than that the
+    pipeline did.
+    """
+    step("STEP 3 — Run the ingestion DAG over the seeded rows")
+
+    cli = _airflow_cli()
+    if cli is None:
+        skip(
+            "Could not reach Airflow to trigger ingest_source_to_bronze",
+            "needs kubectl with the etl namespace, or a running docker-compose "
+            "airflow-scheduler. Trigger by hand and re-run: "
+            "airflow dags trigger ingest_source_to_bronze",
+        )
+        return
+
+    if not _wait_for_dag(cli, "ingest_source_to_bronze"):
+        return
+
+    # The DAG is the only writer now, so checking its output is checking the
+    # platform rather than this script's own arithmetic.
+    dest = psycopg2.connect(**DEST)
     try:
-        client = Minio(
-            MINIO_ENDPOINT.replace("http://", "").replace("https://", ""),
-            access_key=MINIO_USER,
-            secret_key=MINIO_PASSWORD,
-            secure=False,
-        )
-        if not client.bucket_exists("bronze"):
-            client.make_bucket("bronze")
-        date_prefix = datetime.now().strftime("%Y/%m/%d")
-        for i, fp in enumerate(chunk_files):
-            # orders_source/, not orders/. The ingest DAG writes
-            # "<table>_source/YYYY/MM/DD/" and the Spark silver job reads that
-            # prefix, so parquet under "orders/" was invisible to Pipe 2.
-            #
-            # That alone would be a harmless naming slip. What made it a bug is
-            # the COPY below: it upserts these rows into raw.orders_source,
-            # which is where the ingest DAG reads its high-water mark
-            # (SELECT MAX(updated_at) FROM raw.orders_source). So every run of
-            # this test advanced the orders watermark while writing no Bronze
-            # the lakehouse could see, and the next real ingest found nothing
-            # new to extract. orders starved; the other three tables, which
-            # this test never loads into raw, kept flowing. That is exactly the
-            # state #144 reported -- silver.lake held customers, products and
-            # order_items, and never orders.
-            client.fput_object("bronze", f"orders_source/{date_prefix}/part-{i:05d}.parquet", fp)
-        ok(f"Uploaded {len(chunk_files)} parquet file(s) to MinIO s3://bronze/orders_source/{date_prefix}/")
-    except Exception as e:
-        fail("MinIO upload failed", str(e))
-        print("  → Make sure MinIO is running and port-forwarded if using K8s")
-
-    # --- Load to the warehouse raw layer via COPY (same target as the DAG) ---
-    conn = psycopg2.connect(**DEST)
-    cur = conn.cursor()
-    cur.execute("CREATE SCHEMA IF NOT EXISTS raw")
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS raw.orders_source (
-            order_id     BIGINT PRIMARY KEY,
-            customer_id  BIGINT,
-            order_date   TIMESTAMP,
-            total_amount NUMERIC(18,2),
-            status       TEXT,
-            created_at   TIMESTAMP,
-            updated_at   TIMESTAMP
-        )
-    """)
-    conn.commit()
-
-    loaded = 0
-    for fp in chunk_files:
-        df = pd.read_parquet(fp)
-        buf = io.StringIO()
-        df.to_csv(buf, index=False, header=False)
-        buf.seek(0)
-        cur.execute("CREATE TEMP TABLE IF NOT EXISTS orders_stage (LIKE raw.orders_source) ON COMMIT PRESERVE ROWS")
-        cur.execute("TRUNCATE orders_stage")
-        cur.copy_expert("COPY orders_stage (order_id,customer_id,order_date,total_amount,status,created_at,updated_at) FROM STDIN WITH CSV", buf)
-        cur.execute("""
-            INSERT INTO raw.orders_source SELECT * FROM orders_stage
-            ON CONFLICT (order_id) DO UPDATE SET
-                total_amount = EXCLUDED.total_amount,
-                status       = EXCLUDED.status,
-                updated_at   = EXCLUDED.updated_at
-        """)
-        conn.commit()
-        loaded += len(df)
-        del df
-    cur.close()
-    conn.close()
-    ok(f"Loaded {loaded} rows into raw.orders_source via COPY (staging upsert)")
+        with dest.cursor() as cur:
+            cur.execute("SELECT count(*) FROM raw.orders_source")
+            rows = cur.fetchone()[0]
+    finally:
+        dest.close()
+    if rows > 0:
+        ok("Ingestion DAG loaded the warehouse", f"raw.orders_source holds {rows} rows")
+    else:
+        fail("raw.orders_source is empty after a successful ingestion run",
+             "the DAG reported success but extracted nothing")
 
 
-# ── Step 4: Simulate live transactions ────────────────────────────────────────
+
 def simulate_transactions():
     step("STEP 4 — Simulate live transactions on postgres-source (UPDATE / DELETE)")
 
@@ -554,109 +505,28 @@ def _airflow_cli():
     return None
 
 
-def _runs(cli):
-    """Every spark_transform_silver run, newest first, or None."""
+def _runs(cli, dag_id):
+    """Every run of `dag_id`, newest first, or None."""
     out = subprocess.run(  # nosec B603 - fixed argv, no shell
-        # dag_id is positional in Airflow 3; "-d" makes the CLI print help
-        # and exit 2, which read as "no runs" rather than as a broken command.
-        cli + ["dags", "list-runs", "spark_transform_silver",
-               "--no-backfill", "-o", "json"],
+        # dag_id is positional in Airflow 3; "-d" makes the CLI print help and
+        # exit 2, which read as "no runs" rather than as a broken command.
+        cli + ["dags", "list-runs", dag_id, "--no-backfill", "-o", "json"],
         capture_output=True, text=True,
     )
     if out.returncode != 0:
         return None
     # Airflow writes its own log lines to stdout ahead of the JSON, and they
     # contain brackets -- "[error    ] Could not configure StatsClient: [Errno
-    # -2]". Slicing from the first "[" parsed that instead of the payload and
-    # returned None every time, which the caller could not distinguish from
-    # "no runs yet": the wait loop would have polled until it timed out and
-    # then reported a healthy DAG as a failure.
+    # -2]". Slicing from the first "[" parsed that instead of the payload.
     start = out.stdout.find("[{")
     if start == -1:
         start = out.stdout.find("[]")
     if start == -1:
         return None
     try:
-        runs = json.loads(out.stdout[start:])
+        return json.loads(out.stdout[start:])
     except ValueError:
         return None
-    return runs
-
-
-def run_silver_pipeline():
-    """Trigger spark_transform_silver and wait, before checking Trino.
-
-    Step 3 has just written Bronze. Without this, the lakehouse check asserted
-    a result nothing in the test causes: the Spark DAG runs on its own hourly
-    schedule, so on any cluster where iceberg.lake.orders did not already exist
-    it failed no matter how healthy Pipe 2 was. It reported a broken pipeline
-    when the truth was an unfinished one -- the inverse of #149 and just as
-    misleading.
-
-    Unreachable Airflow is a skip, never a pass.
-    """
-    step("STEP 6 — Run the Spark silver pipeline over the Bronze just written")
-
-    cli = _airflow_cli()
-    if cli is None:
-        skip(
-            "Could not reach Airflow to trigger spark_transform_silver",
-            "needs kubectl with the etl namespace, or a running docker-compose "
-            "airflow-scheduler. Trigger by hand and re-run: "
-            "airflow dags trigger spark_transform_silver",
-        )
-        return
-
-    # Do not add to the queue when something is already pending. The DAG runs
-    # max_active_runs=1, so a new run goes to the BACK of whatever is waiting
-    # and this step then blocks on the entire backlog -- which is how a healthy
-    # cluster reported "did not finish within 900s (last state: queued)". A run
-    # already queued or running will pick up the Bronze just written anyway,
-    # because the jobs read every retained partition, so waiting for it is both
-    # faster and a truer test than triggering another.
-    pending = [r for r in (_runs(cli) or []) if r.get("state") in ("queued", "running")]
-    if pending:
-        print(f"  {len(pending)} run(s) already queued or running; waiting for "
-              f"those rather than adding another")
-    else:
-        trigger = subprocess.run(  # nosec B603 - fixed argv, no shell
-            cli + ["dags", "trigger", "spark_transform_silver"],
-            capture_output=True, text=True,
-        )
-        if trigger.returncode != 0:
-            fail("Could not trigger spark_transform_silver",
-                 (trigger.stderr or trigger.stdout).strip()[:200])
-            return
-        print("  triggered")
-    print(f"  waiting up to {DAG_WAIT_SECONDS}s for the queue to drain "
-          f"(SILVER_DAG_TIMEOUT to change)")
-
-    # Done when nothing is queued or running any more. Watching one run's id
-    # would still have meant waiting out the backlog ahead of it.
-    deadline = time.time() + DAG_WAIT_SECONDS
-    runs = []
-    while time.time() < deadline:
-        time.sleep(15)
-        runs = _runs(cli) or []
-        outstanding = [r for r in runs if r.get("state") in ("queued", "running")]
-        if not outstanding:
-            break
-        print(f"    {len(outstanding)} outstanding "
-              f"({', '.join(sorted({r['state'] for r in outstanding}))})...")
-
-    outstanding = [r for r in runs if r.get("state") in ("queued", "running")]
-    if outstanding:
-        fail(f"spark_transform_silver still busy after {DAG_WAIT_SECONDS}s",
-             _stuck_detail(outstanding))
-    elif runs and runs[0].get("state") == "success":
-        ok("spark_transform_silver completed")
-    elif runs and runs[0].get("state") == "failed":
-        fail("spark_transform_silver failed",
-             "read the transform_orders task log -- 'Loaded N records from "
-             "Bronze' says whether Bronze reached it")
-    else:
-        fail("Could not read spark_transform_silver run state",
-             f"last seen: {runs[:1] or 'nothing'}")
 
 
 def _stuck_detail(outstanding):
@@ -664,9 +534,9 @@ def _stuck_detail(outstanding):
 
     A backlog and a run stuck in "running" since last week look identical from
     the outside -- both report "queued" forever -- but the remedies are
-    opposite: wait longer, versus go and kill something. #144 spent a round
-    trip on that, because the message only offered "raise the timeout" while
-    the real blocker was a run that had been running for nine days.
+    opposite: wait longer, versus go and kill something. #144 spent a round trip
+    on that, because the message only offered "raise the timeout" while the real
+    blocker was a run that had been running for nine days.
     """
     kinds = ', '.join(sorted({r['state'] for r in outstanding}))
     oldest = min((r for r in outstanding if r.get('start_date')),
@@ -683,13 +553,80 @@ def _stuck_detail(outstanding):
         if age_days >= 1:
             return (detail + f"The oldest has been running since {started} "
                     f"({age_days} day(s)) -- that is a stuck run holding the "
-                    f"only active slot (max_active_runs=1), not a backlog. "
-                    f"Mark it failed in the Airflow UI; deleting it often "
-                    f"errors while it is still active.")
+                    f"only active slot (max_active_runs=1), not a backlog. Mark "
+                    f"it failed in the Airflow UI; deleting it often errors "
+                    f"while it is still active.")
         detail += f"Oldest started {started}. "
-    return (detail + "A backlog drains one run at a time "
-            "(max_active_runs=1); raise SILVER_DAG_TIMEOUT, or clear old runs "
-            "in the Airflow UI.")
+    return (detail + "A backlog drains one run at a time (max_active_runs=1); "
+            "raise SILVER_DAG_TIMEOUT, or clear old runs in the Airflow UI.")
+
+
+def _wait_for_dag(cli, dag_id):
+    """Trigger `dag_id` unless already busy, then wait. True only on success.
+
+    Never adds to the queue when something is pending. These DAGs run
+    max_active_runs=1, so a new run joins the BACK of whatever is waiting and
+    the wait then covers the whole backlog -- which is how a healthy cluster
+    reported "did not finish within 900s (last state: queued)". A run already
+    queued or running does the same work.
+    """
+    pending = [r for r in (_runs(cli, dag_id) or [])
+               if r.get("state") in ("queued", "running")]
+    if pending:
+        print(f"  {len(pending)} {dag_id} run(s) already queued or running; "
+              f"waiting for those rather than adding another")
+    else:
+        trigger = subprocess.run(  # nosec B603 - fixed argv, no shell
+            cli + ["dags", "trigger", dag_id], capture_output=True, text=True,
+        )
+        if trigger.returncode != 0:
+            fail(f"Could not trigger {dag_id}",
+                 (trigger.stderr or trigger.stdout).strip()[:200])
+            return False
+        print(f"  triggered {dag_id}")
+    print(f"  waiting up to {DAG_WAIT_SECONDS}s for the queue to drain "
+          f"(SILVER_DAG_TIMEOUT to change)")
+
+    deadline = time.time() + DAG_WAIT_SECONDS
+    runs = []
+    while time.time() < deadline:
+        time.sleep(15)
+        runs = _runs(cli, dag_id) or []
+        outstanding = [r for r in runs if r.get("state") in ("queued", "running")]
+        if not outstanding:
+            break
+        print(f"    {len(outstanding)} outstanding "
+              f"({', '.join(sorted({r['state'] for r in outstanding}))})...")
+
+    outstanding = [r for r in runs if r.get("state") in ("queued", "running")]
+    if outstanding:
+        fail(f"{dag_id} still busy after {DAG_WAIT_SECONDS}s", _stuck_detail(outstanding))
+    elif runs and runs[0].get("state") == "success":
+        ok(f"{dag_id} completed")
+        return True
+    elif runs and runs[0].get("state") == "failed":
+        fail(f"{dag_id} failed",
+             "open the red task in the Airflow UI; for the silver DAG the line "
+             "that matters is 'Loaded N records from Bronze'")
+    else:
+        fail(f"Could not read {dag_id} run state", f"last seen: {runs[:1] or 'nothing'}")
+    return False
+
+
+def run_silver_pipeline():
+    """Run the Spark silver pipeline over the Bronze the ingestion DAG wrote."""
+    step("STEP 6 — Run the Spark silver pipeline over the Bronze just written")
+
+    cli = _airflow_cli()
+    if cli is None:
+        skip(
+            "Could not reach Airflow to trigger spark_transform_silver",
+            "needs kubectl with the etl namespace, or a running docker-compose "
+            "airflow-scheduler. Trigger by hand and re-run: "
+            "airflow dags trigger spark_transform_silver",
+        )
+        return
+    _wait_for_dag(cli, "spark_transform_silver")
 
 
 
