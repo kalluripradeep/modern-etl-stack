@@ -8,6 +8,8 @@ A comprehensive ETL stack demonstrating the integration of open-source data engi
 
 📄 The full design rationale is in the accompanying paper: [Data to Analytics Pipeline — Proof of Concept](https://github.com/kalluripradeep/modern-etl-stack/raw/main/docs/Data-to-Analytics-Pipeline-POC.pdf) (downloads the PDF)
 
+📊 The accompanying slide deck: [Cloud Native Data Pipeline Platforms for AI](https://github.com/kalluripradeep/modern-etl-stack/raw/main/docs/Cloud-Native-Data-Pipeline-Platforms-for-AI-Deck.pdf) (downloads the PDF)
+
 ```text
                          ┌──► PIPE 3 · Real-Time Analytics (seconds)
                          │     WAL → Debezium → Kafka → ClickHouse mirror.* (column store)
