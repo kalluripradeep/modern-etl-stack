@@ -509,6 +509,27 @@ DROP TABLE system.text_log_0;   -- repeat for each numeric suffix
 
 The same renaming happens on a ClickHouse version upgrade, so a long-lived cluster accumulates these whether or not anyone edits the config.
 
+### A DAG run stays queued and its tasks show "No Status"
+
+The DAG is paused. A paused DAG still accepts a trigger — the run is created,
+stays `queued`, and every task instance sits at `No Status` with try number 0.
+Nothing fails, so there is no error to find, and it reads as a broken scheduler.
+
+```bash
+kubectl exec -n etl deploy/airflow-scheduler -- airflow dags list
+```
+
+The `is_paused` column is the answer. To start them:
+
+```bash
+kubectl exec -n etl deploy/airflow-scheduler -- airflow dags unpause ingest_source_to_bronze
+kubectl exec -n etl deploy/airflow-scheduler -- airflow dags unpause spark_transform_silver
+```
+
+Deployments from this repo set `AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=False`,
+so newly registered DAGs start unpaused. A cluster deployed before that, or a DAG
+paused by hand, still needs the commands above.
+
 ### A test step fails
 
 ```bash
