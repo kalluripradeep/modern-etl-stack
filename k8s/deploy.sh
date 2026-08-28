@@ -407,7 +407,11 @@ if [[ "${SEED:-n}" =~ ^[Yy]$ ]]; then
   SEED_DB_PASSWORD=$(secret_val SOURCE_DB_PASSWORD)
   SEED_DB_NAME=$(secret_val SOURCE_DB_NAME)
   # Pipe the local script into a temporary pod
-  cat "$REPO_ROOT/sample-data/generate_ecommerce.py" | kubectl run seed-data \
+  # "if" rather than "|| warn": the old form warned and then printed
+  # "Sample data seeded" regardless, so a failed seed reported success twice.
+  # The generator now exits non-zero too; before, it printed an error and
+  # returned 0, so even this check would have believed it.
+  if cat "$REPO_ROOT/sample-data/generate_ecommerce.py" | kubectl run seed-data \
     --image=python:3.11-slim \
     --restart=Never \
     -i --rm \
@@ -419,8 +423,15 @@ if [[ "${SEED:-n}" =~ ^[Yy]$ ]]; then
     --command -- sh -c "
       pip install psycopg2-binary faker pandas pyarrow -q &&
       python3 -
-    " || warn "Seed job failed — ensure you have internet access in the cluster to install python deps"
-  ok "Sample data seeded"
+    "; then
+    ok "Sample data seeded"
+  else
+    warn "SEED FAILED - the source tables were NOT created or refreshed."
+    warn "Everything else is deployed, but ingest_source_to_bronze will fail"
+    warn "with \"Source table ... is missing <columns>\" until this succeeds."
+    warn "Usually no internet in the cluster to pip install, or postgres-source"
+    warn "not ready yet. Re-run the deploy with SEED=y."
+  fi
 fi
 
 # ─── Step 11: AI Data Assistant Dashboard ──────────────────────────────────────
