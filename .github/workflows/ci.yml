@@ -58,6 +58,13 @@ jobs:
         # 6.x line moved to psycopg3 where copy_expert does not exist. Fakes
         # stand in for both drivers, so neither has to be installed.
         run: python scripts/ci/test_copy_compat.py
+      - name: Verify a failed seed cannot report success
+        # deploy.sh decides from this exit code whether to print "Sample data
+        # seeded". The generator used to print an error and return 0, so a
+        # seed that never reached the database looked like a successful one.
+        run: |
+          pip install psycopg2-binary faker
+          python scripts/ci/test_seed_exit_code.py
 
   type-check:
     runs-on: ubuntu-latest

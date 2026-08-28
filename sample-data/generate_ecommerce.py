@@ -2,6 +2,8 @@
 """Generate sample e-commerce data."""
 
 import os
+import sys
+
 import psycopg2
 import random
 from datetime import datetime, timedelta
@@ -248,14 +250,22 @@ def main():
         print("\n✅ Data generation complete!")
         print("🎯 You can now create Airflow DAGs to process this data!\n")
 
+    # Exit non-zero on failure. Printing an error and returning 0 meant every
+    # caller believed it worked: k8s/deploy.sh runs this in a pod and decides
+    # from the exit code, so a seed that never reached the database still
+    # reported "Sample data seeded". #144 spent a round on a source schema a
+    # re-seed was supposed to have fixed and had not.
     except psycopg2.Error as e:
         print(f"\n❌ Database Error: {e}")
         print("\n💡 Make sure Docker containers are running:")
-        print("   docker-compose ps")
+        print("   docker compose ps          (compose)")
+        print("   kubectl get pods -n etl    (Kubernetes)")
+        sys.exit(1)
     except Exception as e:
         print(f"\n❌ Error: {e}")
         import traceback
         traceback.print_exc()
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
