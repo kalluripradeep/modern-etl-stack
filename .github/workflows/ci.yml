@@ -53,6 +53,11 @@ jobs:
         run: |
           pip install pyspark==3.5.0
           python scripts/ci/test_bronze_guard.py
+      - name: Verify the COPY path works on both psycopg drivers
+        # apache-airflow-providers-postgres is floored, not capped, and its
+        # 6.x line moved to psycopg3 where copy_expert does not exist. Fakes
+        # stand in for both drivers, so neither has to be installed.
+        run: python scripts/ci/test_copy_compat.py
 
   type-check:
     runs-on: ubuntu-latest
