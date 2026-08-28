@@ -167,8 +167,13 @@ def extract_and_load_table(table_name, **kwargs):
 
     # 2. Extract from Source (Incremental CDC Logic)
     # The cursor is filtered on as well as selected, so it has to exist too.
-    check_source_schema(source_hook, table_name,
-                        columns + ([cursor_col] if cursor_col else []))
+    # dict.fromkeys rather than set(): the cursor column is almost always in
+    # `columns` too, and a plain concatenation reported it twice --
+    #   "is missing first_name, last_name, ..., updated_at, updated_at"
+    # which reads like two different problems. Order is kept so the message
+    # follows the manifest.
+    needed = list(dict.fromkeys(columns + ([cursor_col] if cursor_col else [])))
+    check_source_schema(source_hook, table_name, needed)
     cols_str = ",".join(columns)
 
     # 2a. Fetch the high-water mark (MAX cursor) from the Destination staging DB
@@ -255,7 +260,25 @@ def extract_and_load_table(table_name, **kwargs):
                     pg_cursor.execute(f"CREATE TEMP TABLE IF NOT EXISTS {stage_table} (LIKE raw.{table_name}_source) ON COMMIT PRESERVE ROWS")
                     pg_cursor.execute(f"TRUNCATE {stage_table}")
                     
-                    pg_cursor.copy_expert(f"COPY {stage_table} ({cols_str}) FROM STDIN WITH CSV", buffer)
+                    copy_sql = f"COPY {stage_table} ({cols_str}) FROM STDIN WITH CSV"  # nosec B608
+                    # psycopg2 and psycopg3 disagree here, and which one is
+                    # installed is not ours to choose: the postgres provider
+                    # moved to psycopg3 in its 6.x line, where copy_expert does
+                    # not exist at all --
+                    #   AttributeError: 'Cursor' object has no attribute 'copy_expert'
+                    # -- and requirements-airflow.txt floors that provider
+                    # without capping it, so a rebuild picks up the new major on
+                    # its own. Exactly the time bomb the pyspark pin in that
+                    # file already warns about, on a different dependency.
+                    #
+                    # Asking the cursor what it supports works under either and
+                    # needs no pin, which is better than freezing the provider
+                    # and forgoing its fixes.
+                    if hasattr(pg_cursor, "copy_expert"):
+                        pg_cursor.copy_expert(copy_sql, buffer)
+                    else:
+                        with pg_cursor.copy(copy_sql) as copy:
+                            copy.write(buffer.read())
                     
                     update_set = ", ".join([f"{c} = EXCLUDED.{c}" for c in config['update_columns']])
                     # all identifiers come from the manifest, never from user input
