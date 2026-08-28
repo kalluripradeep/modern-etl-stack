@@ -75,6 +75,17 @@ dags:
 # Use extraEnv as a multi-line string (using |) to satisfy strict schema validation
 # Some chart versions expect a string that they then parse as YAML internally.
 extraEnv: |
+  # Airflow pauses every DAG the first time it registers one, and nothing here
+  # ever unpaused them. A paused DAG still accepts triggers: the run is created,
+  # sits in "queued" for good, and every task instance stays at "No Status" with
+  # try_number 0. There is no error to find, because nothing failed -- so a fresh
+  # deployment came up with all three pipelines dormant and silent, and #144 spent
+  # a round of diagnosis on a scheduler that was working exactly as told.
+  #
+  # This is a demo platform whose DAGs exist to run. Registering them paused is
+  # the wrong default here even though it is the right one for a shared cluster.
+  - name: AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION
+    value: "False"
   - name: SOURCE_DB_HOST
     valueFrom:
       configMapKeyRef:
