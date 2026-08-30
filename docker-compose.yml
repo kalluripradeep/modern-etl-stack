@@ -414,6 +414,12 @@ services:
     environment:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db:5432/airflow
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      # Must be on every component that registers DAGs, not just airflow-init:
+      # that container only runs migrations and exits, so setting it there left
+      # the scheduler registering DAGs paused exactly as before. A paused DAG
+      # still accepts triggers and never runs them, which reads as a broken
+      # scheduler. See k8s/airflow/helm-values.yaml.
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'False'
       AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
       AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: 'True'
       SOURCE_DB_USER: ${SOURCE_DB_USER:-sourceuser}
@@ -457,6 +463,12 @@ services:
     environment:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db:5432/airflow
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      # Must be on every component that registers DAGs, not just airflow-init:
+      # that container only runs migrations and exits, so setting it there left
+      # the scheduler registering DAGs paused exactly as before. A paused DAG
+      # still accepts triggers and never runs them, which reads as a broken
+      # scheduler. See k8s/airflow/helm-values.yaml.
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'False'
       AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
       AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: 'True'
       # Airflow 3 runs every task through the Task Execution API rather than
@@ -504,6 +516,12 @@ services:
     environment:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db:5432/airflow
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      # Must be on every component that registers DAGs, not just airflow-init:
+      # that container only runs migrations and exits, so setting it there left
+      # the scheduler registering DAGs paused exactly as before. A paused DAG
+      # still accepts triggers and never runs them, which reads as a broken
+      # scheduler. See k8s/airflow/helm-values.yaml.
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'False'
       AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
       AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: 'True'
       SOURCE_DB_USER: ${SOURCE_DB_USER:-sourceuser}
