@@ -471,9 +471,28 @@ with dag:
     prune_bronze_task = PythonOperator(
         task_id="prune_bronze",
         python_callable=prune_bronze,
+        # Runs even when an ingest task failed. Verified with a purpose-built
+        # probe DAG rather than assumed: a task with all_done still executes
+        # when its upstream is itself upstream_failed, so the rule does reach
+        # through the chain from a failed ingest task, through trigger_spark,
+        # to here.
+        #
+        # This is cleanup, and gating it
+        # on the work succeeding made a bad state self-perpetuating: an ingest
+        # failure left prune_bronze upstream_failed, so the 0-row parquet files
+        # it removes stayed in Bronze, so every silver transform kept failing on
+        # them --
+        #   Parquet column cannot be converted ... column: [order_id],
+        #   physicalType: INT64, logicalType: int
+        # -- and the lakehouse could not recover until someone cleaned the
+        # bucket by hand. #144 sat in exactly that loop. Reclaiming space and
+        # removing unreadable files are worth doing precisely when a run has
+        # gone wrong.
+        trigger_rule="all_done",
     )
 
     ingestion_tasks >> dbt_transformations
     ingestion_tasks >> trigger_spark
     ingestion_tasks >> data_quality_metrics
+
     trigger_spark >> prune_bronze_task

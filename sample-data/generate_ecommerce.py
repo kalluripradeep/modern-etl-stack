@@ -87,12 +87,31 @@ def create_tables(conn):
         conn.commit()
         print("✅ Tables created")
 
+def _report(what, inserted, requested):
+    """Print what was actually written, and fail if it was nothing.
+
+    The old messages printed the requested count whatever happened, so a seed
+    that wrote zero rows announced success. Anything less than everything is
+    worth saying out loud; nothing at all is worth stopping for, because every
+    later step depends on this data existing.
+    """
+    if inserted == 0:
+        print(f"❌ Generated 0 {what} out of {requested} requested — nothing was written.")
+        sys.exit(1)
+    if inserted < requested:
+        print(f"⚠️  Generated {inserted} {what}, {requested - inserted} failed")
+    else:
+        print(f"✅ Generated {inserted} {what}")
+
+
 def generate_customers(conn, count=100):
     """Generate sample customers."""
     print(f"📦 Generating {count} customers...")
 
+    inserted = 0
     with conn.cursor() as cur:
         for i in range(count):
+            cur.execute("SAVEPOINT row")
             try:
                 cur.execute("""
                     INSERT INTO customers (first_name, last_name, email, address, city, state, zip_code)
@@ -107,11 +126,22 @@ def generate_customers(conn, count=100):
                     fake.postcode()[:20],
                 ))
             except Exception as e:
+                # ROLLBACK TO SAVEPOINT, not just continue. PostgreSQL aborts
+                # the whole transaction on any failed statement, so a bare
+                # `continue` did not skip one row -- every later insert failed
+                # with "current transaction is aborted, commands ignored until
+                # end of transaction block", the commit wrote nothing, and the
+                # script still printed "Generated 100 customers". The first bad
+                # row silently emptied the entire seed, which is how a cluster
+                # ended up re-seeding repeatedly and keeping its old schema.
+                cur.execute("ROLLBACK TO SAVEPOINT row")
                 print(f"  ⚠️  Skipping customer {i}: {e}")
                 continue
+            cur.execute("RELEASE SAVEPOINT row")
+            inserted += 1
 
     conn.commit()
-    print(f"✅ Generated {count} customers")
+    _report("customers", inserted, count)
 
 def generate_products(conn, count=50):
     """Generate sample products."""
@@ -133,7 +163,7 @@ def generate_products(conn, count=50):
             ))
 
     conn.commit()
-    print(f"✅ Generated {count} products")
+    _report("products", count, count)
 
 def generate_orders(conn, count=10000):
     """Generate sample orders."""
@@ -152,8 +182,17 @@ def generate_orders(conn, count=10000):
         product_ids = list(product_price.keys())
 
         if not customer_ids or not product_ids:
-            print("❌ No customers or products found!")
-            return
+            # Exit, not return. Returning let main() carry on to print_stats and
+            # finish with "Data generation complete", so the run said it worked
+            # while the database stayed empty. This is not an exception either,
+            # so the sys.exit(1) added to the except handlers never covered it:
+            # the seed's three ways of claiming success each needed closing
+            # separately.
+            print(f"❌ No customers or products found "
+                  f"({len(customer_ids)} customers, {len(product_ids)} products) "
+                  f"— nothing to build orders from. The customer or product step "
+                  f"above wrote nothing; its output says why.")
+            sys.exit(1)
 
         for i in range(count):
             customer_id = random.choice(customer_ids)
@@ -200,7 +239,7 @@ def generate_orders(conn, count=10000):
                 print(f"  ✓ Generated {i + 1}/{count} orders...")
 
     conn.commit()
-    print(f"✅ Generated {count} orders")
+    _report("orders", count, count)
 
 def print_stats(conn):
     """Print database statistics."""
