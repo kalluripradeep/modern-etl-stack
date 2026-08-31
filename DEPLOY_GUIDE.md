@@ -530,6 +530,42 @@ Deployments from this repo set `AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=False
 so newly registered DAGs start unpaused. A cluster deployed before that, or a DAG
 paused by hand, still needs the commands above.
 
+### A silver transform fails with CANNOT_SAFELY_CAST
+
+```text
+[INCOMPATIBLE_DATA_FOR_TABLE.CANNOT_SAFELY_CAST] Cannot write incompatible data
+for the table ``: Cannot safely cast `address` "STRING" to "INT".
+```
+
+The Iceberg table was created from a 0-row Bronze file. Every column in one of
+those is null-typed, Spark reads null as `INT`, and `writeTo(...).create()`
+recorded that as the table's schema — so `address`, `email` and the rest are
+`INT` in a table that should hold strings. Correct data can never be written to
+it again.
+
+Ingestion no longer writes 0-row files and `prune_bronze` removes any that
+remain, so this cannot recur. It does not repair a table already created that
+way: the schema is what it is, and Iceberg will not widen `INT` to `STRING`.
+
+Check what the lakehouse actually holds:
+
+```bash
+kubectl exec -n etl deploy/trino-coordinator --   trino --execute "DESCRIBE iceberg.lake.customers"
+```
+
+Any text column showing `integer` is a table created from an empty file. Drop
+it and let the next silver run rebuild it from real Bronze:
+
+```bash
+kubectl exec -n etl deploy/trino-coordinator --   trino --execute "DROP TABLE iceberg.lake.customers"
+```
+
+Nothing is lost that Bronze cannot replace — the transforms read every retained
+partition, so the next run repopulates the table from scratch. Check all four
+(`customers`, `products`, `orders`, `order_items`): whichever were first created
+during the period when empty files were present will each carry the same
+damage.
+
 ### A test step fails
 
 ```bash
