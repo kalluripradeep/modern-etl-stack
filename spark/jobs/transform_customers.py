@@ -5,7 +5,7 @@ Uses Iceberg MERGE INTO for high-performance incremental dimension updates.
 
 import os
 import sys
-from bronze import load_bronze
+from bronze import explain_write_failure, load_bronze
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, current_timestamp, trim, lower
 
@@ -92,6 +92,7 @@ def main():
 
     except Exception as e:
         print(f"Spark Job Failed: {str(e)}")
+        explain_write_failure(e, "silver.lake.customers")
         import traceback
         traceback.print_exc()
         sys.exit(1)

@@ -3,7 +3,7 @@ Spark Job: Transform Orders from Bronze to Silver (Elite Scalability)
 Uses Iceberg MERGE INTO for high-performance incremental upserts.
 """
 
-from bronze import load_bronze
+from bronze import explain_write_failure, load_bronze
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, current_timestamp
 from pyspark.sql.types import DecimalType
@@ -101,6 +101,7 @@ def main():
 
     except Exception as e:
         print(f"Spark Job Failed: {str(e)}")
+        explain_write_failure(e, "silver.lake.orders")
         import traceback
         traceback.print_exc()
         raise
