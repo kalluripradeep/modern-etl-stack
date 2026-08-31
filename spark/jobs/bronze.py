@@ -145,3 +145,49 @@ def _latest_per_key(df, primary_key):
                  .filter(col("_row") == 1)
                  .drop("_row"))
     return deduped
+
+
+def explain_write_failure(exc, iceberg_table):
+    """Say what an incompatible-schema write means, when that is what it is.
+
+    Spark reports it as
+
+      [INCOMPATIBLE_DATA_FOR_TABLE.CANNOT_SAFELY_CAST] Cannot write
+      incompatible data for the table ``: Cannot safely cast `address`
+      "STRING" to "INT".
+
+    naming the column and neither the table nor the cause. The cause is almost
+    always a table created from a 0-row Bronze file: every column in one is
+    null-typed, Spark reads null as INT, and create() recorded that as the
+    schema. No later write can succeed against it, and Iceberg will not widen
+    INT to STRING, so the table has to be dropped and rebuilt.
+
+    Only ever prints. Dropping a lakehouse table on a schema mismatch is not a
+    decision to take without a human, and one day a mismatch will mean a real
+    source change rather than this.
+    """
+    text = str(exc)
+    if "CANNOT_SAFELY_CAST" not in text and "INCOMPATIBLE_DATA_FOR_TABLE" not in text:
+        return
+    queryable = iceberg_table.replace("silver.", "iceberg.")
+    for line in [
+        "",
+        f"{iceberg_table} has a schema that cannot accept this data.",
+        "",
+        "That normally means the table was created from a Bronze file with no",
+        "rows: every column in one is null-typed, Spark reads null as INT, and",
+        "the table was created with INT columns where strings belong. Nothing",
+        "can be written to it now, and Iceberg will not widen INT to STRING.",
+        "",
+        "Ingestion no longer writes empty files and prune_bronze removes any",
+        "that remain, so this will not recur -- but neither repairs a table",
+        "already created that way. Check it, then drop it and let the next run",
+        "rebuild from Bronze:",
+        "",
+        f'  trino --execute "DESCRIBE {queryable}"',
+        f'  trino --execute "DROP TABLE {queryable}"',
+        "",
+        "Nothing is lost that Bronze cannot replace: the transforms read every",
+        "retained partition, so the table repopulates from scratch.",
+    ]:
+        print(line)

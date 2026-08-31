@@ -16,6 +16,7 @@ Fakes stand in for Spark: none of these paths call anything but count() and
 catalog.tableExists(), so a session is not needed and this runs in CI.
 """
 
+import io
 import sys
 from pathlib import Path
 from unittest import mock
@@ -164,6 +165,30 @@ def main():
         "must keep the newest row, ordering by updated_at descending, "
         f"got {calls.get('ordered_desc_on')!r}")
     assert out.dropped == "_row", "the helper column must not reach the MERGE"
+
+    # 8. An incompatible-schema write must explain itself. The raw Spark error
+    #    names a column and neither the table nor the cause, and the cause is
+    #    almost always a table created from a 0-row Bronze file (#144).
+    import contextlib
+
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        bronze.explain_write_failure(
+            Exception('[INCOMPATIBLE_DATA_FOR_TABLE.CANNOT_SAFELY_CAST] '
+                      'Cannot safely cast `address` "STRING" to "INT".'),
+            "silver.lake.customers",
+        )
+    said = out.getvalue()
+    assert "silver.lake.customers" in said, said
+    assert "DROP TABLE iceberg.lake.customers" in said, (
+        "the message must give the exact recovery command, got: " + said
+    )
+
+    # Anything else must stay quiet rather than blame the schema.
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        bronze.explain_write_failure(Exception("connection refused"), "silver.lake.customers")
+    assert out.getvalue() == "", f"unrelated errors must not be explained: {out.getvalue()!r}"
 
     print("bronze load contract: OK")
 
