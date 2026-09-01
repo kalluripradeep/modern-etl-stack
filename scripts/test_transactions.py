@@ -41,6 +41,7 @@ import random
 import shutil
 import subprocess  # nosec B404 - fixed argv, no shell
 import sys
+from pathlib import Path
 import time
 from datetime import datetime, timedelta
 
@@ -116,65 +117,55 @@ def skip(msg, detail=""):
 
 
 # ── Step 1: Seed source database ──────────────────────────────────────────────
+def _create_tables(conn):
+    """Create the source tables using the project's own seeder.
+
+    Loaded by path because sample-data is not a package. Importing it rather
+    than restating the DDL is the point: two definitions of this schema is what
+    put the source out of step with the manifest on every test run.
+    """
+    import importlib.util
+
+    seeder_path = Path(__file__).resolve().parent.parent / "sample-data" / "generate_ecommerce.py"
+    spec = importlib.util.spec_from_file_location("_seeder", seeder_path)
+    seeder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(seeder)   # its __main__ guard keeps main() from running
+    seeder.create_tables(conn)
+
+
 def seed_source():
     step("STEP 1 — Seed postgres-source with transactional test data")
 
     conn = psycopg2.connect(**SOURCE)
 
     with conn.cursor() as cur:
-        # Fresh test schema — drop only test tables
-        cur.execute("DROP TABLE IF EXISTS order_items CASCADE")
-        cur.execute("DROP TABLE IF EXISTS orders CASCADE")
-        cur.execute("DROP TABLE IF EXISTS customers CASCADE")
-        cur.execute("DROP TABLE IF EXISTS products CASCADE")
-
-        cur.execute("""
-            CREATE TABLE customers (
-                customer_id SERIAL PRIMARY KEY,
-                name        VARCHAR(100),
-                email       VARCHAR(100) UNIQUE,
-                city        VARCHAR(100),
-                country     VARCHAR(100),
-                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE products (
-                product_id   SERIAL PRIMARY KEY,
-                product_name VARCHAR(200),
-                category     VARCHAR(50),
-                price        DECIMAL(10,2),
-                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE orders (
-                order_id     SERIAL PRIMARY KEY,
-                customer_id  INT REFERENCES customers(customer_id),
-                order_date   TIMESTAMP,
-                total_amount DECIMAL(10,2),
-                status       VARCHAR(20),
-                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE order_items (
-                item_id    SERIAL PRIMARY KEY,
-                order_id   INT REFERENCES orders(order_id),
-                product_id INT REFERENCES products(product_id),
-                quantity   INT,
-                price      DECIMAL(10,2)
-            )
-        """)
-        conn.commit()
+        # The schema comes from sample-data/generate_ecommerce.py, not from
+        # here. This function used to carry its own CREATE TABLE statements,
+        # and they did not match the manifest: customers had name/city/country
+        # where the platform wants first_name/last_name/address/state/zip_code,
+        # products had product_name and no description or stock_quantity, and
+        # order_items had price instead of unit_price and no timestamps.
+        #
+        # Since it drops the real tables first, every run of this test left the
+        # source incompatible with airflow/dags/config/pipelines.yml, and the
+        # next ingestion failed with
+        #   Source table 'products' is missing name, description, stock_quantity
+        # That is where the product_name column in #144 came from -- not from an
+        # older seeder, which is what the DAG error guesses. Seed properly, run
+        # the tests, watch ingestion break, re-seed: a loop this file created.
+        #
+        # One definition of the schema, in the seeder that owns it.
+        _create_tables(conn)
 
         # 50 customers
         for _ in range(50):
             try:
                 cur.execute(
-                    "INSERT INTO customers (name, email, city, country) VALUES (%s, %s, %s, %s)",
-                    (fake.name()[:100], fake.email()[:100], fake.city()[:100], fake.country()[:100]),
+                    "INSERT INTO customers (first_name, last_name, email, address, city, state, zip_code) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                    (fake.first_name()[:100], fake.last_name()[:100], fake.email()[:100],
+                     fake.street_address()[:200], fake.city()[:100], fake.state()[:100],
+                     fake.postcode()[:20]),
                 )
             except Exception:
                 conn.rollback()
@@ -183,9 +174,12 @@ def seed_source():
         # 20 products
         for _ in range(20):
             cur.execute(
-                "INSERT INTO products (product_name, category, price) VALUES (%s, %s, %s)",
-                (fake.catch_phrase()[:200], random.choice(["Electronics","Clothing","Books","Home","Sports"]),
-                 round(random.uniform(9.99, 499.99), 2)),
+                "INSERT INTO products (name, description, price, category, stock_quantity) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (fake.catch_phrase()[:200], fake.text()[:500],
+                 round(random.uniform(9.99, 499.99), 2),
+                 random.choice(["Electronics", "Clothing", "Books", "Home", "Sports"]),
+                 random.randint(0, 1000)),
             )
         conn.commit()
 
@@ -210,7 +204,7 @@ def seed_source():
                 qty = random.randint(1, 4)
                 total += prod_price[pid] * qty
                 cur.execute(
-                    "INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (%s,%s,%s,%s)",
+                    "INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES (%s,%s,%s,%s)",
                     (oid, pid, qty, prod_price[pid]),
                 )
             cur.execute("UPDATE orders SET total_amount=%s WHERE order_id=%s", (round(total, 2), oid))
