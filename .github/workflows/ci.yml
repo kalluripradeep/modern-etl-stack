@@ -69,6 +69,11 @@ jobs:
         # One failed row used to abort the transaction and empty the whole
         # seed while still printing "Generated 100 customers".
         run: python scripts/ci/test_seed_partial_failure.py
+      - name: Verify the seeded schema satisfies the pipeline manifest
+        # Ingestion selects the manifest's columns by name. A seeder that
+        # creates product_name where the manifest says name breaks every run
+        # and the error blames the source data (#144).
+        run: python scripts/ci/test_seed_matches_manifest.py
 
   type-check:
     runs-on: ubuntu-latest
