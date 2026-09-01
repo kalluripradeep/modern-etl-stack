@@ -38,13 +38,32 @@ spec:
         # DiskPressure twice. Cleanup is off by default in Spark, so it has to
         # be asked for.
         #
-        # Runs every 30 minutes and keeps the last 24 hours, which leaves
-        # recent runs available for debugging while bounding the total.
+        # Runs every 30 minutes. The retention was 24 hours, which sounded
+        # conservative and was not: spark-submit ships its --jars into every
+        # application's work directory on every worker, and those jars are
+        # ~30MB (iceberg-spark-runtime 29MB, postgresql 1MB). The silver DAG
+        # submits five applications an hour, so a day of retention holds
+        # roughly 120 copies -- about 3.6GB of jars alone, against the 4Gi
+        # ephemeral-storage limit below. Both workers were evicted with
+        #   Pod ephemeral local storage usage exceeds the total limit of
+        #   containers 4Gi
+        # after 16 days of uptime, and the pods sat in ContainerStatusUnknown
+        # (#169).
+        #
+        # Six hours holds around 30 applications, near 900MB, and still leaves
+        # this morning's failure to look at. Raising the limit instead would
+        # have been the wrong direction on a single-node cluster whose disk is
+        # the node's own.
+        #
+        # The deeper fix is to stop shipping the jars per application by baking
+        # them into the Spark image the way hadoop-aws already is, which would
+        # make retention almost free. That changes both the image and the
+        # submit command, so it is not folded into an eviction fix.
         - name: SPARK_WORKER_OPTS
           value: >-
             -Dspark.worker.cleanup.enabled=true
             -Dspark.worker.cleanup.interval=1800
-            -Dspark.worker.cleanup.appDataTtl=86400
+            -Dspark.worker.cleanup.appDataTtl=21600
         # S3A / MinIO config for workers
         - name: SPARK_EXTRA_CLASSPATH
           value: "/opt/bitnami/spark/jars/hadoop-aws-*.jar:/opt/bitnami/spark/jars/aws-java-sdk-bundle-*.jar"
