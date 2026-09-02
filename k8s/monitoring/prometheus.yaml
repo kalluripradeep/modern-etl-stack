@@ -80,7 +80,13 @@ spec:
           mountPath: /prometheus
         resources:
           requests:
-            memory: "256Mi"
+            # Steady-state RSS on a two-week-old cluster is around 400Mi, so a
+            # 256Mi request described a pod that does not exist. A request
+            # below real usage is not free: it puts the pod over budget the
+            # moment it is scheduled and makes it a preferred eviction victim
+            # under node memory pressure -- the same trap the ephemeral-storage
+            # note below is about.
+            memory: "512Mi"
             cpu: "100m"
             # Declaring ephemeral-storage is what lets the kubelet hold THIS
             # pod to account. With no request, a pod's usage is compared
@@ -89,7 +95,21 @@ spec:
             # api-server and scheduler died for storage Prometheus was using.
             ephemeral-storage: "3Gi"
           limits:
-            memory: "512Mi"
+            # Replaying the write-ahead log needs considerably more than
+            # steady state: the checkpoint rebuilds the whole head at once and
+            # Go does not hand the memory back promptly. At 512Mi that replay
+            # could not finish -- the log stopped at
+            #   WAL segment loaded segment=325 maxSegment=404
+            # three seconds before the container was OOMKilled. Nothing was
+            # wrong with the data; there was simply not enough memory to load
+            # it, so every restart replayed from the beginning and died in the
+            # same place. 93 restarts and 13 hours of CrashLoopBackOff, and it
+            # would never have recovered on its own (#173).
+            #
+            # 1.5Gi is roughly three times steady state, the usual headroom for
+            # replay. The node this runs on was 31% used with tens of GB free,
+            # so the limit was never protecting anything worth protecting.
+            memory: "1536Mi"
             cpu: "500m"
             ephemeral-storage: "4Gi"
       volumes:
