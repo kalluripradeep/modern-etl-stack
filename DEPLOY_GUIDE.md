@@ -377,6 +377,14 @@ Watch the actual consumption rather than the claims:
 ssh <node> "sudo du -xh --max-depth=2 /opt/local-path-provisioner | sort -h | tail"
 ```
 
+### A pod OOMKills on a loop but `kubectl top` shows headroom
+
+Read the last log line before it died. If it is mid-startup — Prometheus
+replaying its WAL, a JVM loading a heap dump — the limit is sized for steady
+state but not for recovery, and the pod will never come up on its own because
+every restart repeats the same work. Raise the limit; the steady-state number
+is not the peak.
+
 ### Pods Evicted, or the node reports DiskPressure
 
 ```bash
