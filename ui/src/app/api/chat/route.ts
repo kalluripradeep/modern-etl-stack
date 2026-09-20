@@ -7,9 +7,22 @@ import {
   queryWarehouse,
   resultToMarkdown,
 } from '@/lib/datastores';
+import { STORES } from '@/lib/stores.generated';
 
 const MAX_TOOL_ITERATIONS = 8;
 
+// Table names in these descriptions come from the generated store registry
+// rather than being spelled out again here. The model is told which tables
+// exist, so a name typed from memory is a name it will confidently query and
+// the database will reject -- and this file, being the one consumer written
+// in TypeScript, is exactly where the naming convention drifted before.
+function tableList(store: keyof typeof STORES): string {
+  return Object.values(STORES[store].tables).join(', ');
+}
+
+// Interpolated rather than written out, for the same reason the tool
+// descriptions are: every physical table name in this file was a fourth copy
+// of a convention the manifest already owns.
 const SYSTEM_PROMPT = `
 You are the data analyst for a Modern ETL Stack. You answer questions by
 querying one of three read-only data stores, each with its own tool:
@@ -24,12 +37,11 @@ querying one of three read-only data stores, each with its own tool:
      views. Convenient for simple headline metrics.
    - int.*_clean and raw.*_source: intermediate dbt layers.
 2. query_lakehouse — Trino over Apache Iceberg (historical silver layer).
-   Tables live under iceberg.lake.* (e.g. iceberg.lake.orders). Trino SQL
-   dialect. Use for large historical scans.
+   Tables: ${tableList('lakehouse')}. Trino SQL dialect. Use for large
+   historical scans.
 3. query_mirror — ClickHouse, the LIVE real-time mirror of the operational
-   tables (seconds fresh, via CDC). Use mirror.orders_current /
-   customers_current / products_current / order_items_current for any
-   "right now" question and for fast aggregations over live data.
+   tables (seconds fresh, via CDC). Tables: ${tableList('mirror')}. Use for
+   any "right now" question and for fast aggregations over live data.
 
 Rules:
 - Call get_schema first when you are unsure about table or column names.
@@ -40,6 +52,20 @@ Rules:
   markdown table when tabular, and the SQL you ran in a \`\`\`sql block.
 - For non-data questions, answer briefly as a data assistant without tools.
 `;
+
+function lakehouseDescription(): string {
+  return (
+    'Run a single read-only SQL statement on the Iceberg lakehouse via Trino '
+    + `(Trino dialect). Tables: ${tableList('lakehouse')}`
+  );
+}
+
+function mirrorDescription(): string {
+  return (
+    'Run a single read-only SQL statement on the ClickHouse columnar mirror '
+    + `(ClickHouse dialect). Tables: ${tableList('mirror')}`
+  );
+}
 
 const TOOLS: Anthropic.Tool[] = [
   {
@@ -59,7 +85,7 @@ const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'query_lakehouse',
-    description: 'Run a single read-only SQL statement on the Iceberg lakehouse via Trino (Trino dialect). Tables: iceberg.lake.*',
+    description: lakehouseDescription(),
     input_schema: {
       type: 'object' as const,
       properties: { sql: { type: 'string' as const, description: 'A single SELECT statement' } },
@@ -69,7 +95,7 @@ const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'query_mirror',
-    description: 'Run a single read-only SQL statement on the ClickHouse columnar mirror (ClickHouse dialect). Tables: mirror.*_current views.',
+    description: mirrorDescription(),
     input_schema: {
       type: 'object' as const,
       properties: { sql: { type: 'string' as const, description: 'A single SELECT statement' } },

@@ -128,9 +128,14 @@ print("\nairflow/dags — cross-pipe freshness")
 # freshness contract out of the source rather than importing the module.
 dag_src = (ROOT / "airflow" / "dags" / "ingest_source_to_bronze.py").read_text(encoding="utf-8")
 
+# The pipeline names used to be spelled out in a dict here. They now come
+# from the manifest, so what matters is that the probe iterates whatever is
+# declared rather than a list of its own -- scripts/ci/test_store_registry.py
+# is what checks the manifest actually declares all three.
 check(
-    "freshness is probed for all three pipelines",
-    all(f"'{p}':" in dag_src for p in ("warehouse", "mirror", "lakehouse")),
+    "freshness is probed for every declared pipeline",
+    "MANIFEST['stores']" in dag_src and "for pipe, store in STORES.items()" in dag_src,
+    "a hardcoded pipeline list here would silently skip a store added later",
 )
 check(
     "the labelled metric is emitted",

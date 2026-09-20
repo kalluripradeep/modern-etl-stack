@@ -14,6 +14,59 @@
 # ClickHouse types automatically.
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# stores
+#
+# The three pipelines land the same four tables under different names and
+# speak different SQL. That fact was written down in four separate places --
+# the benchmark harness, the transactional test, the AI assistant's tool
+# definitions, and the freshness probe in the ingestion DAG -- each of which
+# had its own copy of "mirror tables are called <t>_current" and its own
+# opinion on how to truncate a date. Four copies of a naming convention is
+# three too many, and the one that drifts is whichever is read least.
+#
+# Declaring them here makes adding a fourth engine a config change. Anything
+# that speaks to an Iceberg table -- DuckDB, StarRocks, Dremio -- is a `table`
+# template and a dialect away from being queryable by everything in the repo,
+# without touching the harness, the assistant or the DAG.
+#
+# Connection details deliberately stay out. Their shapes differ (libpq keyword
+# arguments against two HTTP protocols) and they carry credentials, which
+# belong in the environment. What is declared here is identity, naming and
+# dialect, which is the part that was duplicated.
+#
+# `table` is a template over the manifest's table names; `{table}` is
+# substituted. `date_trunc` and `freshness` are the two expressions that
+# genuinely differ between the dialects.
+# ─────────────────────────────────────────────────────────────────────────────
+
+stores:
+  warehouse:
+    label: Pipe 1 · warehouse (PostgreSQL)
+    dialect: postgresql
+    table: raw.{table}_source
+    date_trunc: date({})
+    freshness: SELECT EXTRACT(EPOCH FROM (now() - MAX({col}))) FROM {table}
+
+  lakehouse:
+    label: Pipe 2 · lakehouse (Iceberg via Trino)
+    dialect: trino
+    table: iceberg.lake.{table}
+    date_trunc: cast({} as date)
+    # to_unixtime rather than date_diff: current_timestamp is a timestamp with
+    # time zone and the Iceberg column is not, and Trino refuses to unify those
+    # two types inside date_diff. Subtracting epoch seconds sidesteps it.
+    freshness: SELECT to_unixtime(current_timestamp) - to_unixtime(max({col})) FROM {table}
+
+  mirror:
+    label: Pipe 3 · mirror (ClickHouse)
+    dialect: clickhouse
+    # _current, not the base table: the mirror is ReplacingMergeTree, so the
+    # base table holds every superseded version until a merge discards them.
+    table: mirror.{table}_current
+    date_trunc: toDate({})
+    freshness: SELECT dateDiff('second', max({col}), now()) FROM {table}
+
 source_schema: public
 topic_prefix: cdc
 
