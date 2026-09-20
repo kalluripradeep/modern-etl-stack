@@ -105,17 +105,52 @@ def table_include_list(manifest):
 
 
 def raw_ddl(name, table):
-    """CREATE TABLE DDL for the raw.<name>_source warehouse table."""
+    """CREATE TABLE DDL for the raw.<name>_source warehouse table.
+
+    unique_columns deliberately does not become a UNIQUE constraint here.
+    Raw is a landing area whose identity is the primary key; uniqueness of
+    anything else is a statement about the source, and dbt already asserts
+    it (the email test in models/sources.yml). As a database constraint it
+    did not report that condition, it crashed on it:
+
+        UniqueViolation: duplicate key value violates unique constraint
+        "customers_source_email_key"
+
+    The upsert conflicts on the primary key, so re-seeding the source with
+    freshly generated data updates a retained row to an email that some
+    other retained row still holds. Ingest then dies on every table, and
+    the error points at the source data rather than at raw still holding
+    rows the source no longer has. Any second `make seed` can trigger it.
+
+    Dropping the constraint loses no coverage: the dbt test still fails,
+    and it fails as a reported data-quality result rather than as a dead
+    pipeline.
+    """
     pk = table['primary_key']
-    uniques = set(table.get('unique_columns', []))
     width = max(len(c) for c in table['columns'])
     lines = []
     for col, pg_type in table['columns'].items():
-        suffix = ' PRIMARY KEY' if col == pk else (' UNIQUE' if col in uniques else '')
+        suffix = ' PRIMARY KEY' if col == pk else ''
         lines.append(f"    {col.ljust(width)} {pg_type}{suffix}")
     cols = ',\n'.join(lines)
     return f"CREATE TABLE IF NOT EXISTS raw.{name}_source (\n{cols}\n)"
 
+
+
+def drop_legacy_unique_ddl(name, table):
+    """Statements removing UNIQUE constraints an older raw_ddl created.
+
+    CREATE TABLE IF NOT EXISTS leaves an existing table exactly as it is, so
+    taking the constraint out of the DDL above only helps deployments that
+    have not been created yet -- every cluster already carrying it would go
+    on hitting it. Postgres names these <table>_<column>_key, and IF EXISTS
+    makes this a no-op everywhere else.
+    """
+    return [
+        f"ALTER TABLE raw.{name}_source "
+        f"DROP CONSTRAINT IF EXISTS {name}_source_{col}_key"
+        for col in table.get('unique_columns', [])
+    ]
 
 def _numeric_scale(pg_type):
     m = re.match(r'NUMERIC\((\d+)\s*,\s*(\d+)\)', pg_type.upper())

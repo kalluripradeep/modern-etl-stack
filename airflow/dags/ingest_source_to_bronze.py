@@ -26,7 +26,11 @@ from cosmos.profiles import PostgresUserPasswordProfileMapping
 
 # Airflow 3.3+ no longer puts the dags folder on sys.path during parsing
 sys.path.insert(0, str(Path(__file__).parent))
-from pipeline_config import load_manifest, raw_ddl  # noqa: E402
+from pipeline_config import (  # noqa: E402
+    load_manifest,
+    raw_ddl,
+    drop_legacy_unique_ddl,
+)
 
 log = logging.getLogger(__name__)
 
@@ -164,6 +168,11 @@ def extract_and_load_table(table_name, **kwargs):
     # 1. Ensure target table exists in DWH
     dest_hook.run("CREATE SCHEMA IF NOT EXISTS raw;")
     dest_hook.run(raw_ddl(table_name, config))
+    # Retire UNIQUE constraints an older raw_ddl left behind. CREATE TABLE IF
+    # NOT EXISTS will not touch a table that already exists, so without this
+    # the fix only reaches clusters deployed from scratch.
+    for stmt in drop_legacy_unique_ddl(table_name, config):
+        dest_hook.run(stmt)
 
     # 2. Extract from Source (Incremental CDC Logic)
     # The cursor is filtered on as well as selected, so it has to exist too.

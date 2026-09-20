@@ -158,6 +158,38 @@ with DAG(
         --name {job_name} {script_path} {additional_args}
     """
 
+    def _ensure_silver_bucket(**_):
+        """Create the Iceberg warehouse bucket if it is not there yet.
+
+        The catalog writes to s3a://silver/, and nothing on Compose ever
+        created that bucket. k8s/deploy.sh makes bronze, silver and
+        airflow-logs, and deploy-smoke.yml asserts silver exists, so
+        Kubernetes was covered and Compose quietly was not -- a fresh
+        docker compose up ran Pipe 1 fine and died on Pipe 2 with
+
+          Error Code: NoSuchBucket
+
+        from deep inside a Spark stack trace, which reads like a Spark or
+        Iceberg problem rather than a missing bucket.
+
+        Ingest already creates the bronze bucket this way, so this follows
+        the pattern that is there rather than adding an init container that
+        only one of the two deployments would use.
+        """
+        from airflow.providers.amazon.aws.hooks.s3 import S3Hook
+
+        hook = S3Hook(aws_conn_id='minio_s3')
+        for bucket in ('bronze', 'silver'):
+            if hook.check_for_bucket(bucket):
+                continue
+            hook.create_bucket(bucket_name=bucket)
+            print(f"Created missing bucket: {bucket}")
+
+    ensure_buckets = PythonOperator(
+        task_id='ensure_buckets',
+        python_callable=_ensure_silver_bucket,
+    )
+
     transform_orders = BashOperator(
         task_id='transform_orders',
         bash_command=get_spark_submit_command('Orders-Bronze-to-Silver', '/opt/spark-jobs/transform_orders.py'),
@@ -261,7 +293,7 @@ with DAG(
         trigger_rule='one_failed',
     )
 
-    transform_orders >> transform_customers >> transform_products >> transform_order_items >> maintenance_task
+    ensure_buckets >> transform_orders >> transform_customers >> transform_products >> transform_order_items >> maintenance_task
     [transform_orders, transform_customers, transform_products,
      transform_order_items, maintenance_task] >> surface_failure
 
