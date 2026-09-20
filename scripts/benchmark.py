@@ -431,7 +431,7 @@ def count_source_rows():
 
 
 # ── B4: scale ────────────────────────────────────────────────────────────────
-def reseed(n_orders):
+def reseed(n_orders, force=False):
     """Reseed postgres-source with n_orders before measuring.
 
     Delegates to the real seeder rather than reimplementing inserts -- that
@@ -440,6 +440,42 @@ def reseed(n_orders):
     the source incompatible on every run.
     """
     step(f"B4 — Reseeding postgres-source with {n_orders:,} orders")
+
+    # Refuse to reseed on top of a populated warehouse. Two separate things go
+    # wrong otherwise, and neither announces itself:
+    #
+    # 1. Ingest dies. The upsert is ON CONFLICT (customer_id), and customers
+    #    carries a unique constraint on email as well. A reseed generates fresh
+    #    random emails against the same customer_id range, so updating id 50 to
+    #    an address the leftover id 59 already holds violates that constraint.
+    #    Observed at the 100k rung:
+    #      UniqueViolation: duplicate key value violates unique constraint
+    #      "customers_source_email_key"
+    #
+    # 2. Even if it survived, every rung after the first would be measured over
+    #    a mixture of itself and its predecessors, which is exactly the
+    #    plausible-looking wrong number this script exists to avoid producing.
+    #
+    # The ladder wants a clean deployment per rung. Refusing here is not a
+    # limitation being papered over; it is the only way the numbers mean
+    # anything.
+    try:
+        rec = pg_query(DEST, "SELECT count(*) FROM raw.customers_source")
+        existing = int(rec[0][0]) if rec else 0
+    except Exception:  # noqa: BLE001 - an unreachable warehouse is not a blocker
+        existing = 0
+    if existing and not force:
+        print()
+        print(f"  The warehouse already holds {existing:,} customer rows from an")
+        print("  earlier run. Reseeding on top of them breaks ingest outright and")
+        print("  would otherwise mix this rung with the last one.")
+        print()
+        print("  Clear the destinations first, then re-run:")
+        print("    docker compose down -v && bash k8s/deploy.sh   # or your deploy")
+        print()
+        print("  --force reseeds anyway, for a source-only measurement.")
+        raise BenchmarkError("destination not empty; refusing to mix scale rungs")
+
     seeder = Path(__file__).resolve().parents[1] / "sample-data" / "generate_ecommerce.py"
     if not seeder.exists():
         raise BenchmarkError(f"seeder not found at {seeder}")
@@ -475,10 +511,12 @@ def main():
                     help="reseed postgres-source with N orders first (destructive)")
     ap.add_argument("--json", metavar="PATH", help="also write results as JSON")
     ap.add_argument("--skip-storage", action="store_true", help="run B2 only")
+    ap.add_argument("--force", action="store_true",
+                    help="reseed even when the destinations still hold an earlier rung")
     args = ap.parse_args()
 
     if args.scale:
-        reseed(args.scale)
+        reseed(args.scale, force=args.force)
         print("\n  Stopping here: the pipelines have not run against the new data yet.")
         print("  Re-run without --scale once they have.")
         return 0
@@ -506,4 +544,12 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except BenchmarkError as exc:
+        # These are refusals aimed at whoever ran the script, and the message
+        # above has already explained what to do. A traceback on top of it just
+        # buries the instruction.
+        print()
+        print(f"  {exc}")
+        sys.exit(1)

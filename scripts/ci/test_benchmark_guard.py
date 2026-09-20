@@ -88,6 +88,35 @@ except Exception as e:  # noqa: BLE001
     check("unset TRINO_URL is refused", False, f"wrong error type: {type(e).__name__}")
 
 
+# 5. Reseeding on top of a populated warehouse must be refused. It breaks
+#    ingest outright (the customers upsert is ON CONFLICT (customer_id) while
+#    email carries its own unique constraint, so a regenerated email collides
+#    with a leftover row), and even surviving it would measure each rung over
+#    a mixture of itself and its predecessor.
+_real_pg = bench.pg_query
+try:
+    bench.pg_query = lambda *a, **k: [[100]]          # warehouse not empty
+    try:
+        bench.reseed(1000)
+        check("reseed refuses a populated warehouse", False, "it went ahead")
+    except bench.BenchmarkError:
+        check("reseed refuses a populated warehouse", True)
+
+    bench.pg_query = lambda *a, **k: [[0]]            # warehouse empty
+    try:
+        bench.reseed(1000)
+        check("reseed proceeds when the warehouse is empty", True)
+    except bench.BenchmarkError as e:
+        # Anything but the emptiness refusal is fine: with no database
+        # reachable the seeder itself fails, which is not what this checks.
+        check("reseed proceeds when the warehouse is empty",
+              "refusing to mix" not in str(e), str(e))
+    except Exception:  # noqa: BLE001
+        check("reseed proceeds when the warehouse is empty", True)
+finally:
+    bench.pg_query = _real_pg
+
+
 print("\nairflow/dags — cross-pipe freshness")
 
 # The DAG imports Airflow, which is not installed in every CI job, so read the
