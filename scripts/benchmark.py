@@ -341,8 +341,13 @@ def bench_storage(source_rows):
         # different reasons and maintenance only reclaims one of them.
         total = 0
         for logical in STORES["lakehouse"]["tables"]:
+            # nosec B608 - `logical` is a key of the STORES literal above,
+            # one of four names fixed in this file. Iceberg metadata tables
+            # are addressed by identifier ("orders$files"), and an identifier
+            # cannot be bound as a parameter in any dialect, so there is
+            # nothing to parameterise even in principle.
             rec = trino_query(
-                f'SELECT sum(file_size_in_bytes) FROM iceberg.lake."{logical}$files"'
+                f'SELECT sum(file_size_in_bytes) FROM iceberg.lake."{logical}$files"'  # nosec B608
             )
             if rec and rec[0] and rec[0][0] is not None:
                 total += int(rec[0][0])
@@ -351,7 +356,10 @@ def bench_storage(source_rows):
     def lakehouse_snapshots():
         total = 0
         for logical in STORES["lakehouse"]["tables"]:
-            rec = trino_query(f'SELECT count(*) FROM iceberg.lake."{logical}$snapshots"')
+            # nosec B608 - same as above: a fixed key, not input.
+            rec = trino_query(
+                f'SELECT count(*) FROM iceberg.lake."{logical}$snapshots"'  # nosec B608
+            )
             if rec and rec[0] and rec[0][0] is not None:
                 total += int(rec[0][0])
         return total
