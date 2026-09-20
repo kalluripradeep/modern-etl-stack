@@ -20,6 +20,14 @@ x-airflow-connections: &airflow-connections
     postgresql://${DEST_DB_USER:-destuser}:${DEST_DB_PASSWORD:-destpass}@postgres-dest:5432/${DEST_DB_NAME:-destdb}
   AIRFLOW_CONN_MINIO_S3: >-
     aws://${MINIO_ROOT_USER:-minioadmin}:${MINIO_ROOT_PASSWORD:-minioadmin}@?endpoint_url=http%3A%2F%2Fminio%3A9000
+  # The metrics task probes all three pipelines for freshness, so it needs to
+  # reach the two that are not Postgres. Kubernetes needs no equivalent: the
+  # Airflow chart already pulls etl-secrets in through extraEnvFrom, and the
+  # in-cluster service names are what the DAG defaults to anyway.
+  CLICKHOUSE_URL: http://clickhouse:8123
+  CLICKHOUSE_USER: ${CLICKHOUSE_USER:-chuser}
+  CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-chpass}
+  TRINO_URL: http://trino:8080
 
 services:
   # PostgreSQL Source Database

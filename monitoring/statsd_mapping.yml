@@ -23,6 +23,12 @@ mappings:
   - match: "airflow.dag_processing.import_errors"
     name: "airflow_dag_import_errors"
   # Custom platform metrics emitted by the ingestion DAG
+  # One series per pipeline, so a single Grafana query draws all three.
+  - match: "airflow.etl.pipe_freshness.*.*"
+    name: "etl_pipe_freshness_lag_seconds"
+    labels:
+      pipe: "$1"
+      table: "$2"
   - match: "airflow.etl.freshness.*"
     name: "etl_source_freshness_lag_seconds"
     labels:
