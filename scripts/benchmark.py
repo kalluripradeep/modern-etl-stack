@@ -431,34 +431,27 @@ def count_source_rows():
 
 
 # ── B4: scale ────────────────────────────────────────────────────────────────
-def reseed(n_orders, force=False):
-    """Reseed postgres-source with n_orders before measuring.
+def assert_destination_empty(force=False):
+    """Refuse to reseed on top of a rung that is still in the warehouse.
 
-    Delegates to the real seeder rather than reimplementing inserts -- that
-    divergence is exactly what broke the e2e suite before (#170), where the
-    test's own CREATE TABLE statements did not match the manifest and left
-    the source incompatible on every run.
+    Two separate things go wrong otherwise, and neither announces itself.
+
+    Ingest dies. The customers upsert is ON CONFLICT (customer_id), and the
+    table also carries a unique constraint on email. A reseed generates fresh
+    random emails over the same customer_id range, so updating the leftover
+    id 50 to an address the leftover id 59 already holds violates it:
+
+        UniqueViolation: duplicate key value violates unique constraint
+        "customers_source_email_key"
+
+    And even surviving that, every rung after the first would be measured
+    over a mixture of itself and its predecessors -- exactly the
+    plausible-looking wrong number this script exists to avoid producing.
+
+    Split out of reseed() so it can be exercised without running the seeder:
+    a test that called reseed() directly would seed a real database wherever
+    one happened to be reachable.
     """
-    step(f"B4 — Reseeding postgres-source with {n_orders:,} orders")
-
-    # Refuse to reseed on top of a populated warehouse. Two separate things go
-    # wrong otherwise, and neither announces itself:
-    #
-    # 1. Ingest dies. The upsert is ON CONFLICT (customer_id), and customers
-    #    carries a unique constraint on email as well. A reseed generates fresh
-    #    random emails against the same customer_id range, so updating id 50 to
-    #    an address the leftover id 59 already holds violates that constraint.
-    #    Observed at the 100k rung:
-    #      UniqueViolation: duplicate key value violates unique constraint
-    #      "customers_source_email_key"
-    #
-    # 2. Even if it survived, every rung after the first would be measured over
-    #    a mixture of itself and its predecessors, which is exactly the
-    #    plausible-looking wrong number this script exists to avoid producing.
-    #
-    # The ladder wants a clean deployment per rung. Refusing here is not a
-    # limitation being papered over; it is the only way the numbers mean
-    # anything.
     try:
         rec = pg_query(DEST, "SELECT count(*) FROM raw.customers_source")
         existing = int(rec[0][0]) if rec else 0
@@ -475,6 +468,19 @@ def reseed(n_orders, force=False):
         print()
         print("  --force reseeds anyway, for a source-only measurement.")
         raise BenchmarkError("destination not empty; refusing to mix scale rungs")
+
+
+def reseed(n_orders, force=False):
+    """Reseed postgres-source with n_orders before measuring.
+
+    Delegates to the real seeder rather than reimplementing inserts -- that
+    divergence is exactly what broke the e2e suite before (#170), where the
+    test's own CREATE TABLE statements did not match the manifest and left
+    the source incompatible on every run.
+    """
+    step(f"B4 — Reseeding postgres-source with {n_orders:,} orders")
+
+    assert_destination_empty(force)
 
     seeder = Path(__file__).resolve().parents[1] / "sample-data" / "generate_ecommerce.py"
     if not seeder.exists():

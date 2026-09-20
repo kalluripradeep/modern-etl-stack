@@ -95,24 +95,29 @@ except Exception as e:  # noqa: BLE001
 #    a mixture of itself and its predecessor.
 _real_pg = bench.pg_query
 try:
+    # assert_destination_empty rather than reseed: reseed runs the real
+    # seeder, which would write to whatever database happens to be reachable
+    # and, where none is, exits the process out from under this guard.
     bench.pg_query = lambda *a, **k: [[100]]          # warehouse not empty
     try:
-        bench.reseed(1000)
+        bench.assert_destination_empty()
         check("reseed refuses a populated warehouse", False, "it went ahead")
     except bench.BenchmarkError:
         check("reseed refuses a populated warehouse", True)
 
+    bench.pg_query = lambda *a, **k: [[100]]
+    try:
+        bench.assert_destination_empty(force=True)
+        check("--force overrides the refusal", True)
+    except bench.BenchmarkError:
+        check("--force overrides the refusal", False, "still refused")
+
     bench.pg_query = lambda *a, **k: [[0]]            # warehouse empty
     try:
-        bench.reseed(1000)
-        check("reseed proceeds when the warehouse is empty", True)
+        bench.assert_destination_empty()
+        check("an empty warehouse is allowed through", True)
     except bench.BenchmarkError as e:
-        # Anything but the emptiness refusal is fine: with no database
-        # reachable the seeder itself fails, which is not what this checks.
-        check("reseed proceeds when the warehouse is empty",
-              "refusing to mix" not in str(e), str(e))
-    except Exception:  # noqa: BLE001
-        check("reseed proceeds when the warehouse is empty", True)
+        check("an empty warehouse is allowed through", False, str(e))
 finally:
     bench.pg_query = _real_pg
 
