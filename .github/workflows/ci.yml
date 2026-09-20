@@ -91,6 +91,14 @@ jobs:
         # a Spark stack trace.
         run: python scripts/ci/test_reseed_and_buckets.py
 
+      - name: Verify the store registry
+        # The three pipelines land the same tables under different names, and
+        # that convention used to be restated in four files. These checks keep
+        # it at one: a malformed store is rejected at load, no consumer spells
+        # a physical table name out, and adding a fourth engine stays a config
+        # change rather than a patch.
+        run: python scripts/ci/test_store_registry.py
+
   type-check:
     runs-on: ubuntu-latest
     steps:

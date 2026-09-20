@@ -72,47 +72,49 @@ CLICKHOUSE_PASSWORD = os.environ.get("CLICKHOUSE_PASSWORD", "chpass")
 # failure -- the same convention the e2e suite uses.
 TRINO_URL = os.environ.get("TRINO_URL", "")
 
+def _load_manifest():
+    """Load the pipeline manifest through its own validator.
+
+    Imported by path rather than installed: this script runs from a laptop
+    against port-forwards, outside the Airflow image where the DAGs live.
+    Going through load_manifest rather than yaml.safe_load buys the store
+    validation -- a table template missing its {table} placeholder resolves
+    every table to one name, which no database reports as an error and which
+    would quietly make the three pipelines agree.
+    """
+    import importlib.util
+
+    cfg = Path(__file__).resolve().parents[1] / "airflow" / "dags" / "pipeline_config.py"
+    spec = importlib.util.spec_from_file_location("pipeline_config", cfg)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["pipeline_config"] = mod
+    spec.loader.exec_module(mod)
+    return mod.load_manifest()
+
+
 REPEATS = int(os.environ.get("BENCHMARK_REPEATS", "7"))
 WARMUP = int(os.environ.get("BENCHMARK_WARMUP", "1"))
 
 
-# ── The three stores ─────────────────────────────────────────────────────────
-# Each pipeline lands the same four tables under different names, and each
-# speaks a different SQL dialect. Rather than write every query three times,
-# a query is written once against placeholders and rendered per store. That
-# keeps the comparison honest: a difference in the numbers cannot come from
-# somebody having hand-tuned one of the three.
+# ── The stores ───────────────────────────────────────────────────────────────
+# Names and dialects come from the manifest's `stores` section, not from a
+# copy kept here. Each pipeline lands the same tables under different names
+# and speaks a different SQL, and that fact used to be written down in four
+# places; the one that drifts is whichever is read least.
+#
+# Building the table map from the manifest's own table list means a table
+# added there becomes queryable here with no edit, and a store added there
+# gets measured with no edit either. That is the whole point: adding a fourth
+# engine should be a config change, not a patch to the harness.
+MANIFEST = _load_manifest()
+
 STORES = {
-    "warehouse": {
-        "label": "Pipe 1 · warehouse (PostgreSQL)",
-        "tables": {
-            "orders": "raw.orders_source",
-            "order_items": "raw.order_items_source",
-            "customers": "raw.customers_source",
-            "products": "raw.products_source",
-        },
-        "date_of": "date({})",
-    },
-    "lakehouse": {
-        "label": "Pipe 2 · lakehouse (Iceberg via Trino)",
-        "tables": {
-            "orders": "iceberg.lake.orders",
-            "order_items": "iceberg.lake.order_items",
-            "customers": "iceberg.lake.customers",
-            "products": "iceberg.lake.products",
-        },
-        "date_of": "cast({} as date)",
-    },
-    "mirror": {
-        "label": "Pipe 3 · mirror (ClickHouse)",
-        "tables": {
-            "orders": "mirror.orders_current",
-            "order_items": "mirror.order_items_current",
-            "customers": "mirror.customers_current",
-            "products": "mirror.products_current",
-        },
-        "date_of": "toDate({})",
-    },
+    name: {
+        "label": store["label"],
+        "tables": {t: store["table"].format(table=t) for t in MANIFEST["tables"]},
+        "date_of": store["date_trunc"],
+    }
+    for name, store in MANIFEST["stores"].items()
 }
 
 # ── B2: the query suite ──────────────────────────────────────────────────────

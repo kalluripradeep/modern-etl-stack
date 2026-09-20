@@ -341,17 +341,10 @@ CLICKHOUSE_USER = os.environ.get('CLICKHOUSE_USER', 'chuser')
 CLICKHOUSE_PASSWORD = os.environ.get('CLICKHOUSE_PASSWORD', 'chpass')
 TRINO_URL = os.environ.get('TRINO_URL', 'http://trino:8080')
 
-PIPE_FRESHNESS_SQL = {
-    'warehouse': "SELECT EXTRACT(EPOCH FROM (now() - MAX({col}))) FROM raw.{table}_source",
-    'mirror': "SELECT dateDiff('second', max({col}), now()) FROM mirror.{table}_current",
-    # to_unixtime rather than date_diff: current_timestamp is a timestamp with
-    # time zone and the Iceberg column is not, and Trino will not unify those
-    # two types inside date_diff. Subtracting epoch seconds sidesteps it.
-    'lakehouse': (
-        "SELECT to_unixtime(current_timestamp) - to_unixtime(max({col})) "
-        "FROM iceberg.lake.{table}"
-    ),
-}
+# Dialects come from the manifest's `stores` section rather than being
+# restated here. This was the fourth copy of "mirror tables are called
+# <t>_current"; adding a fifth engine should not mean editing this file.
+STORES = MANIFEST['stores']
 
 
 def _clickhouse_scalar(sql):
@@ -407,8 +400,9 @@ def emit_pipe_freshness(dest_hook):
         col = table.get('cursor_column')
         if not col:
             continue
-        for pipe, template in PIPE_FRESHNESS_SQL.items():
-            sql = template.format(col=col, table=name)  # nosec B608
+        for pipe, store in STORES.items():
+            physical = store['table'].format(table=name)
+            sql = store['freshness'].format(col=col, table=physical)  # nosec B608
             try:
                 value = _pipe_scalar(pipe, sql, dest_hook)
                 if value is not None:

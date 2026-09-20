@@ -52,7 +52,62 @@ def load_manifest(path=None):
             if missing:
                 raise ValueError(f"{name}: {key} not in columns: {missing}")
         _validate_partition(name, table)
+
+    _validate_stores(manifest)
     return manifest
+
+
+_STORE_KEYS = ('label', 'dialect', 'table', 'date_trunc', 'freshness')
+
+
+def _validate_stores(manifest):
+    """Reject a store declaration that would fail later as bad SQL.
+
+    A missing placeholder is the failure worth catching here. `table` without
+    {table} renders the same physical name for every table in the manifest,
+    which is not an error any database reports -- it is a query that succeeds
+    against the wrong data. The benchmark would then report three pipelines
+    agreeing closely, which is exactly the answer it is supposed to be able
+    to disprove.
+    """
+    stores = manifest.get('stores')
+    if not stores:
+        raise ValueError('manifest declares no stores')
+
+    for name, store in stores.items():
+        missing = [k for k in _STORE_KEYS if k not in store]
+        if missing:
+            raise ValueError(f"store {name}: missing {missing}")
+        if '{table}' not in store['table']:
+            raise ValueError(
+                f"store {name}: table template {store['table']!r} has no "
+                "{table} placeholder, so every table would resolve to one name"
+            )
+        if '{}' not in store['date_trunc']:
+            raise ValueError(
+                f"store {name}: date_trunc {store['date_trunc']!r} has no {{}} "
+                "placeholder, so the column it truncates would be dropped"
+            )
+        for token in ('{table}', '{col}'):
+            if token not in store['freshness']:
+                raise ValueError(
+                    f"store {name}: freshness is missing {token}"
+                )
+
+    # Two stores resolving to the same physical name means one pipeline is
+    # being measured twice under two labels, and the comparison agrees for a
+    # reason that has nothing to do with the pipelines.
+    templates = {}
+    for name, store in stores.items():
+        templates.setdefault(store['table'], []).append(name)
+    clashes = {t: n for t, n in templates.items() if len(n) > 1}
+    if clashes:
+        raise ValueError(f"stores share a table template: {clashes}")
+
+
+def store_table(manifest, store, table):
+    """Physical name of `table` in `store`."""
+    return manifest['stores'][store]['table'].format(table=table)
 
 
 def _validate_partition(name, table):
