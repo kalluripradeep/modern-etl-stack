@@ -595,6 +595,16 @@ services:
     container_name: statsd-exporter
     command:
       - '--statsd.mapping-config=/etc/statsd/statsd_mapping.yml'
+      # statsd_exporter listens on :9125 by default, and Airflow is pointed at
+      # 8125 (AIRFLOW__METRICS__STATSD_PORT, set on all three services). The
+      # port published below matched Airflow, but nothing inside the container
+      # was bound to it, so every metric Airflow emitted went into a UDP socket
+      # with no listener and was dropped without an error anywhere -- statsd is
+      # fire-and-forget, so the sender cannot tell. statsd_exporter_lines_total
+      # sat at 0 while the dashboards showed no data and nothing looked broken.
+      # Kubernetes is unaffected: the Airflow chart runs its own statsd sidecar
+      # and wires the port itself.
+      - '--statsd.listen-udp=:8125'
     ports:
       - "9102:9102"
       - "8125:8125/udp"

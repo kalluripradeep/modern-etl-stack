@@ -371,16 +371,44 @@ def bench_storage(source_rows):
     }
     snaps = safe(lakehouse_snapshots, "lakehouse snapshot")
 
+    # Normalise by the rows each store actually holds, not by the source's
+    # count. The three pipelines are asynchronous and routinely hold different
+    # amounts -- the lakehouse merges and keeps deleted rows, the mirror drops
+    # them, and a reseeded source can be an order of magnitude smaller than
+    # what the warehouse still has. Dividing every store's bytes by the source
+    # count produced a figure that looked entirely reasonable (11 kB/row for
+    # Postgres) and was inflated fiftyfold.
+    counts = {}
+    for store in sizes:
+        try:
+            t = STORES[store]["tables"]
+            sql = (f'SELECT (SELECT count(*) FROM {t["orders"]}) + '  # nosec B608
+                   f'(SELECT count(*) FROM {t["order_items"]})')
+            rec = run_on(store, sql)
+            counts[store] = int(float(rec[0][0])) if rec and rec[0] else 0
+        except Exception:  # noqa: BLE001
+            counts[store] = 0
+
     rows = []
     for store, nbytes in sizes.items():
         if nbytes is None:
-            rows.append([STORES[store]["label"], "—", "—"])
+            rows.append([STORES[store]["label"], "-", "-", "-"])
             continue
-        per_row = (nbytes / source_rows) if source_rows else 0
-        rows.append([STORES[store]["label"], f"{nbytes / 1024 / 1024:.1f} MiB", f"{per_row:.0f} B"])
-        results[store] = {"bytes": nbytes, "bytes_per_source_row": round(per_row, 2)}
-    table(["pipeline", "on disk", "per source row"], rows)
-    print(f"\n  Source rows counted: {source_rows:,} (orders + order_items).")
+        n = counts.get(store, 0)
+        per_row = (nbytes / n) if n else 0
+        rows.append([STORES[store]["label"], f"{nbytes / 1024 / 1024:.1f} MiB",
+                     f"{n:,}", f"{per_row:.0f} B" if n else "no rows"])
+        results[store] = {"bytes": nbytes, "rows": n, "bytes_per_row": round(per_row, 2)}
+    table(["pipeline", "on disk", "rows held", "per row"], rows)
+
+    print()
+    print(f"  Source holds {source_rows:,} rows (orders + order_items).")
+    spread = [n for n in counts.values() if n]
+    if spread and max(spread) > 2 * min(spread):
+        print("  The pipelines hold materially different row counts, so they are")
+        print("  not all caught up. Per-row figures remain valid -- each is")
+        print("  divided by its own rows -- but the totals are not comparable")
+        print("  until the DAGs have run against the same source.")
     if snaps is not None:
         print(f"  Iceberg snapshots retained across the four tables: {snaps}")
         print("  Re-run after the maintenance DAG to see what expire_snapshots reclaims.")

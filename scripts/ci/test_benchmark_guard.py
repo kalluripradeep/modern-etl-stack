@@ -133,6 +133,22 @@ for mapping in ("monitoring/statsd_mapping.yml", "k8s/airflow/helm-values.yaml")
         "airflow.etl.pipe_freshness.*.*" in text and 'pipe: "$1"' in text,
     )
 
+# The exporter must listen where Airflow sends. statsd is fire-and-forget over
+# UDP, so a mismatch loses every metric with no error on either side: the
+# sender cannot tell, and the exporter simply never sees a packet. This was
+# wrong for the whole life of the Compose stack and nothing looked broken.
+compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+statsd_port = None
+for line in compose.splitlines():
+    if "AIRFLOW__METRICS__STATSD_PORT" in line:
+        statsd_port = line.split(":")[-1].strip().strip("'\"")
+        break
+check(
+    "statsd-exporter listens on the port Airflow sends to",
+    statsd_port is not None and f"--statsd.listen-udp=:{statsd_port}" in compose,
+    f"Airflow sends to {statsd_port}; exporter defaults to 9125 unless told otherwise",
+)
+
 print()
 if failures:
     print(f"{len(failures)} check(s) failed")
