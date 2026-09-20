@@ -36,6 +36,10 @@ seed:
 		python:3.11-slim bash -c "pip install -q psycopg2-binary faker && python /data/generate_ecommerce.py"
 
 ## Run dbt models
+benchmark:
+	@echo "Comparing the three pipelines (requires a running stack)..."
+	python scripts/benchmark.py
+
 dbt-run:
 	docker compose exec airflow-webserver \
 		dbt run --profiles-dir /opt/airflow/dbt --project-dir /opt/airflow/dbt

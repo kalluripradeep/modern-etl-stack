@@ -274,13 +274,17 @@ def main():
         create_tables(conn)
         print()
 
-        generate_customers(conn, count=100)
+        # Counts come from the environment so the benchmark scale ladder
+        # (scripts/benchmark.py --scale) can reuse this seeder instead of
+        # writing its own inserts. Defaults are the previous hard-coded
+        # values, so every existing caller behaves exactly as before.
+        generate_customers(conn, count=int(os.environ.get('NUM_CUSTOMERS', 100)))
         print()
 
-        generate_products(conn, count=50)
+        generate_products(conn, count=int(os.environ.get('NUM_PRODUCTS', 50)))
         print()
 
-        generate_orders(conn, count=10000)
+        generate_orders(conn, count=int(os.environ.get('NUM_ORDERS', 10000)))
 
         print_stats(conn)
 

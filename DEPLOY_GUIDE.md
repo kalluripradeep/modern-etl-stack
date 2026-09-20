@@ -216,6 +216,44 @@ The mart check reads what the ingest DAG produced, so it still needs one
 successful run of `ingest_source_to_bronze` behind it. On a cluster deployed
 minutes ago it fails honestly rather than passing vacuously.
 
+### Step 5b — Benchmark the three pipelines against each other
+
+The e2e suite proves the pipelines are *correct*. This measures what each one
+costs, on the same rows at the same moment — the one comparison this
+architecture is placed to make, since almost nobody runs all three side by
+side.
+
+```bash
+bash scripts/test_e2e.sh          # exports the connection settings
+python scripts/benchmark.py
+```
+
+Reports p50/p95 for five queries against all three stores, and bytes on disk
+per pipeline normalised per source row. Percentiles are nearest-rank, so
+every figure is an observation rather than an interpolation. A pipeline that
+is down is reported as failed, never as a zero.
+
+The scale ladder reseeds the source, so point it only at a sandbox:
+
+```bash
+python scripts/benchmark.py --scale 1000000
+```
+
+Then run both DAGs and re-run without `--scale` — the numbers describe
+whatever the pipelines have actually processed, not what was seeded.
+
+End-to-end freshness is not measured here. It has to be sampled while the
+pipelines run rather than once from a laptop, so the ingestion DAG emits it
+as `etl_pipe_freshness_lag_seconds{pipe,table}`. One Grafana query over that
+metric draws all three pipelines on one axis:
+
+```promql
+etl_pipe_freshness_lag_seconds
+```
+
+Read it during traffic. With an idle source all three climb together, which
+is correct and uninteresting.
+
 ### Step 6 — Open the dashboards
 
 Get your node IP:

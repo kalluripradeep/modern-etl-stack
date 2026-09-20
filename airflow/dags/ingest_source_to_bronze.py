@@ -310,6 +310,107 @@ def _emit_metric(name, value):
         log.warning(f"Could not emit metric {name}: {e}")
 
 
+# ── Cross-pipe freshness ─────────────────────────────────────────────────────
+# One operational source feeds three pipelines, and the obvious question --
+# what does each one actually cost in staleness -- had never been measured,
+# because freshness was only ever computed for the warehouse. The same
+# question asked of all three, on the same rows at the same moment, is the
+# one number this architecture is uniquely placed to produce.
+#
+# Emitted under a single metric name with a `pipe` label, so one Grafana
+# query draws three lines rather than three panels that have to be eyeballed
+# against each other. The existing etl.freshness.* gauge is left exactly as
+# it was: dashboards and alerts already reference it, and a rename would
+# break them for a cosmetic gain.
+#
+# What this measures is how old the newest visible row is, per store. While
+# the source is being written to, that is end-to-end lag. While the source
+# is idle, all three converge and climb together -- which is correct, just
+# not interesting. Read it during traffic, not at rest.
+CLICKHOUSE_URL = os.environ.get('CLICKHOUSE_URL', 'http://clickhouse:8123')
+CLICKHOUSE_USER = os.environ.get('CLICKHOUSE_USER', 'chuser')
+CLICKHOUSE_PASSWORD = os.environ.get('CLICKHOUSE_PASSWORD', 'chpass')
+TRINO_URL = os.environ.get('TRINO_URL', 'http://trino:8080')
+
+PIPE_FRESHNESS_SQL = {
+    'warehouse': "SELECT EXTRACT(EPOCH FROM (now() - MAX({col}))) FROM raw.{table}_source",
+    'mirror': "SELECT dateDiff('second', max({col}), now()) FROM mirror.{table}_current",
+    # to_unixtime rather than date_diff: current_timestamp is a timestamp with
+    # time zone and the Iceberg column is not, and Trino will not unify those
+    # two types inside date_diff. Subtracting epoch seconds sidesteps it.
+    'lakehouse': (
+        "SELECT to_unixtime(current_timestamp) - to_unixtime(max({col})) "
+        "FROM iceberg.lake.{table}"
+    ),
+}
+
+
+def _clickhouse_scalar(sql):
+    import requests
+    r = requests.post(
+        f"{CLICKHOUSE_URL}/?default_format=JSONCompact&readonly=1",
+        headers={'X-ClickHouse-User': CLICKHOUSE_USER,
+                 'X-ClickHouse-Key': CLICKHOUSE_PASSWORD},
+        data=sql.encode('utf-8'),
+        timeout=15,
+    )
+    r.raise_for_status()
+    data = r.json().get('data') or []
+    return data[0][0] if data and data[0] else None
+
+
+def _trino_scalar(sql):
+    """Run one statement over Trino's REST protocol, following nextUri.
+
+    Trino returns results across pages and the first page usually carries no
+    rows at all, so a single POST reads an empty result and would record a
+    freshness of zero for a pipeline it never actually queried.
+    """
+    import requests
+    hdr = {'X-Trino-User': 'airflow-metrics'}
+    r = requests.post(f"{TRINO_URL}/v1/statement", data=sql.encode('utf-8'),
+                      headers=hdr, timeout=30)
+    rows = []
+    while True:
+        r.raise_for_status()
+        page = r.json()
+        if page.get('error'):
+            raise RuntimeError(page['error'].get('message', 'unknown Trino error'))
+        rows.extend(page.get('data') or [])
+        nxt = page.get('nextUri')
+        if not nxt:
+            return rows[0][0] if rows and rows[0] else None
+        r = requests.get(nxt, headers=hdr, timeout=30)
+
+
+def _pipe_scalar(pipe, sql, dest_hook):
+    if pipe == 'warehouse':
+        rec = dest_hook.get_first(sql)
+        return rec[0] if rec else None
+    if pipe == 'mirror':
+        return _clickhouse_scalar(sql)
+    return _trino_scalar(sql)
+
+
+def emit_pipe_freshness(dest_hook):
+    """Emit freshness for all three pipelines under one labelled metric."""
+    for name, table in TABLES_CONFIG.items():
+        col = table.get('cursor_column')
+        if not col:
+            continue
+        for pipe, template in PIPE_FRESHNESS_SQL.items():
+            sql = template.format(col=col, table=name)  # nosec B608
+            try:
+                value = _pipe_scalar(pipe, sql, dest_hook)
+                if value is not None:
+                    _emit_metric(f'etl.pipe_freshness.{pipe}.{name}', float(value))
+            except Exception as e:  # noqa: BLE001
+                # A pipeline that is down is not a freshness of zero. Skip the
+                # sample so the series has a gap, which is readable on a graph,
+                # rather than a fabricated point that is not.
+                log.warning(f"Freshness probe failed for {pipe}/{name}: {e}")
+
+
 def emit_data_quality_metrics(**kwargs):
     """Publish source-freshness and revenue-anomaly signals for alerting."""
     from datetime import timezone
@@ -350,6 +451,8 @@ def emit_data_quality_metrics(**kwargs):
             log.info(f"Revenue anomaly z-score: {z:.2f} (latest={latest:.2f}, mean={mean:.2f})")
     except Exception as e:
         log.warning(f"Revenue anomaly metric failed: {e}")
+
+    emit_pipe_freshness(dest_hook)
 
     _ = kwargs, timezone  # reserved for future per-run labelling
 

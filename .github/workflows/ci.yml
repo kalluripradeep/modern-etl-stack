@@ -75,6 +75,14 @@ jobs:
         # and the error blames the source data (#144).
         run: python scripts/ci/test_seed_matches_manifest.py
 
+      - name: Verify the cross-pipeline benchmarks
+        # These numbers are going into a paper, so the failure mode that
+        # matters is a plausible wrong figure rather than a crash: an
+        # interpolated percentile nobody measured, two pipelines accidentally
+        # pointed at the same tables, or a down pipeline recorded as perfectly
+        # fresh instead of skipped.
+        run: python scripts/ci/test_benchmark_guard.py
+
   type-check:
     runs-on: ubuntu-latest
     steps:
