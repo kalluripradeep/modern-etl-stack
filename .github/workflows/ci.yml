@@ -83,6 +83,14 @@ jobs:
         # fresh instead of skipped.
         run: python scripts/ci/test_benchmark_guard.py
 
+      - name: Verify raw DDL and the Iceberg warehouse bucket
+        # Two failures a clean redeploy plus a reseed exposed, both of which
+        # blamed something other than themselves: a UNIQUE constraint in raw
+        # that turned a data-quality observation into a dead pipeline, and a
+        # bucket Compose never created, surfacing as NoSuchBucket from inside
+        # a Spark stack trace.
+        run: python scripts/ci/test_reseed_and_buckets.py
+
   type-check:
     runs-on: ubuntu-latest
     steps:
