@@ -18,7 +18,6 @@ Runs offline.
 
 import re
 import sys
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -36,17 +35,24 @@ def check(label, condition, detail=""):
         failures.append(label)
 
 
-def to_bytes(text):
-    """ClickHouse takes a plain byte count in these elements."""
-    return int(str(text).strip())
+def cache_sizes(path):
+    """Pull the byte counts out of the config.
+
+    A regex rather than an XML parser: this file is two integer elements that
+    we own, the workflow's xml-validate step already proves it parses, and
+    reaching for ElementTree here buys nothing except a bandit finding about
+    parsing untrusted input that this input is not.
+    """
+    text = path.read_text(encoding="utf-8")
+    return {m.group(1): int(m.group(2))
+            for m in re.finditer(r"<(\w+)>(\d+)</\1>", text)}
 
 
 check("the memory config exists", CONFIG.exists(), str(CONFIG))
 if not CONFIG.exists():
     sys.exit(1)
 
-root = ET.parse(CONFIG).getroot()
-caches = {el.tag: to_bytes(el.text) for el in root if el.text and el.text.strip().isdigit()}
+caches = cache_sizes(CONFIG)
 
 check(
     "mark_cache_size is declared",
