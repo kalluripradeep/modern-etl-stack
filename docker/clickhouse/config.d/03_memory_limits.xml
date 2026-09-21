@@ -1,0 +1,38 @@
+<clickhouse>
+    <!--
+    Bound the caches to the container.
+
+    ClickHouse sizes these for a dedicated machine, and nothing here had ever
+    overridden them. The defaults are:
+
+        mark_cache_size          5 GiB
+        uncompressed_cache_size  8 GiB
+
+    against a pod whose memory limit is 4Gi. The mark cache alone is allowed
+    to grow larger than the entire container, and max_server_memory_usage is
+    derived from the cgroup at 90 percent, so the server will happily fill
+    3.6 GiB with cache it was never told it could not have.
+
+    What that looks like when it goes wrong is not an out of memory kill. The
+    OvercommitTracker picks a query to cancel once resident memory crosses the
+    ceiling, and the query it picks is whichever happens to be running, not
+    whichever caused the pressure. On the reporting cluster that was a plain
+    count over ten thousand rows:
+
+        Code: 241. DB::Exception: (total) memory limit exceeded: would use
+        2.60 GiB, current RSS: 3.61 GiB, maximum: 3.60 GiB. OvercommitTracker
+        decision: Query was selected to stop by OvercommitTracker
+        (query: SELECT count() FROM mirror.orders_current)
+
+    Note the shape of it: tracked memory 2.60 GiB, resident 3.61 GiB. The
+    gigabyte between them is cache and allocator, not query working set, and
+    the count was the victim rather than the cause. Reading that error as "the
+    count is expensive" leads to rewriting a query that was never the problem.
+
+    512 MiB of marks is ample for four mirror tables holding a few hundred
+    thousand rows, and the uncompressed cache is off because queries do not
+    use it unless use_uncompressed_cache is set, which nothing here sets.
+    -->
+    <mark_cache_size>536870912</mark_cache_size>
+    <uncompressed_cache_size>0</uncompressed_cache_size>
+</clickhouse>
