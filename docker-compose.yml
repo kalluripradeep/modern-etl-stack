@@ -283,6 +283,7 @@ services:
       # Unbounded, these grew to 34G on one node and took it past the
       # kubelet's eviction threshold -- see #144.
       - ./docker/clickhouse/config.d/02_system_log_retention.xml:/etc/clickhouse-server/config.d/02_system_log_retention.xml:ro
+      - ./docker/clickhouse/config.d/03_memory_limits.xml:/etc/clickhouse-server/config.d/03_memory_limits.xml:ro
     networks:
       - etl-network
     healthcheck:

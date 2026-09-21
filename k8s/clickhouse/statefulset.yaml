@@ -52,6 +52,14 @@ spec:
         - name: server-config
           mountPath: /etc/clickhouse-server/config.d/02_system_log_retention.xml
           subPath: 02_system_log_retention.xml
+        # Caps the mark and uncompressed caches. ClickHouse sizes them for a
+        # dedicated machine (5G and 8G), which on a 4Gi pod lets resident
+        # memory drift to the ceiling on cache alone. The OvercommitTracker
+        # then cancels whichever query is running rather than whatever caused
+        # the pressure. See #182.
+        - name: server-config
+          mountPath: /etc/clickhouse-server/config.d/03_memory_limits.xml
+          subPath: 03_memory_limits.xml
         readinessProbe:
           httpGet:
             path: /ping

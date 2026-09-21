@@ -99,6 +99,13 @@ jobs:
         # change rather than a patch.
         run: python scripts/ci/test_store_registry.py
 
+      - name: Verify ClickHouse caches fit its container
+        # The defaults (5G marks, 8G uncompressed) are larger than the pod.
+        # Left alone they let resident memory reach the ceiling on cache, and
+        # the OvercommitTracker then cancels whichever query is running rather
+        # than the one responsible -- which sends you after the wrong thing.
+        run: python scripts/ci/test_clickhouse_memory.py
+
   type-check:
     runs-on: ubuntu-latest
     steps:
