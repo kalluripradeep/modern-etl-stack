@@ -104,38 +104,72 @@ def load_reference_data(cur):
 
 
 def place_orders(cur, customers, products, count):
-    """Insert `count` new orders, each with 1-3 line items."""
-    for _ in range(count):
-        cur.execute(
-            "INSERT INTO orders (customer_id, order_date, total_amount, status) "
-            "VALUES (%s, CURRENT_TIMESTAMP, 0, 'pending') RETURNING order_id",
-            (random.choice(customers),),
-        )
-        order_id = cur.fetchone()[0]
+    """Insert `count` new orders, each with 1-3 line items.
 
+    Batched, because the row-at-a-time version could not reach the rate it was
+    asked for and nobody noticed. Every order cost a round trip for the order,
+    one per line item, and one for the total: 300 to 500 sequential round trips
+    for a tick of 100. A run asked for 100 orders a second and delivered 29,
+    so every lag figure measured psycopg2 rather than the pipeline (#182).
+
+    Three round trips now, whatever the rate.
+
+    The insert-then-update shape is kept deliberately. Computing the total
+    up front would let us skip the UPDATE, but each order currently produces
+    one insert event and one update event, and changing that would change the
+    CDC event mix at the same time as the throughput -- which would make the
+    next set of numbers impossible to compare with the last.
+    """
+    from psycopg2.extras import execute_values
+
+    order_rows = [(random.choice(customers),) for _ in range(count)]
+    ids = [
+        r[0] for r in execute_values(
+            cur,
+            "INSERT INTO orders (customer_id, order_date, total_amount, status) "
+            "VALUES %s RETURNING order_id",
+            order_rows,
+            template="(%s, CURRENT_TIMESTAMP, 0, 'pending')",
+            fetch=True,
+        )
+    ]
+
+    items = []
+    totals = []
+    for order_id in ids:
         total = 0
         for _ in range(random.randint(1, 3)):
             product_id, price = random.choice(products)
             qty = random.randint(1, 3)
             total += float(price) * qty
-            cur.execute(
-                "INSERT INTO order_items (order_id, product_id, quantity, unit_price) "
-                "VALUES (%s, %s, %s, %s)",
-                (order_id, product_id, qty, price),
-            )
+            items.append((order_id, product_id, qty, price))
+        totals.append((order_id, round(total, 2)))
 
-        # Keep the order total equal to the sum of its lines, so the gold
-        # layer's fact/order reconciliation stays exact.
-        cur.execute(
-            "UPDATE orders SET total_amount = %s, updated_at = CURRENT_TIMESTAMP "
-            "WHERE order_id = %s",
-            (round(total, 2), order_id),
-        )
+    execute_values(
+        cur,
+        "INSERT INTO order_items (order_id, product_id, quantity, unit_price) "
+        "VALUES %s",
+        items,
+    )
+
+    # Keep the order total equal to the sum of its lines, so the gold layer's
+    # fact/order reconciliation stays exact. One statement rather than one per
+    # order; the cast matters because VALUES gives untyped literals and the
+    # join would fail on text = bigint.
+    execute_values(
+        cur,
+        "UPDATE orders SET total_amount = v.total, updated_at = CURRENT_TIMESTAMP "
+        "FROM (VALUES %s) AS v(order_id, total) "
+        "WHERE orders.order_id = v.order_id::bigint",
+        totals,
+    )
     return count
 
 
 def advance_statuses(cur, count):
     """Move some recent orders along their lifecycle (UPDATE events)."""
+    from psycopg2.extras import execute_values
+
     cur.execute(
         "SELECT order_id FROM orders WHERE status <> 'cancelled' "
         "ORDER BY order_id DESC LIMIT 200"
@@ -143,13 +177,15 @@ def advance_statuses(cur, count):
     ids = [r[0] for r in cur.fetchall()]
     if not ids:
         return 0
-    for oid in random.sample(ids, min(count, len(ids))):
-        cur.execute(
-            "UPDATE orders SET status = %s, updated_at = CURRENT_TIMESTAMP "
-            "WHERE order_id = %s",
-            (random.choice(STATUSES), oid),
-        )
-    return min(count, len(ids))
+    chosen = random.sample(ids, min(count, len(ids)))
+    execute_values(
+        cur,
+        "UPDATE orders SET status = v.status, updated_at = CURRENT_TIMESTAMP "
+        "FROM (VALUES %s) AS v(order_id, status) "
+        "WHERE orders.order_id = v.order_id::bigint",
+        [(oid, random.choice(STATUSES)) for oid in chosen],
+    )
+    return len(chosen)
 
 
 def cancel_order(cur):
