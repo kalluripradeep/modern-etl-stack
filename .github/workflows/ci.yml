@@ -106,6 +106,13 @@ jobs:
         # than the one responsible -- which sends you after the wrong thing.
         run: python scripts/ci/test_clickhouse_memory.py
 
+      - name: Verify the traffic generator batches its writes
+        # Row-at-a-time, it could not reach the rate it was asked for: a run
+        # requesting 100 orders a second delivered 29, and the tick counter
+        # still printed +100. Every lag figure taken under it measured
+        # psycopg2 round trips rather than the pipeline.
+        run: python scripts/ci/test_traffic_generator.py
+
   type-check:
     runs-on: ubuntu-latest
     steps:
