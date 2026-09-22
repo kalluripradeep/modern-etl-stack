@@ -338,21 +338,29 @@ for _ in $(seq 1 20); do
           --user "$CH_USER" --password "$CH_PASS" \
           -q "SELECT if(count() = 0, NULL, now() - toDateTime(max(ver) / 1000))
               FROM mirror.orders")
-  echo "$(date +%T)  source: ${src// /} orders   mirror lag: ${lag}s"
+  echo "$(date +%T)  source: ${src// /} orders   flush interval: ${lag}s"
   sleep 5
 done
 ```
 
-`ver` is the timestamp Debezium stamped on the event, so this is how far behind
-the newest change the mirror has seen actually is. Expect it to sit at a few
-seconds and stay there. A number that climbs run after run means the consumer
-has stopped keeping up; `\N` means the mirror holds no events at all.
+`ver` is the timestamp Debezium stamped on the event, so what this measures is
+how stale the newest change the mirror has seen actually is.
 
-There is a floor. The Kafka engine batches before flushing to the MergeTree,
-and `stream_flush_interval_ms` is left at ClickHouse's default of 7.5 seconds,
-so single-digit seconds is the design and not a problem to tune away. A
-reading *below* that floor is a sign the number is measuring something other
-than lag.
+It is labelled `flush interval` because at ordinary rates that is what it
+reads. The Kafka engine batches before flushing to the MergeTree and
+`stream_flush_interval_ms` is left at ClickHouse's default of 7.5 seconds, so
+with nothing else contributing the number simply reports where in that cycle
+you sampled. Single-digit seconds is the design, not something to tune away,
+and a reading below the floor means something other than staleness is being
+measured.
+
+The name describes the common case rather than the metric. Once the consumer
+cannot keep up the number leaves the flush cycle behind and climbs: a run at
+roughly 365 messages a second on `cdc.public.orders` built a backlog of 11,000
+messages, against 765 at a tenth of that rate (#182). So read the shape rather
+than the label — a value oscillating inside the flush window means the mirror
+is keeping pace, and one whose floor keeps rising means it is not. An empty
+result means the mirror holds no events at all.
 
 This used to compare row counts and print `behind: source - mirror`, which was
 wrong in two ways that both flattered the result:
