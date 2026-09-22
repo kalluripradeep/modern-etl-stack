@@ -325,7 +325,7 @@ python3 -m pip install psycopg2-binary
 python3 scripts/simulate_live_traffic.py --rate 5 --interval 3
 ```
 
-**Watch the mirror keep up.** In a third terminal, poll the source and the mirror together. Any gap between the two columns is the live end-to-end CDC lag:
+**Watch the mirror keep up.** In a third terminal, ask ClickHouse how stale its newest CDC event is:
 
 ```bash
 CH_USER=$(kubectl get secret etl-secrets -n etl -o jsonpath='{.data.CLICKHOUSE_USER}' | base64 -d)
@@ -334,21 +334,61 @@ CH_PASS=$(kubectl get secret etl-secrets -n etl -o jsonpath='{.data.CLICKHOUSE_P
 for _ in $(seq 1 20); do
   src=$(kubectl exec -n etl postgres-source-0 -- \
           bash -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM orders"')
-  mir=$(kubectl exec -n etl clickhouse-0 -- clickhouse-client \
+  lag=$(kubectl exec -n etl clickhouse-0 -- clickhouse-client \
           --user "$CH_USER" --password "$CH_PASS" \
-          -q "SELECT count() FROM mirror.orders_current")
-  echo "$(date +%T)  source: ${src// /}  mirror: ${mir}  behind: $(( ${src// /} - mir ))"
+          -q "SELECT if(count() = 0, NULL, now() - toDateTime(max(ver) / 1000))
+              FROM mirror.orders")
+  echo "$(date +%T)  source: ${src// /} orders   mirror lag: ${lag}s"
   sleep 5
 done
 ```
 
-Expect the mirror to trail by a few seconds and never fall further behind. Steady lag means the consumer is keeping up; lag that grows run after run is the signal something is wrong. The gap itself is mostly ClickHouse's `stream_flush_interval_ms` (7.5s by default), so a few seconds is normal and not a sign of trouble.
+`ver` is the timestamp Debezium stamped on the event, so this is how far behind
+the newest change the mirror has seen actually is. Expect it to sit at a few
+seconds and stay there. A number that climbs run after run means the consumer
+has stopped keeping up; `\N` means the mirror holds no events at all.
+
+There is a floor. The Kafka engine batches before flushing to the MergeTree,
+and `stream_flush_interval_ms` is left at ClickHouse's default of 7.5 seconds,
+so single-digit seconds is the design and not a problem to tune away. A
+reading *below* that floor is a sign the number is measuring something other
+than lag.
+
+This used to compare row counts and print `behind: source - mirror`, which was
+wrong in two ways that both flattered the result:
+
+- **It could not see updates at all.** An UPDATE replaces a row rather than
+  adding one, so the count is identical before and after. `behind` reads a
+  perfect zero while every update is arbitrarily stale, and updates are most
+  of what a CDC stream carries.
+- **It was meaningless after a reseed.** `make seed` drops and recreates the
+  source tables, which drops their sequences, so `order_id` restarts at 1
+  while the mirror still holds ids from the previous dataset. New orders then
+  land on ids the mirror already has; `mirror.orders` is a ReplacingMergeTree
+  keyed on `order_id`, so they replace rather than append and the count does
+  not move. It produced `behind: -9469` on a healthy pipeline and read as a
+  stalled one (#182).
+
+Counting also cost more than it looks. `mirror.orders_current` is
+`SELECT * ... FINAL`, so a `count()` through it materialises every version of
+every row; the lag query above reads one column and no `FINAL`, at roughly a
+tenth the memory.
+
+**Reset both sides before a timed run.** The lag figure is honest with stale
+rows present, but any count you compare by hand is not, so start from the same
+point on both sides:
+
+```bash
+kubectl exec -n etl clickhouse-0 -- clickhouse-client \
+  --user "$CH_USER" --password "$CH_PASS" -q "TRUNCATE TABLE mirror.orders"
+make seed   # or bash k8s/deploy.sh and answer y
+```
 
 Leave it running and watch each destination:
 
 | Pipeline | Where to look | When it moves |
 |---|---|---|
-| **3 · Real-time mirror** | `mirror.orders_current` in ClickHouse — the loop above, or rerun the count by hand | seconds |
+| **3 · Real-time mirror** | `mirror.orders_current` in ClickHouse for the data; the lag loop above for whether it is keeping up | seconds |
 | **1 · Warehouse** | `raw.orders_source`, then `int`/`gold` after dbt runs | on the hourly run |
 | **2 · Lakehouse** | `iceberg.lake.orders` via Trino | on the hourly run, after the silver DAG follows ingestion |
 
