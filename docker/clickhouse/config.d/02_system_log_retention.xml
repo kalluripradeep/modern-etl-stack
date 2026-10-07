@@ -131,6 +131,15 @@
         <flush_interval_milliseconds>7500</flush_interval_milliseconds>
     </trace_log>
 
+    <!-- Changing a system log table's shape here does not rewrite the table
+         in place. ClickHouse renames the existing one to <table>_0 and starts
+         a fresh one, so the old rows survive at their old size and the disk is
+         not reclaimed until they are dropped by hand:
+             DROP TABLE IF EXISTS system.metric_log_0 SYNC
+             DROP TABLE IF EXISTS system.text_log_0 SYNC
+         Verified on Compose: both shadows appeared on restart and dropped
+         cleanly. On a cluster carrying 1.18 GiB of metric_log this is the
+         difference between the change working and appearing to do nothing. -->
     <!-- 1.18 GiB against a 3 day TTL on the reporting cluster, so roughly
          390 MiB a day, where the comment above had estimated under 10. That
          estimate came from a quiet period; under sustained CDC load this
