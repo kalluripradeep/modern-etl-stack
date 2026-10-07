@@ -3,7 +3,15 @@
 # runtime image — it omits faker, which is only used by the standalone
 # seed script (make seed), never inside the Airflow container.
 
-apache-airflow==3.3.1
+# Bumped for PYSEC-2026-3988, 3989 and 3990, all against 3.3.1. 3989 is the
+# one worth reading: with both a session cookie and an Authorization: Bearer
+# header present, 3.3.0 and 3.3.1 resolve the caller from the cookie and
+# ignore the bearer token, so the request runs and is audited as the cookie's
+# principal rather than the identity the client presented. pip-audit prints no
+# fix version for it because the advisory declares last_affected 3.3.1 rather
+# than a fixed release; the text is explicit that only 3.3.0 and 3.3.1 are
+# affected, so 3.3.2 is outside the range for all three.
+apache-airflow==3.3.2
 # Not a direct dependency -- dbt-core pulls it in for SQL parsing, and its own
 # pin was capping the resolver below the version that fixes PYSEC-2026-3696/
 # 3697/3698/3699. Floored explicitly because bumping apache-airflow alone
