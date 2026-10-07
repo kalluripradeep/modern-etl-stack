@@ -131,12 +131,22 @@
         <flush_interval_milliseconds>7500</flush_interval_milliseconds>
     </trace_log>
 
+    <!-- 1.18 GiB against a 3 day TTL on the reporting cluster, so roughly
+         390 MiB a day, where the comment above had estimated under 10. That
+         estimate came from a quiet period; under sustained CDC load this
+         writes a very wide row every second and the cost is real. Prometheus
+         already scrapes the same counters, so a second copy at one second
+         granularity buys nothing here.
+         The disk is not the point. system.* totalled 3.9 GiB against 9 MiB of
+         actual mirror data, and merging that much log is tracked memory,
+         which is what the OvercommitTracker was measuring when it cancelled a
+         count over ten thousand rows (#182). -->
     <metric_log>
         <database>system</database>
         <table>metric_log</table>
         <partition_by>toYYYYMMDD(event_date)</partition_by>
-        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
-        <collect_interval_milliseconds>1000</collect_interval_milliseconds>
+        <ttl>event_date + INTERVAL 1 DAY DELETE</ttl>
+        <collect_interval_milliseconds>15000</collect_interval_milliseconds>
         <flush_interval_milliseconds>7500</flush_interval_milliseconds>
     </metric_log>
 
@@ -156,11 +166,15 @@
         <flush_interval_milliseconds>7500</flush_interval_milliseconds>
     </session_log>
 
+    <!-- 1.35 GiB at 3 days, about 450 MiB a day. This is the server's own
+         log written into a table, and the container's stdout already carries
+         every line of it, so the table is a second copy kept for the
+         convenience of querying it in SQL. One day is enough for that. -->
     <text_log>
         <database>system</database>
         <table>text_log</table>
         <partition_by>toYYYYMMDD(event_date)</partition_by>
-        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+        <ttl>event_date + INTERVAL 1 DAY DELETE</ttl>
         <flush_interval_milliseconds>7500</flush_interval_milliseconds>
     </text_log>
 
