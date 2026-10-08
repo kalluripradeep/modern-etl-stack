@@ -187,20 +187,32 @@ kubectl rollout status statefulset/minio -n $NAMESPACE --timeout=300s
 ok "MinIO is ready"
 
 # Create bronze and silver buckets
-info "Creating MinIO buckets (bronze, silver)..."
+info "Creating object storage buckets (bronze, silver, airflow-logs)..."
 MINIO_POD="minio-0"
-# Single-quoted so the variables expand inside the pod: MinIO already has the
-# real credentials in its environment from etl-secrets. Hardcoding the defaults
-# here broke every deploy that used generate-secrets.sh, with a signature error.
-if kubectl exec -n $NAMESPACE "$MINIO_POD" -- sh -c '
-  mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" &&
-  mc mb --ignore-existing local/bronze &&
-  mc mb --ignore-existing local/silver &&
-  mc mb --ignore-existing local/airflow-logs
-'; then
-  ok "MinIO buckets ready"
+# `weed shell` talks to the master over localhost and needs no credentials,
+# unlike the mc invocation this replaces, which had to read them out of the
+# pod's environment.
+#
+# Creating and checking are separate steps on purpose. `s3.bucket.create` on an
+# existing bucket prints "error: bucket X already exists" and still exits 0, so
+# branching on its status would report success for any failure at all. Listing
+# afterwards and looking for the names is the only honest check, and it is the
+# same assertion deploy-smoke makes.
+kubectl exec -n $NAMESPACE "$MINIO_POD" -- sh -c '
+  for b in bronze silver airflow-logs; do
+    echo "s3.bucket.create -name $b" | weed shell -master=localhost:9333
+  done
+' >/dev/null 2>&1 || true
+
+BUCKETS=$(kubectl exec -n $NAMESPACE "$MINIO_POD" -- sh -c   'echo "s3.bucket.list" | weed shell -master=localhost:9333' 2>/dev/null)
+MISSING=""
+for b in bronze silver airflow-logs; do
+  echo "$BUCKETS" | grep -q "[[:space:]]$b[[:space:]]" || MISSING="$MISSING $b"
+done
+if [ -z "$MISSING" ]; then
+  ok "Object storage buckets ready"
 else
-  warn "Could not create buckets automatically — create them manually in the MinIO console"
+  warn "Buckets missing:$MISSING — the pipeline will fail until they exist"
 fi
 
 # ─── Step 5: Strimzi Kafka Operator & Kafka Cluster ───────────────────────────

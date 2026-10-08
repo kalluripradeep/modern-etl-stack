@@ -129,26 +129,38 @@ services:
       - etl-network
 
   # MinIO
+  # SeaweedFS, kept under the name minio. See k8s/minio/statefulset.yaml for
+  # why: MinIO withdrew its images from every public registry, and every
+  # consumer here addresses this by the hostname `minio`.
   minio:
-    image: minio/minio:latest
+    image: chrislusf/seaweedfs:4.48
     container_name: minio
     ports:
       - "9000:9000"
-      - "9001:9001"
+      - "9001:8888"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      MINIO_PROMETHEUS_AUTH_TYPE: public
-    command: server /data --console-address ":9001"
+    # The S3 credentials go in a config file rather than the environment, so
+    # it is written at startup from the variables above and lives in neither
+    # the repository nor the image.
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        cat > /tmp/s3.json <<JSON
+        {"identities":[{"name":"etl","credentials":[{"accessKey":"${MINIO_ROOT_USER:-minioadmin}","secretKey":"${MINIO_ROOT_PASSWORD:-minioadmin}"}],"actions":["Admin","Read","Write","List","Tagging"]}]}
+        JSON
+        exec weed server -dir=/data -s3 -s3.port=9000 -s3.config=/tmp/s3.json -volume.max=0
     volumes:
       - minio-data:/data
     networks:
       - etl-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:9000/healthz"]
       interval: 15s
       retries: 5
-      start_period: 10s
+      start_period: 15s
 
   # Kafka Connect (Debezium)
   kafka-connect:

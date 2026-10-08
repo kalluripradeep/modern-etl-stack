@@ -15,17 +15,68 @@ spec:
         app: minio
     spec:
       containers:
+      # This runs SeaweedFS, not MinIO. The names here stay as they are on
+      # purpose: every consumer addresses this by the service name `minio` --
+      # AIRFLOW_CONN_MINIO_S3, the Spark jobs' s3a endpoint, Trino's iceberg
+      # catalog, the deploy script, the e2e suite and the guide. Renaming them
+      # is a separate change with no functional gain, and this one already
+      # touches the deploy path.
+      #
+      # Why it changed at all: MinIO withdrew its images from public
+      # registries. quay.io answers 401, and Docker Hub, GHCR, public ECR and
+      # bitnami all deny the pull, including on pinned release tags. A cluster
+      # already running keeps working from a cached image and fails the moment
+      # a pod is rescheduled onto a clean node, which is the worst shape a
+      # dependency failure takes: invisible until it is urgent.
+      #
+      # SeaweedFS is Apache-2.0 and its S3 gateway covers what this stack asks
+      # of it. Checked against 4.48 before this was written: bucket create and
+      # list, put, prefix listing, get, delete, multipart upload (what s3a
+      # does for anything sizeable) and common-prefix listing (what Iceberg
+      # manifest discovery walks).
       - name: minio
-        image: quay.io/minio/minio:latest
+        # Pinned deliberately. `latest` is how a working deployment changes
+        # under you with no commit to point at, and the registry that served
+        # it yesterday is the one that stopped serving MinIO.
+        image: chrislusf/seaweedfs:4.48
+        # -volume.max=0 is not optional. SeaweedFS pre-allocates volumes and
+        # defaults to 8; an Iceberg write fans out into many small parquet
+        # files across partition directories and exhausts that, after which
+        # every write returns HTTP 500 InternalError. s3a surfaces that as
+        #   AWSStatus500Exception: Writing Object on lake/orders/data/...
+        # which reads like a server fault rather than a quota. Zero means
+        # auto-size from free disk. Found by running the silver DAG: boto3
+        # writes had all passed, because they never fanned out like this.
+        #
+        # SeaweedFS reads S3 credentials from a config file rather than the
+        # environment, so the file is written at startup from the secret and
+        # exists in neither the repository nor the image. /tmp rather than
+        # /data: the data volume outlives the pod and credentials should not.
         command:
-        - minio
-        - server
-        - /data
-        - --console-address
-        - ":9001"
+        - /bin/sh
+        - -ec
+        - |
+          cat > /tmp/s3.json <<JSON
+          {
+            "identities": [
+              {
+                "name": "etl",
+                "credentials": [
+                  {
+                    "accessKey": "${MINIO_ROOT_USER}",
+                    "secretKey": "${MINIO_ROOT_PASSWORD}"
+                  }
+                ],
+                "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+              }
+            ]
+          }
+          JSON
+          exec weed server -dir=/data -s3 -s3.port=9000 -s3.config=/tmp/s3.json -volume.max=0
         ports:
-        - containerPort: 9000   # S3 API
-        - containerPort: 9001   # Web console
+        - containerPort: 9000   # S3 API, on MinIO's port so no consumer moves
+        - containerPort: 8888   # filer, the browsable UI here
+        - containerPort: 9333   # master, which `weed shell` talks to for buckets
         env:
         - name: MINIO_ROOT_USER
           valueFrom:
@@ -37,8 +88,6 @@ spec:
             secretKeyRef:
               name: etl-secrets
               key: MINIO_ROOT_PASSWORD
-        - name: MINIO_PROMETHEUS_AUTH_TYPE
-          value: "public"
         resources:
           requests:
             memory: "256Mi"
@@ -49,15 +98,19 @@ spec:
         volumeMounts:
         - name: minio-data
           mountPath: /data
+        # /healthz on the S3 port answers 200 without credentials. The probes
+        # this replaces used /minio/health/{ready,live}, which do not exist
+        # here, and a probe pointed at a missing path fails closed: the pod
+        # never goes ready and the deploy times out saying nothing useful.
         readinessProbe:
           httpGet:
-            path: /minio/health/ready
+            path: /healthz
             port: 9000
           initialDelaySeconds: 10
           periodSeconds: 5
         livenessProbe:
           httpGet:
-            path: /minio/health/live
+            path: /healthz
             port: 9000
           initialDelaySeconds: 30
           periodSeconds: 10

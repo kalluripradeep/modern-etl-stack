@@ -10,11 +10,16 @@ spec:
   - name: api
     port: 9000
     targetPort: 9000
+  # SeaweedFS has no equivalent of MinIO's console on 9001; the browsable UI
+  # is the filer, on 8888. The published port stays 9001 so anything pointing
+  # at it keeps resolving, and only the target moves.
   - name: console
     port: 9001
-    targetPort: 9001
+    targetPort: 8888
 ---
-# NodePort for accessing MinIO console during testing
+# NodePort for browsing object storage during testing. nodePort stays 30901 so
+# the URL in DEPLOY_GUIDE.md is still correct; what answers it is now the
+# SeaweedFS filer rather than the MinIO console, so it looks different.
 apiVersion: v1
 kind: Service
 metadata:
@@ -27,5 +32,5 @@ spec:
   ports:
   - name: console
     port: 9001
-    targetPort: 9001
+    targetPort: 8888
     nodePort: 30901

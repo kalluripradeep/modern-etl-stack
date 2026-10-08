@@ -11,7 +11,9 @@ One source database feeding three parallel pipelines, plus a query layer:
 - **PostgreSQL** — source (transactions) and destination (batch analytics warehouse)
 - **Kafka (Strimzi) + Debezium** — real-time change data capture (CDC)
 - **ClickHouse** — columnar real-time mirror fed from the CDC stream
-- **MinIO** — S3-compatible object storage (bronze + silver layers)
+- **SeaweedFS** — S3-compatible object storage (bronze + silver layers). Still
+  addressed as `minio` throughout, because every consumer resolves it by that
+  service name; see `k8s/minio/statefulset.yaml` for why it changed.
 - **Apache Spark + Iceberg** — large-scale lakehouse transformation
 - **Trino** — SQL query engine over the Iceberg lakehouse (official Helm chart)
 - **Apache Airflow** — pipeline orchestration (official Helm chart)
@@ -268,7 +270,7 @@ kubectl get nodes -o wide   # EXTERNAL-IP column; use INTERNAL-IP if blank
 | AI Dashboard (ask questions in English) | `http://NODE_IP:30333` | `DASHBOARD_AUTH_*` from secrets |
 | Kafka UI (topic monitoring) | `http://NODE_IP:30801` | `KAFKA_UI_*` from secrets |
 | Grafana (metrics) | `http://NODE_IP:30300` | `AIRFLOW_ADMIN_*` from secrets — see note |
-| MinIO (data files) | `http://NODE_IP:30901` | `MINIO_ROOT_*` from secrets |
+| Object storage (data files) | `http://NODE_IP:30901` | `MINIO_ROOT_*` from secrets |
 | Spark UI (job progress) | `http://NODE_IP:30808` | — |
 
 Credentials come from `k8s/01-secrets.generated.yaml` if you ran Step 2, otherwise from the defaults in `k8s/01-secrets.yaml`. Read any of them with:

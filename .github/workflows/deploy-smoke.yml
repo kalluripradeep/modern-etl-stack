@@ -71,9 +71,15 @@ jobs:
           kubectl wait kafka/etl-kafka --for=condition=Ready --timeout=120s -n etl \
             || fail "Kafka cluster did not become Ready"
 
-          # MinIO buckets — fails if bucket creation used the wrong credentials.
+          # Object storage buckets. This used to check them through mc with
+          # the pod's credentials, which also proved those credentials were
+          # right. SeaweedFS has no mc, and `weed shell` reaches the master
+          # over localhost without authenticating, so this now proves only
+          # that the buckets exist. The credential path is still covered: the
+          # e2e suite reads and writes through the S3 API with the generated
+          # secret.
           buckets=$(kubectl exec -n etl minio-0 -- sh -c \
-            'mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && mc ls local' 2>/dev/null)
+            'echo "s3.bucket.list" | weed shell -master=localhost:9333' 2>/dev/null)
           echo "$buckets" | grep -q bronze || fail "bronze bucket missing"
           echo "$buckets" | grep -q silver || fail "silver bucket missing"
 
