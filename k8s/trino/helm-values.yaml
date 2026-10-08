@@ -12,7 +12,7 @@ server:
   workers: 2
 
 # Same Iceberg catalog Spark writes to: metadata pointers in postgres-dest
-# (schema iceberg_catalog), data files in MinIO. ${ENV:...} placeholders are
+# (schema iceberg_catalog), data files in SeaweedFS. ${ENV:...} placeholders are
 # resolved by Trino at startup from the pod environment below.
 catalogs:
   iceberg: |
@@ -25,11 +25,11 @@ catalogs:
     iceberg.jdbc-catalog.catalog-name=silver
     iceberg.jdbc-catalog.default-warehouse-dir=s3a://silver/
     fs.native-s3.enabled=true
-    s3.endpoint=${ENV:MINIO_ENDPOINT}
+    s3.endpoint=${ENV:SEAWEEDFS_ENDPOINT}
     s3.region=us-east-1
     s3.path-style-access=true
-    s3.aws-access-key=${ENV:MINIO_ROOT_USER}
-    s3.aws-secret-key=${ENV:MINIO_ROOT_PASSWORD}
+    s3.aws-access-key=${ENV:SEAWEEDFS_ROOT_USER}
+    s3.aws-secret-key=${ENV:SEAWEEDFS_ROOT_PASSWORD}
 
 env:
   - name: DEST_DB_HOST
@@ -42,11 +42,11 @@ env:
       configMapKeyRef:
         name: etl-env
         key: DEST_DB_PORT
-  - name: MINIO_ENDPOINT
+  - name: SEAWEEDFS_ENDPOINT
     valueFrom:
       configMapKeyRef:
         name: etl-env
-        key: MINIO_ENDPOINT
+        key: SEAWEEDFS_ENDPOINT
   - name: DEST_DB_NAME
     valueFrom:
       secretKeyRef:
@@ -62,16 +62,16 @@ env:
       secretKeyRef:
         name: etl-secrets
         key: DEST_DB_PASSWORD
-  - name: MINIO_ROOT_USER
+  - name: SEAWEEDFS_ROOT_USER
     valueFrom:
       secretKeyRef:
         name: etl-secrets
-        key: MINIO_ROOT_USER
-  - name: MINIO_ROOT_PASSWORD
+        key: SEAWEEDFS_ROOT_USER
+  - name: SEAWEEDFS_ROOT_PASSWORD
     valueFrom:
       secretKeyRef:
         name: etl-secrets
-        key: MINIO_ROOT_PASSWORD
+        key: SEAWEEDFS_ROOT_PASSWORD
 
 coordinator:
   resources:

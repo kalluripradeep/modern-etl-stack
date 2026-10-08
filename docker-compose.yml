@@ -18,8 +18,8 @@ x-airflow-connections: &airflow-connections
     postgresql://${SOURCE_DB_USER:-sourceuser}:${SOURCE_DB_PASSWORD:-sourcepass}@postgres-source:5432/${SOURCE_DB_NAME:-sourcedb}
   AIRFLOW_CONN_DEST_POSTGRES: >-
     postgresql://${DEST_DB_USER:-destuser}:${DEST_DB_PASSWORD:-destpass}@postgres-dest:5432/${DEST_DB_NAME:-destdb}
-  AIRFLOW_CONN_MINIO_S3: >-
-    aws://${MINIO_ROOT_USER:-minioadmin}:${MINIO_ROOT_PASSWORD:-minioadmin}@?endpoint_url=http%3A%2F%2Fminio%3A9000
+  AIRFLOW_CONN_SEAWEEDFS_S3: >-
+    aws://${SEAWEEDFS_ROOT_USER:-seaweedadmin}:${SEAWEEDFS_ROOT_PASSWORD:-seaweedadmin}@?endpoint_url=http%3A%2F%2Fseaweedfs%3A9000
   # The metrics task probes all three pipelines for freshness, so it needs to
   # reach the two that are not Postgres. Kubernetes needs no equivalent: the
   # Airflow chart already pulls etl-secrets in through extraEnvFrom, and the
@@ -128,27 +128,39 @@ services:
     networks:
       - etl-network
 
-  # MinIO
-  minio:
-    image: minio/minio:latest
-    container_name: minio
+  # SeaweedFS
+  # SeaweedFS, which replaced MinIO. See k8s/seaweedfs/statefulset.yaml for
+  # why: SeaweedFS withdrew its images from every public registry, and every
+  # consumer here addresses this by the hostname `seaweedfs`.
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48
+    container_name: seaweedfs
     ports:
       - "9000:9000"
-      - "9001:9001"
+      - "9001:8888"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      MINIO_PROMETHEUS_AUTH_TYPE: public
-    command: server /data --console-address ":9001"
+      SEAWEEDFS_ROOT_USER: ${SEAWEEDFS_ROOT_USER:-seaweedadmin}
+      SEAWEEDFS_ROOT_PASSWORD: ${SEAWEEDFS_ROOT_PASSWORD:-seaweedadmin}
+    # The S3 credentials go in a config file rather than the environment, so
+    # it is written at startup from the variables above and lives in neither
+    # the repository nor the image.
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        cat > /tmp/s3.json <<JSON
+        {"identities":[{"name":"etl","credentials":[{"accessKey":"${SEAWEEDFS_ROOT_USER:-seaweedadmin}","secretKey":"${SEAWEEDFS_ROOT_PASSWORD:-seaweedadmin}"}],"actions":["Admin","Read","Write","List","Tagging"]}]}
+        JSON
+        exec weed server -dir=/data -s3 -s3.port=9000 -s3.config=/tmp/s3.json -volume.max=0 -metricsPort=9327 -ip.bind=0.0.0.0
     volumes:
-      - minio-data:/data
+      - seaweedfs-data:/data
     networks:
       - etl-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:9000/healthz"]
       interval: 15s
       retries: 5
-      start_period: 10s
+      start_period: 15s
 
   # Kafka Connect (Debezium)
   kafka-connect:
@@ -231,7 +243,7 @@ services:
     image: trinodb/trino:474
     container_name: trino
     depends_on:
-      minio:
+      seaweedfs:
         condition: service_healthy
       postgres-dest:
         condition: service_healthy
@@ -243,9 +255,9 @@ services:
       DEST_DB_NAME: ${DEST_DB_NAME:-destdb}
       DEST_DB_USER: ${DEST_DB_USER:-destuser}
       DEST_DB_PASSWORD: ${DEST_DB_PASSWORD:-destpass}
-      MINIO_ENDPOINT: http://minio:9000
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      SEAWEEDFS_ENDPOINT: http://seaweedfs:9000
+      SEAWEEDFS_ROOT_USER: ${SEAWEEDFS_ROOT_USER:-seaweedadmin}
+      SEAWEEDFS_ROOT_PASSWORD: ${SEAWEEDFS_ROOT_PASSWORD:-seaweedadmin}
     volumes:
       - ./docker/trino/catalog:/etc/trino/catalog:ro
     networks:
@@ -437,8 +449,8 @@ services:
       DEST_DB_USER: ${DEST_DB_USER:-destuser}
       DEST_DB_PASSWORD: ${DEST_DB_PASSWORD:-destpass}
       DEST_DB_NAME: ${DEST_DB_NAME:-destdb}
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      SEAWEEDFS_ROOT_USER: ${SEAWEEDFS_ROOT_USER:-seaweedadmin}
+      SEAWEEDFS_ROOT_PASSWORD: ${SEAWEEDFS_ROOT_PASSWORD:-seaweedadmin}
       SPARK_HOME: /home/airflow/.local/lib/python3.11/site-packages/pyspark
       <<: *airflow-connections
       AIRFLOW__METRICS__STATSD_ON: 'True'
@@ -497,8 +509,8 @@ services:
       DEST_DB_USER: ${DEST_DB_USER:-destuser}
       DEST_DB_PASSWORD: ${DEST_DB_PASSWORD:-destpass}
       DEST_DB_NAME: ${DEST_DB_NAME:-destdb}
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      SEAWEEDFS_ROOT_USER: ${SEAWEEDFS_ROOT_USER:-seaweedadmin}
+      SEAWEEDFS_ROOT_PASSWORD: ${SEAWEEDFS_ROOT_PASSWORD:-seaweedadmin}
       SPARK_HOME: /home/airflow/.local/lib/python3.11/site-packages/pyspark
       <<: *airflow-connections
       AIRFLOW__METRICS__STATSD_ON: 'True'
@@ -539,8 +551,8 @@ services:
       DEST_DB_USER: ${DEST_DB_USER:-destuser}
       DEST_DB_PASSWORD: ${DEST_DB_PASSWORD:-destpass}
       DEST_DB_NAME: ${DEST_DB_NAME:-destdb}
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      SEAWEEDFS_ROOT_USER: ${SEAWEEDFS_ROOT_USER:-seaweedadmin}
+      SEAWEEDFS_ROOT_PASSWORD: ${SEAWEEDFS_ROOT_PASSWORD:-seaweedadmin}
       SPARK_HOME: /home/airflow/.local/lib/python3.11/site-packages/pyspark
       <<: *airflow-connections
     volumes:
@@ -619,7 +631,7 @@ volumes:
   postgres-source-data:
   postgres-dest-data:
   kafka-data:
-  minio-data:
+  seaweedfs-data:
   airflow-db-data:
   prometheus-data:
   grafana-data:

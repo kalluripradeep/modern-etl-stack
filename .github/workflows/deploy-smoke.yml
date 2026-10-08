@@ -5,7 +5,7 @@ name: Deploy Smoke Test
 #
 # Every defect found during the first cluster deployments lived in this path and
 # was invisible to the rest of CI, which validates manifests but never applies
-# them: hardcoded MinIO and CDC credentials that only worked with the checked-in
+# them: hardcoded SeaweedFS and CDC credentials that only worked with the checked-in
 # defaults, a Strimzi major release that dropped the API our manifest used, and
 # a mirror schema that never reached an existing volume. Rendering YAML cannot
 # catch any of those; running the deploy can.
@@ -61,7 +61,7 @@ jobs:
           echo "--- pods ---"
           kubectl get pods -n etl
 
-          for sts in postgres-source postgres-dest minio kafka-connect clickhouse; do
+          for sts in postgres-source postgres-dest seaweedfs kafka-connect clickhouse; do
             kubectl rollout status "statefulset/$sts" -n etl --timeout=60s \
               || fail "$sts is not ready"
           done
@@ -71,9 +71,15 @@ jobs:
           kubectl wait kafka/etl-kafka --for=condition=Ready --timeout=120s -n etl \
             || fail "Kafka cluster did not become Ready"
 
-          # MinIO buckets — fails if bucket creation used the wrong credentials.
-          buckets=$(kubectl exec -n etl minio-0 -- sh -c \
-            'mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && mc ls local' 2>/dev/null)
+          # Object storage buckets. This used to check them through mc with
+          # the pod's credentials, which also proved those credentials were
+          # right. SeaweedFS has no mc, and `weed shell` reaches the master
+          # over localhost without authenticating, so this now proves only
+          # that the buckets exist. The credential path is still covered: the
+          # e2e suite reads and writes through the S3 API with the generated
+          # secret.
+          buckets=$(kubectl exec -n etl seaweedfs-0 -- sh -c \
+            'echo "s3.bucket.list" | weed shell -master=localhost:9333' 2>/dev/null)
           echo "$buckets" | grep -q bronze || fail "bronze bucket missing"
           echo "$buckets" | grep -q silver || fail "silver bucket missing"
 

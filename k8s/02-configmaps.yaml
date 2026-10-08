@@ -86,11 +86,13 @@ data:
         - action: labelmap
           regex: __meta_kubernetes_node_label_(.+)
 
-      - job_name: 'minio'
-        metrics_path: /minio/v2/metrics/cluster
+      # SeaweedFS exposes Prometheus metrics on its own port rather than a
+      # path under the S3 API. Requires -metricsPort on the server.
+      - job_name: 'seaweedfs'
+        metrics_path: /metrics
         scheme: http
         static_configs:
-          - targets: ['minio-0.minio.etl.svc.cluster.local:9000']
+          - targets: ['seaweedfs-0.seaweedfs.etl.svc.cluster.local:9327']
   alert_rules.yml: |
     groups:
       - name: data-platform
@@ -160,7 +162,7 @@ data:
   SOURCE_DB_PORT: "5432"
   DEST_DB_HOST: "postgres-dest-0.postgres-dest.etl.svc.cluster.local"
   DEST_DB_PORT: "5432"
-  MINIO_ENDPOINT: "http://minio-0.minio.etl.svc.cluster.local:9000"
+  SEAWEEDFS_ENDPOINT: "http://seaweedfs-0.seaweedfs.etl.svc.cluster.local:9000"
   KAFKA_BOOTSTRAP: "etl-kafka-kafka-bootstrap.etl.svc.cluster.local:9092"
   SPARK_MASTER_URL: "spark://spark-master-0.spark-master.etl.svc.cluster.local:7077"
   KAFKA_CONNECT_URL: "http://kafka-connect-0.kafka-connect.etl.svc.cluster.local:8083"

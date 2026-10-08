@@ -60,7 +60,7 @@ fwd() {
 fwd postgres-source 5433 5432
 fwd postgres-dest   5434 5432
 fwd kafka-connect   8084 8083
-fwd minio           9000 9000
+fwd seaweedfs       9000 9000
 fwd clickhouse      8123 8123
 # Pipe 2 lives behind Trino. Without this forward the lakehouse check cannot
 # run at all, which is exactly how it went unnoticed that it never ran (#149).
@@ -100,7 +100,6 @@ pip install --quiet \
   pandas \
   pyarrow \
   faker \
-  minio \
   requests
 
 ok "Python environment ready"
@@ -113,7 +112,7 @@ echo ""
 # checked-in defaults only match a cluster deployed without
 # generate-secrets.sh; hardcoding them made this script fail against exactly
 # the setup we recommend, and the failure looked like a broken pipeline
-# (SignatureDoesNotMatch from MinIO, 403 from ClickHouse) rather than a bad
+# (SignatureDoesNotMatch from SeaweedFS, 403 from ClickHouse) rather than a bad
 # password. Each value falls back to the compose default when the secret or
 # key is absent, so local docker-compose runs still work.
 sv() {  # $1 = key in etl-secrets, $2 = fallback
@@ -127,7 +126,7 @@ export SOURCE_DB_PORT=5433
 export DEST_DB_HOST=localhost
 export DEST_DB_PORT=5434
 export KAFKA_CONNECT_URL="http://localhost:8084"
-export MINIO_ENDPOINT="http://localhost:9000"
+export SEAWEEDFS_ENDPOINT="http://localhost:9000"
 export CLICKHOUSE_URL="http://localhost:8123"
 export TRINO_URL="http://localhost:8085"
 
@@ -137,8 +136,8 @@ SOURCE_DB_PASSWORD=$(sv SOURCE_DB_PASSWORD sourcepass);  export SOURCE_DB_PASSWO
 DEST_DB_NAME=$(sv DEST_DB_NAME destdb);                  export DEST_DB_NAME
 DEST_DB_USER=$(sv DEST_DB_USER destuser);                export DEST_DB_USER
 DEST_DB_PASSWORD=$(sv DEST_DB_PASSWORD destpass);        export DEST_DB_PASSWORD
-MINIO_ROOT_USER=$(sv MINIO_ROOT_USER minioadmin);        export MINIO_ROOT_USER
-MINIO_ROOT_PASSWORD=$(sv MINIO_ROOT_PASSWORD minioadmin123); export MINIO_ROOT_PASSWORD
+SEAWEEDFS_ROOT_USER=$(sv SEAWEEDFS_ROOT_USER seaweedadmin);        export SEAWEEDFS_ROOT_USER
+SEAWEEDFS_ROOT_PASSWORD=$(sv SEAWEEDFS_ROOT_PASSWORD seaweedadmin123); export SEAWEEDFS_ROOT_PASSWORD
 CLICKHOUSE_USER=$(sv CLICKHOUSE_USER chuser);            export CLICKHOUSE_USER
 CLICKHOUSE_PASSWORD=$(sv CLICKHOUSE_PASSWORD chpass123); export CLICKHOUSE_PASSWORD
 

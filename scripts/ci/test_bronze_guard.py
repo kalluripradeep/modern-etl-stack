@@ -95,7 +95,7 @@ def main():
     assert spark.read.option.call_args[0] == ("recursiveFileLookup", "true"), (
         "recursiveFileLookup is load-bearing: the dated directories are not "
         "Hive-style key=value, so without it Spark infers no schema and the "
-        "prefix read silently comes back empty. Verified against MinIO."
+        "prefix read silently comes back empty. Verified against SeaweedFS."
     )
     path = spark.read.option.return_value.parquet.call_args[0][0]
     assert path == "s3a://bronze/orders_source/", path

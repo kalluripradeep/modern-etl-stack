@@ -10,7 +10,7 @@ airflow_ti_successes, with no _total suffix, under both the plain-text and
 the OpenMetrics negotiation Prometheus uses.
 
 Only airflow_*/etl_* names are checked — those are the ones the mapping owns.
-kafka_*, minio_* and node_* come from their own exporters.
+kafka_*, SeaweedFS_* and node_* come from their own exporters.
 
 Run: python scripts/check_dashboard_metrics.py
 """

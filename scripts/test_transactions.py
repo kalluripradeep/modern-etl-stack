@@ -6,7 +6,7 @@ What this tests:
   Step 1  Seed 50 customers, 20 products, 200 orders into postgres-source
   Step 2  Register the Debezium CDC connector (if not already registered)
   Step 3  Run the extract → validate → load pipeline (bronze parquet to
-          MinIO, staged COPY upsert into raw.orders_source — the same
+          SeaweedFS, staged COPY upsert into raw.orders_source — the same
           targets the real ingestion DAG writes)
   Step 4  Simulate live transactions: UPDATE status, CANCEL orders, DELETE rows
   Step 5  Verify the ClickHouse mirror (Pipe 3's real consumer) reflects
@@ -24,13 +24,13 @@ check that passed. The final line names what was verified instead of claiming
 the whole pipeline is healthy.
 
 Usage (local docker-compose):
-  DEST_DB_PORT=5433 MINIO_ROOT_PASSWORD=minioadmin python scripts/test_transactions.py
+  DEST_DB_PORT=5433 SEAWEEDFS_ROOT_PASSWORD=seaweedadmin python scripts/test_transactions.py
 
 Usage (Kubernetes — port-forward first):
   kubectl port-forward svc/postgres-source 5433:5432 -n etl &
   kubectl port-forward svc/postgres-dest   5434:5432 -n etl &
   kubectl port-forward svc/kafka-connect   8083:8083 -n etl &
-  kubectl port-forward svc/minio           9000:9000 -n etl &
+  kubectl port-forward svc/seaweedfs       9000:9000 -n etl &
   kubectl port-forward svc/clickhouse      8123:8123 -n etl &
   SOURCE_DB_PORT=5433 DEST_DB_PORT=5434 python scripts/test_transactions.py
 """
@@ -65,9 +65,9 @@ DEST = dict(
     password=os.environ.get("DEST_DB_PASSWORD", "destpass"),
 )
 CONNECT_URL     = os.environ.get("KAFKA_CONNECT_URL", "http://localhost:8083")
-MINIO_ENDPOINT  = os.environ.get("MINIO_ENDPOINT", "http://localhost:9000")
-MINIO_USER      = os.environ.get("MINIO_ROOT_USER", "minioadmin")
-MINIO_PASSWORD  = os.environ.get("MINIO_ROOT_PASSWORD", "minioadmin123")
+SEAWEEDFS_ENDPOINT  = os.environ.get("SEAWEEDFS_ENDPOINT", "http://localhost:9000")
+SEAWEEDFS_USER      = os.environ.get("SEAWEEDFS_ROOT_USER", "seaweedadmin")
+SEAWEEDFS_PASSWORD  = os.environ.get("SEAWEEDFS_ROOT_PASSWORD", "seaweedadmin123")
 CLICKHOUSE_URL  = os.environ.get("CLICKHOUSE_URL", "http://localhost:8123")
 CLICKHOUSE_USER = os.environ.get("CLICKHOUSE_USER", "chuser")
 CLICKHOUSE_PASSWORD = os.environ.get("CLICKHOUSE_PASSWORD", "chpass")

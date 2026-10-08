@@ -22,11 +22,14 @@ scrape_configs:
     static_configs:
       - targets: ['statsd-exporter:9102']
 
-  - job_name: 'minio'
-    metrics_path: /minio/v2/metrics/cluster
+  # SeaweedFS exposes Prometheus metrics on its own port rather than a path
+  # under the S3 API, so both the target and the path differ from MinIO's.
+  # Requires -metricsPort on the server; without it this scrape just fails.
+  - job_name: 'seaweedfs'
+    metrics_path: /metrics
     scheme: http
     static_configs:
-      - targets: ['minio:9000']
+      - targets: ['seaweedfs:9327']
 
   - job_name: 'kafka-exporter'
     static_configs:

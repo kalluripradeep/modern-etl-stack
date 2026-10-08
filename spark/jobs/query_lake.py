@@ -22,7 +22,7 @@ def main():
 
     print("\n--- Querying Bronze Raw Parquet ---")
     try:
-        # Querying raw Parquet files directly from MinIO
+        # Querying raw Parquet files directly from SeaweedFS
         bronze_df = spark.read.parquet("s3a://bronze/orders_source/*/*/*/")
         bronze_count = bronze_df.count()
         print(f"Total raw records in Bronze 'orders_source': {bronze_count}")

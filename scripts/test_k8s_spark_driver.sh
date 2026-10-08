@@ -59,7 +59,7 @@ ok "cluster reachable: $(kubectl config current-context)"
 
 # ── 1. Namespace and the env the worker manifest expects ────────────────────
 # worker-deployment.yaml has envFrom referencing etl-env and etl-secrets. They
-# only carry MinIO/S3A settings, which SparkPi never touches, but a missing
+# only carry SeaweedFS/S3A settings, which SparkPi never touches, but a missing
 # reference leaves the pod in CreateContainerConfigError -- so stub them.
 info "Creating namespace $NAMESPACE and stub env"
 kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
