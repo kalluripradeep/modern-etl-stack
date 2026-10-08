@@ -207,7 +207,7 @@ kubectl exec -n $NAMESPACE "$MINIO_POD" -- sh -c '
 BUCKETS=$(kubectl exec -n $NAMESPACE "$MINIO_POD" -- sh -c   'echo "s3.bucket.list" | weed shell -master=localhost:9333' 2>/dev/null)
 MISSING=""
 for b in bronze silver airflow-logs; do
-  echo "$BUCKETS" | grep -q "[[:space:]]$b[[:space:]]" || MISSING="$MISSING $b"
+  echo "$BUCKETS" | grep -q "[[:space:]]${b}[[:space:]]" || MISSING="$MISSING $b"
 done
 if [ -z "$MISSING" ]; then
   ok "Object storage buckets ready"
