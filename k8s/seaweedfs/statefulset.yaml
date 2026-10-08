@@ -1,44 +1,46 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: minio
+  name: seaweedfs
   namespace: etl
 spec:
-  serviceName: minio
+  serviceName: seaweedfs
   replicas: 1
   selector:
     matchLabels:
-      app: minio
+      app: seaweedfs
   template:
     metadata:
       labels:
-        app: minio
+        app: seaweedfs
     spec:
       containers:
-      # This runs SeaweedFS, not MinIO. The names here stay as they are on
-      # purpose: every consumer addresses this by the service name `minio` --
-      # AIRFLOW_CONN_MINIO_S3, the Spark jobs' s3a endpoint, Trino's iceberg
-      # catalog, the deploy script, the e2e suite and the guide. Renaming them
-      # is a separate change with no functional gain, and this one already
-      # touches the deploy path.
+      # SeaweedFS, which replaced MinIO here.
       #
-      # Why it changed at all: MinIO withdrew its images from public
-      # registries. quay.io answers 401, and Docker Hub, GHCR, public ECR and
-      # bitnami all deny the pull, including on pinned release tags. A cluster
-      # already running keeps working from a cached image and fails the moment
-      # a pod is rescheduled onto a clean node, which is the worst shape a
-      # dependency failure takes: invisible until it is urgent.
+      # MinIO withdrew its images from public registries. quay.io answers 401,
+      # and Docker Hub, GHCR, public ECR and bitnami all deny the pull,
+      # including on pinned release tags. A cluster already running keeps
+      # working from a cached image and fails the moment a pod is rescheduled
+      # onto a clean node, which is the worst shape a dependency failure takes:
+      # invisible until it is urgent.
       #
       # SeaweedFS is Apache-2.0 and its S3 gateway covers what this stack asks
-      # of it. Checked against 4.48 before this was written: bucket create and
-      # list, put, prefix listing, get, delete, multipart upload (what s3a
-      # does for anything sizeable) and common-prefix listing (what Iceberg
-      # manifest discovery walks).
-      - name: minio
+      # of it. Checked against 4.48: bucket create and list, put, prefix
+      # listing, get, delete, multipart upload (what s3a does for anything
+      # sizeable) and common-prefix listing (what Iceberg manifest discovery
+      # walks), then the full transactional suite end to end.
+      - name: seaweedfs
         # Pinned deliberately. `latest` is how a working deployment changes
         # under you with no commit to point at, and the registry that served
-        # it yesterday is the one that stopped serving MinIO.
+        # it yesterday is the one that stopped serving SeaweedFS.
         image: chrislusf/seaweedfs:4.48
+        # -ip.bind=0.0.0.0 is not cosmetic either. SeaweedFS otherwise binds
+        # to the pod's own IP rather than all interfaces, so anything probing
+        # it over localhost gets connection refused while the service is
+        # perfectly healthy. Compose's healthcheck runs inside the container
+        # and failed exactly that way, which then blocked Trino from starting
+        # on a dependency that was actually fine.
+        #
         # -volume.max=0 is not optional. SeaweedFS pre-allocates volumes and
         # defaults to 8; an Iceberg write fans out into many small parquet
         # files across partition directories and exhausts that, after which
@@ -63,8 +65,8 @@ spec:
                 "name": "etl",
                 "credentials": [
                   {
-                    "accessKey": "${MINIO_ROOT_USER}",
-                    "secretKey": "${MINIO_ROOT_PASSWORD}"
+                    "accessKey": "${SEAWEEDFS_ROOT_USER}",
+                    "secretKey": "${SEAWEEDFS_ROOT_PASSWORD}"
                   }
                 ],
                 "actions": ["Admin", "Read", "Write", "List", "Tagging"]
@@ -72,22 +74,22 @@ spec:
             ]
           }
           JSON
-          exec weed server -dir=/data -s3 -s3.port=9000 -s3.config=/tmp/s3.json -volume.max=0
+          exec weed server -dir=/data -s3 -s3.port=9000 -s3.config=/tmp/s3.json -volume.max=0 -metricsPort=9327 -ip.bind=0.0.0.0
         ports:
-        - containerPort: 9000   # S3 API, on MinIO's port so no consumer moves
+        - containerPort: 9000   # S3 API, on SeaweedFS's port so no consumer moves
         - containerPort: 8888   # filer, the browsable UI here
         - containerPort: 9333   # master, which `weed shell` talks to for buckets
         env:
-        - name: MINIO_ROOT_USER
+        - name: SEAWEEDFS_ROOT_USER
           valueFrom:
             secretKeyRef:
               name: etl-secrets
-              key: MINIO_ROOT_USER
-        - name: MINIO_ROOT_PASSWORD
+              key: SEAWEEDFS_ROOT_USER
+        - name: SEAWEEDFS_ROOT_PASSWORD
           valueFrom:
             secretKeyRef:
               name: etl-secrets
-              key: MINIO_ROOT_PASSWORD
+              key: SEAWEEDFS_ROOT_PASSWORD
         resources:
           requests:
             memory: "256Mi"
@@ -96,7 +98,7 @@ spec:
             memory: "1Gi"
             cpu: "1"
         volumeMounts:
-        - name: minio-data
+        - name: seaweedfs-data
           mountPath: /data
         # /healthz on the S3 port answers 200 without credentials. The probes
         # this replaces used /minio/health/{ready,live}, which do not exist
@@ -116,7 +118,7 @@ spec:
           periodSeconds: 10
   volumeClaimTemplates:
   - metadata:
-      name: minio-data
+      name: seaweedfs-data
     spec:
       accessModes: ["ReadWriteOnce"]
       storageClassName: standard

@@ -12,9 +12,9 @@ from airflow.providers.standard.operators.python import PythonOperator
 
 # Fetch cluster-specific configurations from environment (set via Docker or Helm)
 SPARK_MASTER_URL = os.getenv('SPARK_MASTER_URL', 'spark://spark-master:7077')
-MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT', 'http://minio:9000')
-MINIO_USER = os.getenv('MINIO_ROOT_USER', 'minioadmin')
-MINIO_PASSWORD = os.getenv('MINIO_ROOT_PASSWORD', 'minioadmin')
+SEAWEEDFS_ENDPOINT = os.getenv('SEAWEEDFS_ENDPOINT', 'http://seaweedfs:9000')
+SEAWEEDFS_USER = os.getenv('SEAWEEDFS_ROOT_USER', 'seaweedadmin')
+SEAWEEDFS_PASSWORD = os.getenv('SEAWEEDFS_ROOT_PASSWORD', 'seaweedadmin')
 
 # Iceberg JDBC catalog lives in postgres-dest (schema iceberg_catalog) so
 # Trino can query the same tables Spark writes.
@@ -89,7 +89,7 @@ with DAG(
     # command string. Airflow stores every bash_command it renders and shows it
     # under "Rendered Template" in the UI, so a password written into the
     # command is a password in the metadata database, in the task log, and on
-    # any screen showing that page. Referencing $MINIO_ROOT_PASSWORD instead
+    # any screen showing that page. Referencing $SEAWEEDFS_ROOT_PASSWORD instead
     # keeps the literal name in all three places and lets the shell substitute
     # the value at exec time.
     #
@@ -98,8 +98,8 @@ with DAG(
     # either way. Closing that too means a Spark properties file mounted from a
     # secret, which is a larger change than this one.
     SPARK_SECRET_ENV = {
-        'MINIO_ROOT_USER': MINIO_USER,
-        'MINIO_ROOT_PASSWORD': MINIO_PASSWORD,
+        'SEAWEEDFS_ROOT_USER': SEAWEEDFS_USER,
+        'SEAWEEDFS_ROOT_PASSWORD': SEAWEEDFS_PASSWORD,
         'DEST_DB_USER': DEST_DB_USER,
         'DEST_DB_PASSWORD': DEST_DB_PASSWORD,
     }
@@ -142,9 +142,9 @@ with DAG(
         --conf spark.executor.memory=2g \
         --conf spark.executor.cores=2 \
         --conf spark.sql.adaptive.enabled=true \
-        --conf spark.hadoop.fs.s3a.endpoint={MINIO_ENDPOINT} \
-        --conf spark.hadoop.fs.s3a.access.key=$MINIO_ROOT_USER \
-        --conf spark.hadoop.fs.s3a.secret.key=$MINIO_ROOT_PASSWORD \
+        --conf spark.hadoop.fs.s3a.endpoint={SEAWEEDFS_ENDPOINT} \
+        --conf spark.hadoop.fs.s3a.access.key=$SEAWEEDFS_ROOT_USER \
+        --conf spark.hadoop.fs.s3a.secret.key=$SEAWEEDFS_ROOT_PASSWORD \
         --conf spark.hadoop.fs.s3a.path.style.access=true \
         --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
         --jars /opt/spark-jars/iceberg-spark-runtime-3.5_2.12-1.4.2.jar,/opt/spark-jars/postgresql-42.7.4.jar \
@@ -178,7 +178,7 @@ with DAG(
         """
         from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 
-        hook = S3Hook(aws_conn_id='minio_s3')
+        hook = S3Hook(aws_conn_id='seaweedfs_s3')
         for bucket in ('bronze', 'silver'):
             if hook.check_for_bucket(bucket):
                 continue

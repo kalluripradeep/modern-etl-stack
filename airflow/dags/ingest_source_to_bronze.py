@@ -1,5 +1,5 @@
 """
-Batch ETL Pipeline: PostgreSQL (Source) -> MinIO (Storage) -> PostgreSQL (Dest) -> dbt
+Batch ETL Pipeline: PostgreSQL (Source) -> SeaweedFS (Storage) -> PostgreSQL (Dest) -> dbt
 Generic ingestion for all source tables into the Bronze Lakehouse layer.
 """
 
@@ -160,7 +160,7 @@ def extract_and_load_table(table_name, **kwargs):
 
     source_hook = PostgresHook(postgres_conn_id='source_postgres')
     dest_hook = PostgresHook(postgres_conn_id='dest_postgres')
-    s3_hook = S3Hook(aws_conn_id='minio_s3')
+    s3_hook = S3Hook(aws_conn_id='seaweedfs_s3')
 
     if not s3_hook.check_for_bucket(bucket_name):
         s3_hook.create_bucket(bucket_name=bucket_name)
@@ -256,7 +256,7 @@ def extract_and_load_table(table_name, **kwargs):
                     if df_chunk[pk].isnull().any():
                         raise ValueError(f"Data quality error: Null PKs in {table_name} at {file_path}")
 
-                    # Upload to MinIO
+                    # Upload to SeaweedFS
                     object_name = f'{table_name}_source/{date_prefix}/part-{run_stamp}-{idx:05d}.parquet'
                     s3_hook.load_file(filename=file_path, key=object_name, bucket_name=bucket_name, replace=True)
 
@@ -465,7 +465,7 @@ def prune_bronze(**kwargs):
 
     Bronze is a landing area: once a run has been transformed into Silver and
     the warehouse, the raw extract has served its purpose. Nothing deleted it,
-    so an hourly pipeline wrote parquet into MinIO forever -- on a single-node
+    so an hourly pipeline wrote parquet into SeaweedFS forever -- on a single-node
     cluster that storage is the node's disk, and it is one of the things that
     put the reporting cluster into DiskPressure.
 
@@ -477,7 +477,7 @@ def prune_bronze(**kwargs):
         return
 
     cutoff = datetime.utcnow() - timedelta(days=retention_days)
-    s3_hook = S3Hook(aws_conn_id='minio_s3')
+    s3_hook = S3Hook(aws_conn_id='seaweedfs_s3')
     bucket = 'bronze'
     if not s3_hook.check_for_bucket(bucket):
         log.info("Bronze bucket does not exist yet — nothing to prune")

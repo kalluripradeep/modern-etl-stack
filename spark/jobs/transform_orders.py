@@ -49,7 +49,7 @@ def transform_to_silver(df):
 
 
 def upsert_to_iceberg(spark, df):
-    """Upsert Silver layer to MinIO using Apache Iceberg MERGE INTO"""
+    """Upsert Silver layer to SeaweedFS using Apache Iceberg MERGE INTO"""
     catalog_name = "silver"
     table_name = f"{catalog_name}.lake.orders"
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {catalog_name}.lake")

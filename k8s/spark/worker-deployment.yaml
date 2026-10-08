@@ -64,7 +64,7 @@ spec:
             -Dspark.worker.cleanup.enabled=true
             -Dspark.worker.cleanup.interval=1800
             -Dspark.worker.cleanup.appDataTtl=21600
-        # S3A / MinIO config for workers
+        # S3A / SeaweedFS config for workers
         - name: SPARK_EXTRA_CLASSPATH
           value: "/opt/bitnami/spark/jars/hadoop-aws-*.jar:/opt/bitnami/spark/jars/aws-java-sdk-bundle-*.jar"
         envFrom:

@@ -40,8 +40,8 @@ stringData:
   DEST_DB_USER: destuser
   DEST_DB_PASSWORD: $(rand)
   DEST_DB_NAME: destdb
-  MINIO_ROOT_USER: minioadmin
-  MINIO_ROOT_PASSWORD: $(rand)
+  SEAWEEDFS_ROOT_USER: seaweedadmin
+  SEAWEEDFS_ROOT_PASSWORD: $(rand)
   AIRFLOW_ADMIN_USER: admin
   AIRFLOW_ADMIN_PASSWORD: $(rand)
   AIRFLOW_WEBSERVER_SECRET_KEY: $(rand)

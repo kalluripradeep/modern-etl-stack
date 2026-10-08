@@ -11,9 +11,9 @@ One source database feeding three parallel pipelines, plus a query layer:
 - **PostgreSQL** — source (transactions) and destination (batch analytics warehouse)
 - **Kafka (Strimzi) + Debezium** — real-time change data capture (CDC)
 - **ClickHouse** — columnar real-time mirror fed from the CDC stream
-- **SeaweedFS** — S3-compatible object storage (bronze + silver layers). Still
-  addressed as `minio` throughout, because every consumer resolves it by that
-  service name; see `k8s/minio/statefulset.yaml` for why it changed.
+- **SeaweedFS** — S3-compatible object storage (bronze + silver layers). It
+  replaced MinIO, which withdrew its images from public registries; see
+  `k8s/seaweedfs/statefulset.yaml` for the detail.
 - **Apache Spark + Iceberg** — large-scale lakehouse transformation
 - **Trino** — SQL query engine over the Iceberg lakehouse (official Helm chart)
 - **Apache Airflow** — pipeline orchestration (official Helm chart)
@@ -117,7 +117,7 @@ The script asks three questions:
 2. **StorageClass** — the script auto-detects your cluster's default and suggests it; press Enter to accept. No manual file editing needed.
 3. **Seed sample data?** — type `y` to load sample e-commerce data into the source database.
 
-It then deploys everything: databases, Strimzi Kafka + Debezium connector, ClickHouse, MinIO (with bronze/silver buckets), Spark, Trino (Helm), Airflow (Helm), the AI dashboard, and the monitoring stack. First run takes about **10–15 minutes** (Kafka cluster startup is the slow part).
+It then deploys everything: databases, Strimzi Kafka + Debezium connector, ClickHouse, SeaweedFS (with bronze/silver buckets), Spark, Trino (Helm), Airflow (Helm), the AI dashboard, and the monitoring stack. First run takes about **10–15 minutes** (Kafka cluster startup is the slow part).
 
 ### Step 4 — Wait for all pods to be Running
 
@@ -140,7 +140,7 @@ grafana-xxx                         1/1     Running
 kafka-connect-0                     1/1     Running
 kafka-exporter-xxx                  1/1     Running
 kafka-ui-xxx                        1/1     Running
-minio-0                             1/1     Running
+seaweedfs-0                             1/1     Running
 postgres-source-0                   1/1     Running
 postgres-dest-0                     1/1     Running
 prometheus-xxx                      1/1     Running
@@ -188,7 +188,7 @@ clear old runs in the Airflow UI.
 ```text
   ✓  Seeded 200 orders into postgres-source
   ✓  Validation passed
-  ✓  Uploaded 4 parquet file(s) to MinIO
+  ✓  Uploaded 4 parquet file(s) to SeaweedFS
   ✓  Loaded 200 rows into raw.orders_source via COPY (staging upsert)
   ✓  Transactions applied to source
   ✓  Row count matches
@@ -270,13 +270,13 @@ kubectl get nodes -o wide   # EXTERNAL-IP column; use INTERNAL-IP if blank
 | AI Dashboard (ask questions in English) | `http://NODE_IP:30333` | `DASHBOARD_AUTH_*` from secrets |
 | Kafka UI (topic monitoring) | `http://NODE_IP:30801` | `KAFKA_UI_*` from secrets |
 | Grafana (metrics) | `http://NODE_IP:30300` | `AIRFLOW_ADMIN_*` from secrets — see note |
-| Object storage (data files) | `http://NODE_IP:30901` | `MINIO_ROOT_*` from secrets |
+| Object storage (data files) | `http://NODE_IP:30901` | `SEAWEEDFS_ROOT_*` from secrets |
 | Spark UI (job progress) | `http://NODE_IP:30808` | — |
 
 Credentials come from `k8s/01-secrets.generated.yaml` if you ran Step 2, otherwise from the defaults in `k8s/01-secrets.yaml`. Read any of them with:
 
 ```bash
-kubectl get secret etl-secrets -n etl -o jsonpath='{.data.MINIO_ROOT_PASSWORD}' | base64 -d
+kubectl get secret etl-secrets -n etl -o jsonpath='{.data.SEAWEEDFS_ROOT_PASSWORD}' | base64 -d
 ```
 
 > **Grafana uses the `AIRFLOW_ADMIN_*` keys, not a Grafana-specific pair.** The deployment maps `AIRFLOW_ADMIN_USER`/`AIRFLOW_ADMIN_PASSWORD` onto `GF_SECURITY_ADMIN_USER`/`GF_SECURITY_ADMIN_PASSWORD`, so the two services share one admin credential. It is not `admin/admin123`, and it is not the `DASHBOARD_AUTH_*` pair — those belong to the AI dashboard:
@@ -310,7 +310,7 @@ A **Data Platform Health** dashboard (pipeline runs, CDC lag, source freshness, 
 | 1860 | Node Exporter Full (CPU, memory, disk, network) |
 | 9628 | PostgreSQL Databases (works with postgres_exporter; 9948 needs TimescaleDB — don't use it) |
 | 315 | Kubernetes cluster monitoring |
-| 13502 | MinIO |
+| 13502 | SeaweedFS |
 
 To deliver alerts (DAG failures, CDC lag, stale data, revenue anomalies), add a Slack/email receiver in the `alertmanager-config` ConfigMap.
 
@@ -691,7 +691,7 @@ SECRETS   bash k8s/generate-secrets.sh
 DEPLOY    bash k8s/deploy.sh
 WAIT      kubectl get pods -n etl -w
 TEST      bash scripts/test_e2e.sh
-OPEN      Airflow :30880 · AI Dashboard :30333 · Grafana :30300 · MinIO :30901 · Spark :30808 · Kafka UI :30801
+OPEN      Airflow :30880 · AI Dashboard :30333 · Grafana :30300 · SeaweedFS :30901 · Spark :30808 · Kafka UI :30801
 TRINO     kubectl port-forward svc/trino 8080:8080 -n etl
 GRAFANA   Data Platform Health is pre-loaded; import 1860 / 9628 / 315 / 13502 for infra views
 ```

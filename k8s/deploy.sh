@@ -179,16 +179,16 @@ kubectl exec -n $NAMESPACE postgres-dest-0 -- bash -c \
   >/dev/null 2>&1 && ok "iceberg_catalog schema is ready" \
   || warn "Could not ensure iceberg_catalog schema — Spark writes to Iceberg will fail until it exists"
 
-# ─── Step 4: MinIO ────────────────────────────────────────────────────────────
+# ─── Step 4: SeaweedFS ────────────────────────────────────────────────────────────
 echo ""
-info "Deploying MinIO..."
-kubectl apply -f "$TMP_K8S/minio/"
-kubectl rollout status statefulset/minio -n $NAMESPACE --timeout=300s
-ok "MinIO is ready"
+info "Deploying SeaweedFS..."
+kubectl apply -f "$TMP_K8S/seaweedfs/"
+kubectl rollout status statefulset/seaweedfs -n $NAMESPACE --timeout=300s
+ok "SeaweedFS is ready"
 
 # Create bronze and silver buckets
 info "Creating object storage buckets (bronze, silver, airflow-logs)..."
-MINIO_POD="minio-0"
+SEAWEEDFS_POD="seaweedfs-0"
 # `weed shell` talks to the master over localhost and needs no credentials,
 # unlike the mc invocation this replaces, which had to read them out of the
 # pod's environment.
@@ -198,13 +198,13 @@ MINIO_POD="minio-0"
 # branching on its status would report success for any failure at all. Listing
 # afterwards and looking for the names is the only honest check, and it is the
 # same assertion deploy-smoke makes.
-kubectl exec -n $NAMESPACE "$MINIO_POD" -- sh -c '
+kubectl exec -n $NAMESPACE "$SEAWEEDFS_POD" -- sh -c '
   for b in bronze silver airflow-logs; do
     echo "s3.bucket.create -name $b" | weed shell -master=localhost:9333
   done
 ' >/dev/null 2>&1 || true
 
-BUCKETS=$(kubectl exec -n $NAMESPACE "$MINIO_POD" -- sh -c   'echo "s3.bucket.list" | weed shell -master=localhost:9333' 2>/dev/null)
+BUCKETS=$(kubectl exec -n $NAMESPACE "$SEAWEEDFS_POD" -- sh -c   'echo "s3.bucket.list" | weed shell -master=localhost:9333' 2>/dev/null)
 MISSING=""
 for b in bronze silver airflow-logs; do
   echo "$BUCKETS" | grep -q "[[:space:]]${b}[[:space:]]" || MISSING="$MISSING $b"
@@ -331,7 +331,7 @@ fi
 # installs without pulling the multi-gigabyte Airflow image.
 if [ "${DEPLOY_PROFILE:-full}" = "core" ]; then
   echo ""
-  ok "Core profile complete (databases, MinIO, Kafka, Debezium, ClickHouse)"
+  ok "Core profile complete (databases, SeaweedFS, Kafka, Debezium, ClickHouse)"
   info "Set DEPLOY_PROFILE=full for Spark, Trino, monitoring, Airflow and the dashboard."
   exit 0
 fi
@@ -376,7 +376,7 @@ ok "Monitoring stack is ready"
 # ─── Step 9: Airflow ──────────────────────────────────────────────────────────
 echo ""
 # The DAGs resolve their hooks by connection id — source_postgres,
-# dest_postgres and minio_s3 (the Cosmos dbt profile uses dest_postgres too).
+# dest_postgres and seaweedfs_s3 (the Cosmos dbt profile uses dest_postgres too).
 # docker-compose supplies all of these as AIRFLOW_CONN_* env vars; Kubernetes
 # only ever set AIRFLOW_CONN_SPARK_DEFAULT, so every ingest task failed within
 # seconds looking up a connection that did not exist. Built here rather than in
@@ -385,7 +385,7 @@ info "Building Airflow connection URIs from the deployed credentials..."
 kubectl create secret generic airflow-connections -n $NAMESPACE \
   --from-literal=AIRFLOW_CONN_SOURCE_POSTGRES="postgresql://$(secret_val SOURCE_DB_USER):$(secret_val SOURCE_DB_PASSWORD)@postgres-source-0.postgres-source.${NAMESPACE}.svc.cluster.local:5432/$(secret_val SOURCE_DB_NAME)" \
   --from-literal=AIRFLOW_CONN_DEST_POSTGRES="postgresql://$(secret_val DEST_DB_USER):$(secret_val DEST_DB_PASSWORD)@postgres-dest-0.postgres-dest.${NAMESPACE}.svc.cluster.local:5432/$(secret_val DEST_DB_NAME)" \
-  --from-literal=AIRFLOW_CONN_MINIO_S3="aws://$(secret_val MINIO_ROOT_USER):$(secret_val MINIO_ROOT_PASSWORD)@?endpoint_url=http%3A%2F%2Fminio-0.minio.${NAMESPACE}.svc.cluster.local%3A9000" \
+  --from-literal=AIRFLOW_CONN_SEAWEEDFS_S3="aws://$(secret_val SEAWEEDFS_ROOT_USER):$(secret_val SEAWEEDFS_ROOT_PASSWORD)@?endpoint_url=http%3A%2F%2Fseaweedfs-0.seaweedfs.${NAMESPACE}.svc.cluster.local%3A9000" \
   --dry-run=client -o yaml | kubectl apply -f -
 ok "Airflow connections published"
 
@@ -467,11 +467,11 @@ echo "  Airflow UI         http://${NODE_IP}:30880  (admin / admin)"
 echo "  Kafka UI           http://${NODE_IP}:30801  (KAFKA_UI_USER / KAFKA_UI_PASSWORD)"
 echo "  Grafana            http://${NODE_IP}:30300  (AIRFLOW_ADMIN_USER / AIRFLOW_ADMIN_PASSWORD)"
 echo "  AI Dashboard       http://${NODE_IP}:30333  (DASHBOARD_AUTH_USER / DASHBOARD_AUTH_PASSWORD)"
-echo "  MinIO Console      http://${NODE_IP}:30901  (MINIO_ROOT_USER / MINIO_ROOT_PASSWORD)"
+echo "  SeaweedFS Console      http://${NODE_IP}:30901  (SEAWEEDFS_ROOT_USER / SEAWEEDFS_ROOT_PASSWORD)"
 echo "  Spark UI           http://${NODE_IP}:30808"
 echo ""
 echo "  Names in brackets are keys in the etl-secrets secret — read one with:"
-echo "    kubectl get secret etl-secrets -n etl -o jsonpath='{.data.MINIO_ROOT_PASSWORD}' | base64 -d"
+echo "    kubectl get secret etl-secrets -n etl -o jsonpath='{.data.SEAWEEDFS_ROOT_PASSWORD}' | base64 -d"
 echo ""
 echo "  To scale for 50GB+ datasets, update k8s/02-configmaps.yaml:"
 echo "    ETL_CHUNK_SIZE:      500000"

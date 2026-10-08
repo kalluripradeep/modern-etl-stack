@@ -94,11 +94,11 @@
     },
     {
       "type": "timeseries",
-      "title": "MinIO Bucket Usage (bytes)",
+      "title": "SeaweedFS Bucket Usage (bytes)",
       "datasource": "Prometheus",
       "gridPos": { "h": 7, "w": 12, "x": 12, "y": 24 },
       "fieldConfig": { "defaults": { "unit": "bytes" } },
-      "targets": [ { "expr": "minio_bucket_usage_total_bytes", "legendFormat": "{{bucket}}", "refId": "A" } ]
+      "targets": [ { "expr": "SeaweedFS_filer_object_size_bytes_sum", "legendFormat": "bytes written", "refId": "A" } ]
     }
   ]
 }

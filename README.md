@@ -16,10 +16,10 @@ A cloud-native stack demonstrating the integration of open-source data engineeri
                          │
  postgres-source ────────┼──► PIPE 1 · Analytical Warehouse (batch)
   (operational DB,       │     Airflow ingest → postgres-dest raw.* → dbt → int.* → prs.v_*
-   transactions)         │                   └─► MinIO bronze/ (parquet)
+   transactions)         │                   └─► SeaweedFS bronze/ (parquet)
                          │                              │
                          └──────────────────────────────┴──► PIPE 2 · Lakehouse (batch, big data)
-                                                             Spark → Iceberg tables (silver, MinIO)
+                                                             Spark → Iceberg tables (silver, SeaweedFS)
                                                              queried via Trino
 ```
 
@@ -35,7 +35,7 @@ Airflow extracts snapshots from the operational database in chunked micro-batche
 
 ### 2. Lakehouse — Big Historical Data, Many Query Engines
 
-The same ingestion run writes parquet files to MinIO (bronze). Spark jobs clean and MERGE them into **Apache Iceberg** tables (silver), and **Trino** exposes those tables over ANSI SQL (`iceberg.lake.*`) to BI tools, notebooks, and the AI assistant. The Iceberg catalog is a JDBC catalog stored in the destination Postgres, so Spark and Trino always see the same tables. On Kubernetes, Trino is deployed via the official Helm chart (coordinator plus workers — scale with `server.workers` in `k8s/trino/helm-values.yaml`). Designed for data volumes that would be too expensive to keep in an operational database.
+The same ingestion run writes parquet files to SeaweedFS (bronze). Spark jobs clean and MERGE them into **Apache Iceberg** tables (silver), and **Trino** exposes those tables over ANSI SQL (`iceberg.lake.*`) to BI tools, notebooks, and the AI assistant. The Iceberg catalog is a JDBC catalog stored in the destination Postgres, so Spark and Trino always see the same tables. On Kubernetes, Trino is deployed via the official Helm chart (coordinator plus workers — scale with `server.workers` in `k8s/trino/helm-values.yaml`). Designed for data volumes that would be too expensive to keep in an operational database.
 
 ### 3. Real-Time Analytics — Streaming CDC into ClickHouse
 
@@ -109,7 +109,7 @@ CI fails if the generated files drift from the manifest, so they can never silen
 
 To point the platform at tables from an existing Postgres, add a block per table to the manifest (primary key, columns with their Postgres types, and the columns an upsert overwrites), then `make generate`.
 
-**What the manifest edit gives you:** your table is ingested into the warehouse (`raw.*_source`) and the lake (MinIO bronze), and gets a full live ClickHouse mirror (`mirror.*_current`) — no code. Curated marts (dbt `int`/`prs`) and Iceberg silver tables on top are business logic you write, since transformations are specific to your data.
+**What the manifest edit gives you:** your table is ingested into the warehouse (`raw.*_source`) and the lake (SeaweedFS bronze), and gets a full live ClickHouse mirror (`mirror.*_current`) — no code. Curated marts (dbt `int`/`prs`) and Iceberg silver tables on top are business logic you write, since transformations are specific to your data.
 
 Two more things to know:
 
@@ -118,7 +118,7 @@ Two more things to know:
 
 ## Observability
 
-Prometheus scrapes Airflow (via statsd), Kafka consumer lag (kafka-exporter), MinIO, and node metrics. A provisioned Grafana dashboard ("Data Platform Health") shows pipeline runs, CDC lag, source freshness, and a daily-revenue anomaly z-score. Alertmanager routes five alert rules (DAG failures, import errors, CDC lag, stale sources, revenue anomalies) — add a Slack/email receiver in `monitoring/alertmanager.yml` to deliver them.
+Prometheus scrapes Airflow (via statsd), Kafka consumer lag (kafka-exporter), SeaweedFS, and node metrics. A provisioned Grafana dashboard ("Data Platform Health") shows pipeline runs, CDC lag, source freshness, and a daily-revenue anomaly z-score. Alertmanager routes five alert rules (DAG failures, import errors, CDC lag, stale sources, revenue anomalies) — add a Slack/email receiver in `monitoring/alertmanager.yml` to deliver them.
 
 | Service | Local URL |
 |---|---|
@@ -175,7 +175,7 @@ order by revenue desc;
 |---|---|
 | **Orchestration** | Apache Airflow 3.3 |
 | **CDC / Streaming** | Debezium 2.5 & Apache Kafka (KRaft) |
-| **Object Storage** | MinIO (S3-compatible) |
+| **Object Storage** | SeaweedFS (S3-compatible) |
 | **Warehouse Transformation** | dbt-core (incremental models + tests) |
 | **Batch Compute** | Apache Spark 3.5 & Apache Iceberg 1.4 |
 | **Lakehouse Query Engine** | Trino |
@@ -210,7 +210,7 @@ Kubernetes: `bash k8s/generate-secrets.sh && bash k8s/deploy.sh` (see [DEPLOY_GU
 | **AI Dashboard** | <http://localhost:3001> *(started by `make up`; 3000 is Grafana's)* | open unless `DASHBOARD_AUTH_PASSWORD` set |
 | **Trino UI** | <http://localhost:8082> | any username |
 | **ClickHouse** | <http://localhost:8123> | `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` |
-| **MinIO Console** | <http://localhost:9001> | `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` |
+| **SeaweedFS Console** | <http://localhost:9001> | `SEAWEEDFS_ROOT_USER` / `SEAWEEDFS_ROOT_PASSWORD` |
 | **Kafka UI** | <http://localhost:8001> | `KAFKA_UI_USER` / `KAFKA_UI_PASSWORD` |
 | **Spark Master** | <http://localhost:8081> | — |
 | **Grafana** | <http://localhost:3000> *(compose)* | `GRAFANA_ADMIN_USER` / password |
@@ -220,7 +220,7 @@ Kubernetes: `bash k8s/generate-secrets.sh && bash k8s/deploy.sh` (see [DEPLOY_GU
 ### Airflow DAGs
 
 1. **`ingest_source_to_bronze`** *(The Ingestion Engine)*
-   - Extracts every source table in chunks; loads **Postgres `raw`** (warehouse) and **MinIO `bronze`** (lakehouse) in the same pass.
+   - Extracts every source table in chunks; loads **Postgres `raw`** (warehouse) and **SeaweedFS `bronze`** (lakehouse) in the same pass.
    - Triggers the dbt task group and the Spark DAG when done.
 2. **`dbt_transformations`** *(Cosmos task group)*
    - Cleans `raw` into `int`, builds `prs` views, runs all dbt tests.
@@ -298,5 +298,5 @@ that looks like and how to recover.
 ## Security Notes
 
 - The AI dashboard executes only single read-only SELECT statements, over a SELECT-only database role, behind optional HTTP Basic Auth.
-- Kafka UI and Grafana require logins; MinIO and ClickHouse use credentials from `.env` / `etl-secrets`.
+- Kafka UI and Grafana require logins; SeaweedFS and ClickHouse use credentials from `.env` / `etl-secrets`.
 - For Kubernetes, generate non-default credentials with `bash k8s/generate-secrets.sh` before deploying.
