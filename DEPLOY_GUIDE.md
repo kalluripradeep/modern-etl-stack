@@ -256,6 +256,20 @@ etl_pipe_freshness_lag_seconds
 Read it during traffic. With an idle source all three climb together, which
 is correct and uninteresting.
 
+`simulate_live_traffic.py` writes each tick in one transaction, so above a few
+thousand rows per tick the source is idle between commits and freshness draws
+that climb mid-run — it is measuring how long the tick's transaction stayed
+open, not pipeline lag. For a continuous stream use the pgbench workload, which
+commits per order:
+
+```bash
+docker cp scripts/bench/orders.sql postgres-source:/tmp/orders.sql
+docker exec -e PGPASSWORD=sourcepass postgres-source pgbench -h 127.0.0.1 -U sourceuser -d sourcedb -f /tmp/orders.sql -c 16 -j 4 -T 100 -P 10 --no-vacuum
+```
+
+Same event mix, so the throughput numbers stay comparable. The file header has
+the Kubernetes form and the fixed-rate flag.
+
 ### Step 6 — Open the dashboards
 
 Get your node IP:
