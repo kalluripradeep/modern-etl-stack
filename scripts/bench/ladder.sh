@@ -26,7 +26,9 @@ RATE=${RATES:-${RATE:-}}
 SQL="$(cd "$(dirname "$0")" && pwd)/orders.sql"
 OUT=${OUT:-bench_ladder.tsv}
 
-if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx postgres-source; then
+# Both stacks are often up at once on a dev machine, so the guess is only a
+# default -- TARGET=k8s or TARGET=compose settles it.
+if [ "${TARGET:-}" = "compose" ] || { [ -z "${TARGET:-}" ] && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx postgres-source; }; then
   TARGET="compose"
   PGPW=${SOURCE_DB_PASSWORD:-sourcepass}
   docker cp "$SQL" postgres-source:/tmp/ladder.sql >/dev/null
@@ -36,9 +38,16 @@ else
   TARGET="k8s (namespace ${NS:=etl})"
   PGPW=$(kubectl get secret etl-secrets -n "$NS" -o jsonpath='{.data.SOURCE_DB_PASSWORD}' | base64 -d)
   CHPW=$(kubectl get secret etl-secrets -n "$NS" -o jsonpath='{.data.CLICKHOUSE_PASSWORD}' | base64 -d)
-  kubectl cp "$SQL" "$NS/postgres-source-0:/tmp/ladder.sql" >/dev/null
-  pg() { kubectl exec -n "$NS" postgres-source-0 -- env PGPASSWORD="$PGPW" pgbench "$@"; }
-  ch() { kubectl exec -i -n "$NS" clickhouse-0 -- clickhouse-client --user chuser --password "$CHPW" -q "$1"; }
+  # MSYS_NO_PATHCONV stops Git Bash on Windows rewriting the in-container
+  # /tmp path into a Windows one before kubectl ever sees it. It is an
+  # ordinary env var, so it is simply ignored everywhere else.
+  # Copied from the script's own directory by relative name: MSYS_NO_PATHCONV
+  # suppresses path conversion for every argument, so an absolute local source
+  # would stay POSIX and kubectl would look for a Windows path that is not
+  # there. A relative source is never converted in the first place.
+  ( cd "$(dirname "$0")" && MSYS_NO_PATHCONV=1 kubectl cp orders.sql "$NS/postgres-source-0:/tmp/ladder.sql" ) >/dev/null
+  pg() { MSYS_NO_PATHCONV=1 kubectl exec -n "$NS" postgres-source-0 -- env PGPASSWORD="$PGPW" pgbench "$@"; }
+  ch() { MSYS_NO_PATHCONV=1 kubectl exec -i -n "$NS" clickhouse-0 -- clickhouse-client --user chuser --password "$CHPW" -q "$1"; }
 fi
 
 FRESH_SQL="SELECT dateDiff('second', max(updated_at), now()) FROM mirror.orders"
