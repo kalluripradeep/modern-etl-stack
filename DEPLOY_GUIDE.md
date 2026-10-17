@@ -702,6 +702,23 @@ kubectl logs -n etl <pod-name>    # read the logs
 
 `deploy.sh` handles most migrations automatically: it removes the retired cdc-sync-daemon and the old raw-manifest Trino before installing the Helm release. Nothing to run by hand for those.
 
+**Renaming object storage renamed an Airflow connection.** The move from MinIO to SeaweedFS renamed the connection id `minio_s3` to `seaweedfs_s3`. The DAGs reach the cluster with your Airflow image, but the connection lives in the `airflow-connections` secret, which only changes when `deploy.sh` runs — so updating one without the other leaves tasks looking up a connection that is not there. It surfaces as a warning rather than an error, followed by something that sounds unrelated:
+
+```text
+Unable to find AWS Connection ID 'seaweedfs_s3', switching to empty.
+...
+NoCredentialsError: Unable to locate credentials
+```
+
+Check which key the cluster actually holds:
+
+```bash
+kubectl get secret airflow-connections -n etl -o jsonpath='{.data}' | tr ',' '
+' | grep -o 'AIRFLOW_CONN_[A-Z0-9_]*'
+```
+
+If that prints `AIRFLOW_CONN_MINIO_S3`, re-run `bash k8s/deploy.sh`; it rewrites the secret with the new key. No restart is needed — each task runs in a fresh pod under KubernetesExecutor and reads the secret at pod creation.
+
 One migration it cannot do for you: Kafka storage moved from ephemeral to persistent volumes. Strimzi cannot change the storage type of a running cluster, so if your cluster predates this, delete the Kafka CR once before redeploying (in-flight messages are lost — they were on ephemeral storage anyway, and the CDC connector re-syncs):
 
 ```bash
