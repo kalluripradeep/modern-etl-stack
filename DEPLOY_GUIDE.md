@@ -270,6 +270,21 @@ docker exec -e PGPASSWORD=sourcepass postgres-source pgbench -h 127.0.0.1 -U sou
 Same event mix, so the throughput numbers stay comparable. The file header has
 the Kubernetes form and the fixed-rate flag.
 
+To sweep it rather than run one arm, `scripts/bench/ladder.sh` steps through
+client counts and records what the source sustained against what the pipeline
+did about it:
+
+```bash
+bash scripts/bench/ladder.sh
+DURATION=120 CLIENTS="8 16 32" bash scripts/bench/ladder.sh
+```
+
+It targets Compose if `postgres-source` is running there and the `etl`
+namespace otherwise. Read the output as two separate ceilings: `tps` flattening
+is Postgres saturating, while `fresh_med_s` growing arm over arm is the
+pipeline falling behind. They are rarely the same arm, and measuring only the
+first is how a pipeline gets called fast while its mirror quietly drifts.
+
 ### Step 6 — Open the dashboards
 
 Get your node IP:
