@@ -44,13 +44,25 @@ spec:
         - max_replication_slots=10
         - -c
         - max_wal_senders=10
+        # Every order in the stack is written here first, so this container's
+        # CPU limit is the ceiling on the whole pipeline's ingest rate. At the
+        # 500m it used to carry, a pgbench ladder (scripts/bench/ladder.sh)
+        # measured a flat 212 transactions/sec from 4 clients upward, with
+        # latency rising linearly in concurrency and throughput not moving --
+        # one saturated resource. The same container unlimited on a 16 core
+        # host reached 2,519. Freshness held at 1-2s in both, so none of that
+        # ceiling was the pipeline.
+        #
+        # Raising the limit without raising the request leaves scheduling
+        # untouched: only requests are reserved, so this still fits a cluster
+        # that could run the old value.
         resources:
           requests:
             memory: "256Mi"
             cpu: "250m"
           limits:
-            memory: "1Gi"
-            cpu: "500m"
+            memory: "2Gi"
+            cpu: "2"
         volumeMounts:
         - name: postgres-source-data
           mountPath: /var/lib/postgresql/data
