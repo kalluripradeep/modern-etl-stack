@@ -112,6 +112,12 @@ jobs:
         # still printed +100. Every lag figure taken under it measured
         # psycopg2 round trips rather than the pipeline.
         run: python scripts/ci/test_traffic_generator.py
+      - name: Verify the two port-forward tables agree
+        # test_e2e.sh and with_cluster.sh forward the same services, and a
+        # disagreement is invisible until something connects to a port nothing
+        # is listening on and reports "connection refused" -- which reads as a
+        # broken cluster rather than a wrong port, three times so far.
+        run: python scripts/ci/test_port_tables_match.py
 
   type-check:
     runs-on: ubuntu-latest
