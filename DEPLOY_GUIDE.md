@@ -228,9 +228,18 @@ architecture is placed to make, since almost nobody runs all three side by
 side.
 
 ```bash
-bash scripts/test_e2e.sh          # exports the connection settings
-python scripts/benchmark.py
+bash scripts/with_cluster.sh python3 scripts/benchmark.py
 ```
+
+`with_cluster.sh` opens the port-forwards, reads the deployed credentials out
+of `etl-secrets`, runs the command you give it, and closes the forwards again.
+Running the two as separate commands does not work and the failure is
+misleading: `test_e2e.sh` tears its forwards down through a trap on exit, and
+its exports cannot reach another process anyway, so the next command finds
+nothing listening and reports `connection refused` as though the cluster were
+broken. Anything that talks to the deployment goes through this wrapper —
+`simulate_live_traffic.py`, `test_lakehouse_interop.py`, or `bash` for a shell
+with the whole environment already set.
 
 Reports p50/p95 for five queries against all three stores, and bytes on disk
 per pipeline normalised per source row. Percentiles are nearest-rank, so
