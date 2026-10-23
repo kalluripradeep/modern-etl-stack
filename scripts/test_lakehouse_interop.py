@@ -28,7 +28,15 @@ import sys
 
 import requests
 
-TRINO_URL = os.environ.get("TRINO_URL", "http://localhost:8082")
+# Follow TARGET rather than assume Compose. scripts/test_e2e.sh forwards Trino
+# to 8085 on Kubernetes, because 8082 is Compose's own Trino and may be in use
+# -- and its export cannot reach a separate command, since a child script's
+# environment does not propagate back to the shell that ran it. Defaulting to
+# 8082 under TARGET=k8s therefore skipped every check while looking like Trino
+# was down.
+_DEFAULT_TRINO = ("http://localhost:8085" if os.environ.get("TARGET") == "k8s"
+                  else "http://localhost:8082")
+TRINO_URL = os.environ.get("TRINO_URL", _DEFAULT_TRINO)
 NAMESPACE = os.environ.get("NAMESPACE", "etl")
 TABLE_SPARK = "silver.lake.interop_probe"
 TABLE_TRINO = "iceberg.lake.interop_probe"
@@ -274,7 +282,13 @@ def main():
         trino("SELECT 1")
     except Exception as e:
         step("Lakehouse interop")
-        skip("Trino is not answering", f"{TRINO_URL}: {str(e)[:120]}")
+        # Name the port-forward. "Trino is not answering" on its own sends
+        # people to look at Trino, which is usually running fine -- the
+        # forward just is not up, or is on the other stack's port.
+        skip("Trino is not answering",
+             f"{TRINO_URL} — is the port-forward up? "
+             f"(bash scripts/test_e2e.sh, or kubectl port-forward -n {NAMESPACE} svc/trino 8085:8080)")
+        print(f"     {str(e)[:160]}")
         return summarise()
 
     try:
