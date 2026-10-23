@@ -45,24 +45,40 @@ spec:
         - -c
         - max_wal_senders=10
         # Every order in the stack is written here first, so this container's
-        # CPU limit is the ceiling on the whole pipeline's ingest rate. At the
-        # 500m it used to carry, a pgbench ladder (scripts/bench/ladder.sh)
-        # measured a flat 212 transactions/sec from 4 clients upward, with
-        # latency rising linearly in concurrency and throughput not moving --
-        # one saturated resource. The same container unlimited on a 16 core
-        # host reached 2,519. Freshness held at 1-2s in both, so none of that
-        # ceiling was the pipeline.
+        # CPU limit is the ceiling on the whole pipeline's ingest rate, and it
+        # has now been measured at three values with scripts/bench/ladder.sh:
+        #
+        #     limit    knee           ceiling    observed peak CPU
+        #     500m     4 clients      212 tps    pegged
+        #     2        16 clients     594 tps    1955m -- pegged
+        #     4        to be measured
+        #
+        # Each time the limit has been the thing that bound, never the cluster:
+        # at the 2 core reading the nodes were at 9 percent CPU and 15 percent
+        # memory. The shape is the giveaway rather than the number. Throughput
+        # scales while latency stays flat, then latency doubles per arm for no
+        # throughput at all -- 28ms at 16 clients, 54 at 32, 109 at 64, for
+        # 562, 594 and 586 tps. Past the knee every added client only queues.
+        #
+        # Freshness held at 1-2s across every arm at every limit, so none of
+        # these ceilings has ever been the pipeline.
+        #
+        # 4 is a step, not a destination. Whether it is also the next ceiling
+        # is answered by the peak CPU column: short of 4000m means something
+        # other than CPU now binds, most likely WAL or disk, which is the more
+        # interesting finding.
         #
         # Raising the limit without raising the request leaves scheduling
         # untouched: only requests are reserved, so this still fits a cluster
-        # that could run the old value.
+        # that could run the old value. A node with fewer than 4 spare cores
+        # simply never reaches the limit -- it is a ceiling, not a demand.
         resources:
           requests:
             memory: "256Mi"
             cpu: "250m"
           limits:
             memory: "2Gi"
-            cpu: "2"
+            cpu: "4"
         volumeMounts:
         - name: postgres-source-data
           mountPath: /var/lib/postgresql/data
