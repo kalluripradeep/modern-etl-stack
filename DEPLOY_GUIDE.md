@@ -98,12 +98,14 @@ bash k8s/generate-secrets.sh
 
 This writes `k8s/01-secrets.generated.yaml` (gitignored) with random passwords, and the deploy script picks it up automatically. **Save the printed passwords** — you need them for the dashboards in Step 6. Skipping this deploys well-known default credentials, acceptable only for a throwaway cluster.
 
-**Optional — enable the real AI assistant:** the AI dashboard runs in demo mode unless it has an Anthropic API key. Add it to the secret at any time (before or after deploying):
+**Optional — enable the real AI assistant:** the AI dashboard runs in demo mode unless it has an Anthropic API key. To have it enabled from the first deploy, add one line to the file just generated, before running Step 3:
 
-```bash
-kubectl -n etl patch secret etl-secrets -p '{"stringData":{"ANTHROPIC_API_KEY":"sk-ant-..."}}'
-kubectl -n etl rollout restart deployment/data-dashboard
+```yaml
+# k8s/01-secrets.generated.yaml, under stringData:
+  ANTHROPIC_API_KEY: sk-ant-...
 ```
+
+That file is gitignored and `chmod 600`, so the key stays out of the repository and out of your shell history. To add the key to a cluster that is already running, see Step 6 — the `kubectl` route cannot work yet, because the `etl` namespace and the `etl-secrets` secret are both created by Step 3.
 
 ### Step 3 — Run the deploy script
 
@@ -314,6 +316,17 @@ kubectl get secret etl-secrets -n etl -o jsonpath='{.data.SEAWEEDFS_ROOT_PASSWOR
 > kubectl get secret etl-secrets -n etl -o jsonpath='{.data.AIRFLOW_ADMIN_USER}' | base64 -d; echo
 > kubectl get secret etl-secrets -n etl -o jsonpath='{.data.AIRFLOW_ADMIN_PASSWORD}' | base64 -d; echo
 > ```
+
+**Optional — enable the real AI assistant** on a cluster that is already running. Without a key the dashboard answers from canned demo responses rather than your data:
+
+```bash
+read -rsp 'Anthropic API key: ' AI_KEY; echo
+kubectl -n etl patch secret etl-secrets -p "{\"stringData\":{\"ANTHROPIC_API_KEY\":\"$AI_KEY\"}}"
+unset AI_KEY
+kubectl -n etl rollout restart deployment/data-dashboard
+```
+
+`read -rs` keeps the key off the screen and out of shell history, which putting it directly in the `patch` argument would not. The rollout restart is required: the key reaches the dashboard as an environment variable, and those are only read when a pod starts.
 
 **Trino** (no NodePort — port-forward to query the lakehouse):
 
