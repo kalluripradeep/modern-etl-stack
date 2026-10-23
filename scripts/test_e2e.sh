@@ -88,8 +88,20 @@ ok "Port-forwards active"
 
 # ── 2. Set up Python venv ─────────────────────────────────────────────────────
 info "Setting up Python virtual environment..."
-if [ ! -d "$VENV" ]; then
-  python3 -m venv "$VENV"
+# Guard on the activate script, not the directory. A failed `python3 -m venv`
+# still leaves the directory behind, so a directory test passes forever after
+# and every later run skips creation and dies on the source below instead --
+# reporting a missing activate script, which points at nothing.
+#
+# Debian and Ubuntu ship venv separately: on 24.04 a stock python3 has no
+# ensurepip, so creation fails with an apt hint buried in its output and the
+# real cause never reaches the person running this.
+if [ ! -f "$VENV/bin/activate" ]; then
+  rm -rf "$VENV"
+  python3 -m venv "$VENV" || error "Could not create a virtualenv at $VENV.
+  On Debian or Ubuntu this usually means the venv module is not installed:
+      sudo apt install python3-venv
+  Then re-run this script."
 fi
 # shellcheck disable=SC1091
 source "$VENV/bin/activate"
