@@ -124,6 +124,12 @@ jobs:
         # results table fills with ordinary-looking numbers measuring the age
         # of a pipeline that is not running (#188).
         run: python scripts/ci/test_ladder_liveness.py
+      - name: Verify the interop runner streams Spark output
+        # A submit that cannot get workers waits rather than failing, logging
+        # "has not accepted any resources" every fifteen seconds. Capturing
+        # that gave a run which printed its step heading and then nothing for
+        # ten minutes, with the explanation discarded at the end (#193).
+        run: python scripts/ci/test_interop_spark_runner.py
 
   type-check:
     runs-on: ubuntu-latest
