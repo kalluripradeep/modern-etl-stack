@@ -130,6 +130,12 @@ jobs:
         # that gave a run which printed its step heading and then nothing for
         # ten minutes, with the explanation discarded at the end (#193).
         run: python scripts/ci/test_interop_spark_runner.py
+      - name: Verify the connector's TASK state is what gets checked
+        # Kafka Connect reports the CONNECTOR as RUNNING while its task is
+        # FAILED, and does not retry a failed task. A cluster ran a day on
+        # that -- a mirror nothing was writing to, every status check saying
+        # RUNNING (#188, #192).
+        run: python scripts/ci/test_connector_task_check.py
 
   type-check:
     runs-on: ubuntu-latest
