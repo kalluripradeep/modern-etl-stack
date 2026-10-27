@@ -24,13 +24,18 @@ until curl -sf "${CONNECT_URL}/connectors" > /dev/null; do
 done
 echo "Kafka Connect is ready."
 
-# Check if connector already exists
+# An existing connector is not re-registered, but it is still checked.
+# Exiting early here meant that re-running this against a connector whose
+# task had died reported "already exists" and stopped -- the one situation
+# where someone runs it a second time is the one it refused to look at.
+ALREADY=""
 if curl -sf "${CONNECT_URL}/connectors/orders-cdc-connector" > /dev/null 2>&1; then
-  echo "Connector 'orders-cdc-connector' already exists. Delete it first to re-register:"
-  echo "  curl -X DELETE ${CONNECT_URL}/connectors/orders-cdc-connector"
-  exit 0
+  ALREADY=1
+  echo "Connector already exists; checking its task rather than re-registering."
+  echo "To start over:  curl -X DELETE ${CONNECT_URL}/connectors/orders-cdc-connector"
 fi
 
+if [ -z "$ALREADY" ]; then
 echo "Registering Debezium PostgreSQL connector..."
 
 curl -X POST "${CONNECT_URL}/connectors" \
@@ -53,7 +58,56 @@ curl -X POST "${CONNECT_URL}/connectors" \
       \"decimal.handling.mode\": \"double\"
     }
   }"
+fi
 
 echo ""
-echo "Connector registered. Check status with:"
-echo "  curl ${CONNECT_URL}/connectors/orders-cdc-connector/status | jq ."
+
+# Registering a connector and having it work are different things.
+#
+# Kafka Connect accepts the POST, reports the CONNECTOR as RUNNING, and only
+# then starts its task. If that task dies on its first poll -- a database not
+# yet accepting connections, a DNS blip during a deploy -- it goes FAILED and
+# stays there, because Connect does not retry a failed task. The connector
+# keeps reporting RUNNING throughout.
+#
+# That is how a cluster ran for a day with a mirror nothing was writing to,
+# while every status check anyone ran said RUNNING.
+#
+# The state is read positionally rather than with a JSON parser: jq is not
+# present in every image this runs from. "state" appears twice in the reply,
+# the connector first and the task second.
+task_state() {
+  curl -s "${CONNECT_URL}/connectors/orders-cdc-connector/status"     | grep -oE '"state":[[:space:]]*"[A-Z_]*"' | sed -n '2p' | cut -d'"' -f4
+}
+
+echo "Waiting for the connector task to start..."
+TASK_STATE=""
+for _ in $(seq 1 "${CONNECTOR_TASK_TIMEOUT:-60}"); do
+  TASK_STATE=$(task_state || true)
+  [ "$TASK_STATE" = "RUNNING" ] && break
+  [ "$TASK_STATE" = "FAILED" ] && break
+  sleep 1
+done
+
+if [ "$TASK_STATE" = "FAILED" ]; then
+  # One restart, because the usual cause is a dependency that was not ready at
+  # deploy time and is by now.
+  echo "Task failed on startup; restarting it once..."
+  curl -s -X POST "${CONNECT_URL}/connectors/orders-cdc-connector/tasks/0/restart" >/dev/null || true
+  sleep 5
+  TASK_STATE=$(task_state || true)
+fi
+
+if [ "$TASK_STATE" = "RUNNING" ]; then
+  echo "Connector registered and its task is RUNNING."
+else
+  echo "" >&2
+  echo "ERROR: the connector registered but its task is ${TASK_STATE:-UNKNOWN}." >&2
+  echo "CDC will deliver nothing until this is fixed. Root cause:" >&2
+  curl -s "${CONNECT_URL}/connectors/orders-cdc-connector/status"     | tr ',' '
+' | grep -iE "Caused by|UnknownHost|Exception" | head -3 >&2
+  echo "" >&2
+  echo "Retry after fixing it:" >&2
+  echo "  curl -X POST ${CONNECT_URL}/connectors/orders-cdc-connector/tasks/0/restart" >&2
+  exit 1
+fi
