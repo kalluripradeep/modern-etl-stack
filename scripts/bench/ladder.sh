@@ -26,6 +26,30 @@ RATE=${RATES:-${RATE:-}}
 SQL="$(cd "$(dirname "$0")" && pwd)/orders.sql"
 OUT=${OUT:-bench_ladder.tsv}
 
+# Returns 0 if a committed write reaches the mirror, 1 if it does not.
+# Separated out so scripts/ci/test_ladder_liveness.py can drive it with stub
+# ch/pg functions -- an abort path that can block a benchmark should not be
+# the one piece of this script that has never been executed.
+mirror_is_live() {
+  local before after
+  before=$(ch "SELECT toString(max(updated_at)) FROM mirror.orders" 2>/dev/null | tr -d '
+')
+  pg -h 127.0.0.1 -U "${SOURCE_DB_USER:-sourceuser}" -d "${SOURCE_DB_NAME:-sourcedb}"      -f /tmp/ladder.sql -c 1 -t 1 --no-vacuum >/dev/null 2>&1
+  MIRROR_BEFORE="$before"
+  local i=0
+  while [ "$i" -lt "${LIVENESS_TIMEOUT:-45}" ]; do
+    after=$(ch "SELECT toString(max(updated_at)) FROM mirror.orders" 2>/dev/null | tr -d '
+')
+    if [ -n "$after" ] && [ "$after" != "$before" ]; then return 0; fi
+    i=$((i + 1))
+    sleep 1
+  done
+  return 1
+}
+
+# Sourced by the guard, which wants the functions and none of the run.
+[ -n "${LADDER_LIB_ONLY:-}" ] && return 0
+
 # Both stacks are often up at once on a dev machine, so the guess is only a
 # default -- TARGET=k8s or TARGET=compose settles it.
 if [ "${TARGET:-}" = "compose" ] || { [ -z "${TARGET:-}" ] && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx postgres-source; }; then
@@ -52,6 +76,38 @@ fi
 
 FRESH_SQL="SELECT dateDiff('second', max(updated_at), now()) FROM mirror.orders"
 ch "SELECT 1" >/dev/null 2>&1 || { echo "ClickHouse unreachable on $TARGET — freshness cannot be measured"; exit 1; }
+
+# Prove the mirror is live before measuring anything against it.
+#
+# A stopped CDC pipeline does not read as zero. max(updated_at) simply stops
+# moving, so freshness climbs at one second per second and lands in the table
+# as an ordinary-looking number -- 84791, then 84852 an arm later. Every
+# throughput figure in such a run is real and every freshness figure beside it
+# is meaningless, which is a worse outcome than failing outright.
+#
+# Staleness alone cannot tell this apart from an idle source, which climbs
+# identically and is fine (see #182). The distinguishing question is whether a
+# write lands, so that is what this asks: one transaction, then wait for
+# max(updated_at) to move.
+echo "checking the mirror is live..."
+if ! mirror_is_live; then
+  STALE=$(ch "$FRESH_SQL" 2>/dev/null | tr -d '
+')
+  echo ""
+  echo "ABORTING: the mirror did not move after a committed write."
+  echo "  mirror.orders max(updated_at) stuck at: ${MIRROR_BEFORE:-<empty>}"
+  echo "  that is ${STALE:-?} seconds behind now."
+  echo ""
+  echo "  The source side would still benchmark fine, but every freshness"
+  echo "  figure would be the age of a pipeline that is not running. Check"
+  echo "  Pipe 3 before benchmarking:"
+  echo ""
+  echo "    kubectl exec -n ${NS:-etl} kafka-connect-0 -- curl -s localhost:8083/connectors/orders-cdc-connector/status"
+  echo ""
+  echo "  Set LIVENESS_TIMEOUT higher if the pipeline is merely slow, or"
+  echo "  SKIP_LIVENESS=1 to benchmark the source alone and ignore freshness."
+  [ -n "${SKIP_LIVENESS:-}" ] || exit 1
+fi
 
 echo "target: $TARGET   duration: ${DURATION}s per arm   rate: ${RATE:-saturation}"
 printf 'clients\ttps\tlat_ms\tfresh_med_s\tfresh_max_s\tfailed\n' | tee "$OUT"

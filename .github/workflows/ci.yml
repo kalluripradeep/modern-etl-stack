@@ -118,6 +118,12 @@ jobs:
         # is listening on and reports "connection refused" -- which reads as a
         # broken cluster rather than a wrong port, three times so far.
         run: python scripts/ci/test_port_tables_match.py
+      - name: Verify the ladder refuses to benchmark a dead pipeline
+        # A stopped CDC pipeline does not read as zero -- max(updated_at)
+        # stops moving, freshness climbs at a second per second, and the
+        # results table fills with ordinary-looking numbers measuring the age
+        # of a pipeline that is not running (#188).
+        run: python scripts/ci/test_ladder_liveness.py
 
   type-check:
     runs-on: ubuntu-latest
