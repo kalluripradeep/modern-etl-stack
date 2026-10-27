@@ -23,8 +23,11 @@ or depend on the silver DAG having run.
 """
 import json
 import os
+import queue
 import subprocess
 import sys
+import threading
+import time
 
 import requests
 
@@ -37,6 +40,12 @@ import requests
 _DEFAULT_TRINO = ("http://localhost:8085" if os.environ.get("TARGET") == "k8s"
                   else "http://localhost:8082")
 TRINO_URL = os.environ.get("TRINO_URL", _DEFAULT_TRINO)
+
+# A submit that cannot get workers waits rather than failing, so this is a
+# patience limit, not an expectation. Ten minutes is long enough for a cold
+# start pulling jars and short enough that a broken cluster says so the same
+# morning.
+SPARK_TIMEOUT = int(os.environ.get("SPARK_TIMEOUT", "600"))
 NAMESPACE = os.environ.get("NAMESPACE", "etl")
 TABLE_SPARK = "silver.lake.interop_probe"
 TABLE_TRINO = "iceberg.lake.interop_probe"
@@ -115,23 +124,72 @@ spark-submit --master spark://spark-master:7077 \
 """
 
 
-def spark(step_name, prefix):
+def _pump(stream, queue_):
+    for line in stream:
+        queue_.put(line.rstrip("\n"))
+    queue_.put(None)
+
+
+def spark(step_name, prefix, timeout=None):
     """Run one Spark step and return its JSON payload.
 
-    spark-submit writes its own logs to the same streams, so the marker line is
-    searched for rather than assumed to be last.
+    Output is echoed as it arrives rather than captured and discarded. A
+    submit that cannot get workers does not fail -- it waits, logging
+
+        WARN TaskSchedulerImpl: Initial job has not accepted any resources;
+        check your cluster UI to ensure that workers are registered
+
+    every fifteen seconds. Capturing that produced a run which printed the
+    step heading and then nothing at all for as long as the timeout allowed,
+    with the one line explaining why thrown away at the end.
+
+    The reader runs on its own thread so the deadline holds even if the
+    process goes completely silent, which a per-line check would not.
     """
+    timeout = timeout or SPARK_TIMEOUT
     # str.replace, not str.format: the command contains shell parameter
     # expansions like ${SEAWEEDFS_ENDPOINT:-...}, which format() reads as
     # fields of its own and rejects.
-    proc = subprocess.run(
+    proc = subprocess.Popen(
         prefix + [SUBMIT.replace("{step}", step_name)],
-        capture_output=True, text=True, timeout=900,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
     )
-    for line in (proc.stdout + proc.stderr).splitlines():
+    lines, q = [], queue.Queue()
+    threading.Thread(target=_pump, args=(proc.stdout, q), daemon=True).start()
+
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                proc.kill()
+                raise RuntimeError(
+                    f"spark step {step_name!r} exceeded {timeout}s. The output above "
+                    "is the whole story -- repeated 'has not accepted any resources' "
+                    "means the master has no usable workers. SPARK_TIMEOUT raises this."
+                )
+            try:
+                line = q.get(timeout=min(remaining, 5))
+            except queue.Empty:
+                continue
+            if line is None:
+                break
+            lines.append(line)
+            if not line.startswith(MARKER):
+                print(f"    | {line}", file=sys.stderr)
+    except KeyboardInterrupt:
+        proc.kill()
+        raise
+    finally:
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+    for line in lines:
         if line.startswith(MARKER):
             return json.loads(line[len(MARKER):])
-    tail = (proc.stderr or proc.stdout).strip().splitlines()[-3:]
+    tail = [x for x in lines if x.strip()][-3:]
     raise RuntimeError(
         f"no result from spark step {step_name!r}: " + " | ".join(tail)
     )
@@ -168,7 +226,7 @@ def run(prefix):
     created = spark("create", prefix)
     if created["columns"] != ["id", "region", "amount"] or len(created["rows"]) != 3:
         fail("Spark did not create the table as expected", str(created)[:160])
-        return
+        return False
     ok("Spark created and populated the table",
        f"{len(created['rows'])} rows, {len(created['snapshots'])} snapshot")
     snap1 = created["snapshots"][0]
@@ -181,7 +239,7 @@ def run(prefix):
         )
     except Exception as e:
         fail("Trino could not read the Spark-written table", str(e)[:160])
-        return
+        return True
     spark_agg = [list(r) for r in created["aggregate"]]
     trino_agg = [[str(v) for v in r] for r in agg]
     if trino_agg == spark_agg:
@@ -194,7 +252,7 @@ def run(prefix):
     evolved = spark("evolve", prefix)
     if "channel" not in evolved["columns"]:
         fail("Spark did not add the column", str(evolved["columns"]))
-        return
+        return True
     cols, rows = trino(f"SELECT * FROM {TABLE_TRINO} ORDER BY id")  # nosec B608
     if "channel" not in cols:
         fail("Trino cannot see the column Spark added", f"sees {cols}")
@@ -217,7 +275,7 @@ def run(prefix):
               "(5,'apac',DECIMAL '99.99','api','trino')")
     except Exception as e:
         fail("Trino could not write to the table", str(e)[:160])
-        return
+        return True
     back = spark("readback", prefix)
     if "source_engine" not in back["columns"]:
         fail("Spark cannot see the column Trino added", str(back["columns"]))
@@ -235,7 +293,7 @@ def run(prefix):
         )
     except Exception as e:
         fail("Time travel to the first snapshot failed", str(e)[:160])
-        return
+        return True
     if len(cols_then) == 3 and len(rows_then) == 3 and len(cols_now) == 5:
         ok("Time travel restores the schema, not just the rows",
            f"snapshot 1: {len(cols_then)} cols / {len(rows_then)} rows, "
@@ -255,6 +313,8 @@ def run(prefix):
         ok("A column added later cannot be resolved against the old snapshot")
 
 
+
+    return True
 def summarise():
     step("Summary")
     passed = sum(1 for r in results if r[0] == "PASS")
@@ -291,15 +351,28 @@ def main():
         print(f"     {str(e)[:160]}")
         return summarise()
 
+    created = False
     try:
-        run(prefix)
+        created = run(prefix)
+    except KeyboardInterrupt:
+        # Ctrl-C used to land in the cleanup below and start a second submit
+        # against the same stuck cluster, so interrupting a hung run hung
+        # again. Nothing to drop if the create never returned.
+        print("\n  interrupted — nothing to clean up" if not created else
+              "\n  interrupted — attempting cleanup")
+        if not created:
+            raise
     finally:
         # Always drop, including after a failed assertion: a table left behind
-        # makes the next run's CREATE the thing under test instead.
-        try:
-            spark("drop", prefix)
-        except Exception as e:
-            print(f"  !  could not drop {TABLE_SPARK}: {str(e)[:120]}")
+        # makes the next run's CREATE the thing under test instead. Skipped
+        # when nothing was created, and on a short leash either way -- cleanup
+        # against a cluster that just timed out should not cost another full
+        # timeout.
+        if created:
+            try:
+                spark("drop", prefix, timeout=min(SPARK_TIMEOUT, 120))
+            except Exception as e:
+                print(f"  !  could not drop {TABLE_SPARK}: {str(e)[:120]}")
     summarise()
 
 
