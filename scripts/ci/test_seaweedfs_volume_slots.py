@@ -30,6 +30,8 @@ FILES = [
     ROOT / "k8s" / "seaweedfs" / "statefulset.yaml",
     ROOT / "docker-compose.yml",
 ]
+DEPLOY = ROOT / "k8s" / "deploy.sh"
+SMOKE = ROOT / ".github" / "workflows" / "deploy-smoke.yml"
 
 # The slot count must cover one collection per bucket, grown seven at a time.
 # bronze, silver, airflow-logs and the Iceberg warehouse is 28 before any data
@@ -109,10 +111,73 @@ def test_both_deployments_agree():
     )
 
 
+def test_deploy_probes_writability_not_just_existence():
+    """Listing a bucket proves nothing; it costs no volume.
+
+    Both of these once asserted only that `s3.bucket.list` named the buckets,
+    and both passed for a week against a cluster where every write returned
+    500. On the same broken node the listing succeeds and a write returns 500,
+    so the write is the only check that distinguishes them.
+    """
+    for path in (DEPLOY, SMOKE):
+        text = path.read_text(encoding="utf-8")
+        assert "s3.bucket.list" in text, f"{path.name}: lost the bucket listing"
+        assert "/buckets/$b/" in text, (
+            f"{path.name}: no write probe against the filer. Checking that a "
+            f"bucket exists passes on a node that can store nothing (#192)"
+        )
+        assert '-X DELETE' in text, (
+            f"{path.name}: the probe does not clean up after itself"
+        )
+
+
+def test_an_unwritable_bucket_fails_rather_than_warns():
+    """A deploy leaving the lakehouse unwritable must not report success.
+
+    The missing-bucket case was a warning for exactly this reason and it
+    was not loud enough: the deploy went green, nobody read the line, and
+    the cluster was unusable for a week.
+    """
+    text = DEPLOY.read_text(encoding="utf-8")
+    branch = text[text.index('if [ -n "$UNWRITABLE" ]'):]
+    branch = branch[: branch.index("fi")]
+    assert "error " in branch, (
+        "deploy.sh no longer treats an unwritable bucket as fatal; it would "
+        "report a clean deploy of a lakehouse that cannot be written to"
+    )
+    assert "warn " not in branch, (
+        "an unwritable bucket is only a warning again (#192)"
+    )
+
+
+def test_probe_has_no_line_continuations():
+    """The probe runs through `sh -c`; a wrapped line is a silent breakage.
+
+    A backslash-newline inside the probe has already been collapsed once by
+    tooling between here and the file. The result still parsed and quietly
+    no longer did what it said, which is the failure mode this whole guard
+    exists to prevent.
+    """
+    for path in (DEPLOY, SMOKE):
+        text = path.read_text(encoding="utf-8")
+        key = "UNWRITABLE=" if path is DEPLOY else "unwritable="
+        probe = text[text.index(key):]
+        probe = probe[: probe.index("2>/dev/null)")]
+        for line in probe.splitlines():
+            assert not line.rstrip().endswith(chr(92)), (
+                f"{path.name}: line continuation in the write probe: "
+                f"{line.strip()!r} -- these get collapsed in transit and "
+                f"the result still parses, so the probe stops probing"
+            )
+
+
 if __name__ == "__main__":
     test_every_weed_server_sets_volume_max()
     test_volume_max_is_never_zero()
     test_slot_count_covers_one_collection_per_bucket()
     test_the_node_disk_keeps_a_floor()
     test_both_deployments_agree()
+    test_deploy_probes_writability_not_just_existence()
+    test_an_unwritable_bucket_fails_rather_than_warns()
+    test_probe_has_no_line_continuations()
     print("seaweedfs volume slots: all cases pass")

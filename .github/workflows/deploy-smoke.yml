@@ -74,14 +74,34 @@ jobs:
           # Object storage buckets. This used to check them through mc with
           # the pod's credentials, which also proved those credentials were
           # right. SeaweedFS has no mc, and `weed shell` reaches the master
-          # over localhost without authenticating, so this now proves only
-          # that the buckets exist. The credential path is still covered: the
+          # over localhost without authenticating, so listing proves only
+          # that the buckets exist -- hence the write probe below. The
+          # credential path is still covered: the
           # e2e suite reads and writes through the S3 API with the generated
           # secret.
           buckets=$(kubectl exec -n etl seaweedfs-0 -- sh -c \
             'echo "s3.bucket.list" | weed shell -master=localhost:9333' 2>/dev/null)
           echo "$buckets" | grep -q bronze || fail "bronze bucket missing"
           echo "$buckets" | grep -q silver || fail "silver bucket missing"
+
+          # Existing is not the same as usable. A bucket is a filer directory
+          # costing no volume, so it lists fine on a node that can store
+          # nothing -- a cluster ran a week that way, every bucket at size:0
+          # and every PutObject returning 500, with this check passing (#192).
+          # A write is what makes the master assign a volume, so write one.
+          unwritable=$(kubectl exec -n etl seaweedfs-0 -- sh -c '
+            echo smoke-probe > /tmp/.smoke-probe
+            bad=""
+            for b in bronze silver airflow-logs; do
+              url="http://localhost:8888/buckets/$b/.smoke-probe"
+              code=$(curl -s -o /dev/null -w "%{http_code}" -F file=@/tmp/.smoke-probe "$url")
+              curl -s -o /dev/null -X DELETE "$url"
+              case "$code" in 2*) ;; *) bad="$bad $b($code)" ;; esac
+            done
+            rm -f /tmp/.smoke-probe
+            printf "%s" "$bad"
+          ' 2>/dev/null)
+          [ -z "$unwritable" ] || fail "object storage rejected writes:$unwritable (see -volume.max, #192)"
 
           # The CDC connector must be registered with the *generated* password.
           # Registering with the checked-in default is the bug that silently
