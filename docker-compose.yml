@@ -144,6 +144,12 @@ services:
     # The S3 credentials go in a config file rather than the environment, so
     # it is written at startup from the variables above and lives in neither
     # the repository nor the image.
+    #
+    # -volume.max is an explicit count, never 0: zero auto-sizes from free
+    # disk, which on a small disk yields too few volume slots and makes every
+    # PutObject fail with InternalError. See k8s/seaweedfs/statefulset.yaml.
+    # It stayed invisible here because a developer laptop has the disk to
+    # spare; the k8s node did not (#192).
     entrypoint:
       - /bin/sh
       - -ec
@@ -151,7 +157,7 @@ services:
         cat > /tmp/s3.json <<JSON
         {"identities":[{"name":"etl","credentials":[{"accessKey":"${SEAWEEDFS_ROOT_USER:-seaweedadmin}","secretKey":"${SEAWEEDFS_ROOT_PASSWORD:-seaweedadmin}"}],"actions":["Admin","Read","Write","List","Tagging"]}]}
         JSON
-        exec weed server -dir=/data -s3 -s3.port=9000 -s3.config=/tmp/s3.json -volume.max=0 -metricsPort=9327 -ip.bind=0.0.0.0
+        exec weed server -dir=/data -s3 -s3.port=9000 -s3.config=/tmp/s3.json -volume.max=100 -volume.minFreeSpace=10GiB -metricsPort=9327 -ip.bind=0.0.0.0
     volumes:
       - seaweedfs-data:/data
     networks:

@@ -136,6 +136,15 @@ jobs:
         # that -- a mirror nothing was writing to, every status check saying
         # RUNNING (#188, #192).
         run: python scripts/ci/test_connector_task_check.py
+      - name: Verify SeaweedFS is given an explicit volume-slot count
+        # -volume.max=0 reads as unlimited and means free disk divided by
+        # 30GB -- two slots on a 52GB node, fewer than the default of 8 it
+        # was set to escape. Every PutObject then returns InternalError, so
+        # bronze, silver and airflow-logs were all unwritable, and Airflow's
+        # remote logging could not report it because it writes there too
+        # (#192). The count depends on the host's disk, so it cannot be
+        # reproduced on a laptop with room to spare.
+        run: python scripts/ci/test_seaweedfs_volume_slots.py
 
   type-check:
     runs-on: ubuntu-latest
