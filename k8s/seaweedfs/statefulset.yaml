@@ -41,14 +41,32 @@ spec:
         # and failed exactly that way, which then blocked Trino from starting
         # on a dependency that was actually fine.
         #
-        # -volume.max=0 is not optional. SeaweedFS pre-allocates volumes and
-        # defaults to 8; an Iceberg write fans out into many small parquet
-        # files across partition directories and exhausts that, after which
-        # every write returns HTTP 500 InternalError. s3a surfaces that as
+        # -volume.max caps how many volumes this node may create, and running
+        # out of slots is what makes every write return HTTP 500 InternalError:
         #   AWSStatus500Exception: Writing Object on lake/orders/data/...
-        # which reads like a server fault rather than a quota. Zero means
-        # auto-size from free disk. Found by running the silver DAG: boto3
-        # writes had all passed, because they never fanned out like this.
+        #   botocore ClientError: An error occurred (InternalError) when
+        #     calling the PutObject operation (reached max retries: 4)
+        # which reads like a server fault rather than a quota.
+        #
+        # This was once set to 0 to escape the default of 8. That was wrong.
+        # Zero does not mean unlimited -- `weed server -h` says the limit is
+        # then "auto configured as free disk space divided by volume size",
+        # and volume size defaults to 30GB. On a 52GB disk that is 2 slots,
+        # which is fewer than the 8 it was meant to fix. Each S3 bucket is a
+        # separate collection needing volumes of its own, and SeaweedFS grows
+        # them 7 at a time, so 2 slots cannot serve even one bucket: bronze,
+        # silver and airflow-logs were all unwritable (#192).
+        #
+        # It hid for a week because the number depends on the host's free
+        # disk, so it never reproduced on a roomy laptop -- and because
+        # Airflow's remote logging writes to this same S3, the one mechanism
+        # that would have reported it was disabled by the fault itself.
+        #
+        # An explicit count is therefore the point; do not put 0 back. Volumes
+        # are not preallocated (-master.volumePreallocate is off), so unused
+        # slots cost nothing. -volume.minFreeSpace keeps the node's root disk
+        # off the floor: this PVC is local-path, so filling it takes the whole
+        # cluster with it, and the 1% default leaves only ~1GB of a 100GB disk.
         #
         # SeaweedFS reads S3 credentials from a config file rather than the
         # environment, so the file is written at startup from the secret and
@@ -74,7 +92,7 @@ spec:
             ]
           }
           JSON
-          exec weed server -dir=/data -s3 -s3.port=9000 -s3.config=/tmp/s3.json -volume.max=0 -metricsPort=9327 -ip.bind=0.0.0.0
+          exec weed server -dir=/data -s3 -s3.port=9000 -s3.config=/tmp/s3.json -volume.max=100 -volume.minFreeSpace=10GiB -metricsPort=9327 -ip.bind=0.0.0.0
         ports:
         - containerPort: 9000   # S3 API, on SeaweedFS's port so no consumer moves
         - containerPort: 8888   # filer, the browsable UI here

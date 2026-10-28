@@ -195,9 +195,19 @@ SEAWEEDFS_POD="seaweedfs-0"
 #
 # Creating and checking are separate steps on purpose. `s3.bucket.create` on an
 # existing bucket prints "error: bucket X already exists" and still exits 0, so
-# branching on its status would report success for any failure at all. Listing
-# afterwards and looking for the names is the only honest check, and it is the
-# same assertion deploy-smoke makes.
+# branching on its status would report success for any failure at all.
+#
+# Listing is NOT a sufficient check, though this once claimed it was. A bucket
+# is only a directory in the filer and costs no volume, so `s3.bucket.list`
+# reports it whether or not anything can be written to it. A cluster spent a
+# week with all three buckets listed at size:0 and every PutObject returning
+# HTTP 500, while this step said "Object storage buckets ready" (#192).
+#
+# So the buckets are probed by writing to them. The filer takes an ordinary
+# PUT over localhost and needs no credentials, the same way `weed shell` does,
+# and a write is what actually requires the master to assign a volume -- which
+# is the thing that fails. On the same broken node, listing passes and this
+# returns 500.
 kubectl exec -n $NAMESPACE "$SEAWEEDFS_POD" -- sh -c '
   for b in bronze silver airflow-logs; do
     echo "s3.bucket.create -name $b" | weed shell -master=localhost:9333
@@ -209,11 +219,36 @@ MISSING=""
 for b in bronze silver airflow-logs; do
   echo "$BUCKETS" | grep -q "[[:space:]]${b}[[:space:]]" || MISSING="$MISSING $b"
 done
-if [ -z "$MISSING" ]; then
-  ok "Object storage buckets ready"
-else
-  warn "Buckets missing:$MISSING — the pipeline will fail until they exist"
+if [ -n "$MISSING" ]; then
+  error "Buckets missing:$MISSING — the pipeline cannot run without them"
 fi
+
+# Prove each bucket accepts a write, then leave nothing behind. No backslash
+# continuations in here: the probe runs through `kubectl exec -- sh -c`, and a
+# wrapped line is one more thing to get wrong in a check whose whole job is to
+# be trustworthy.
+UNWRITABLE=$(kubectl exec -n $NAMESPACE "$SEAWEEDFS_POD" -- sh -c '
+  echo deploy-probe > /tmp/.deploy-probe
+  bad=""
+  for b in bronze silver airflow-logs; do
+    url="http://localhost:8888/buckets/$b/.deploy-probe"
+    code=$(curl -s -o /dev/null -w "%{http_code}" -F file=@/tmp/.deploy-probe "$url")
+    curl -s -o /dev/null -X DELETE "$url"
+    case "$code" in 2*) ;; *) bad="$bad $b($code)" ;; esac
+  done
+  rm -f /tmp/.deploy-probe
+  printf "%s" "$bad"
+' 2>/dev/null)
+
+if [ -n "$UNWRITABLE" ]; then
+  error "Object storage rejected writes:$UNWRITABLE
+        The buckets exist but will not accept data, so every pipeline writing
+        to them fails while the deploy appears clean. HTTP 500 here is usually
+        SeaweedFS out of volume slots. Check -volume.max in
+        k8s/seaweedfs/statefulset.yaml, then run volume.list in the pod:
+        'free:0' in that output means no slots are left (#192)."
+fi
+ok "Object storage buckets ready and accepting writes"
 
 # ─── Step 5: Strimzi Kafka Operator & Kafka Cluster ───────────────────────────
 echo ""
