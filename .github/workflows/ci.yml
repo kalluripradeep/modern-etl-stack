@@ -152,6 +152,12 @@ jobs:
         # Measured against a master with no workers: ERROR gave 0 warnings in
         # 75s, WARN gave one every 15s (#193).
         run: python scripts/ci/test_spark_log_level.py
+      - name: Verify the source Postgres can accept the benchmark ladder
+        # Postgres defaults max_connections to 100 and reserves some of those,
+        # so a 128 client ladder arm fails at client 89 before measuring
+        # anything. Set in k8s and compose alike, because a value set on one
+        # side only is the shape the volume-slot bug had (#192, #188).
+        run: python scripts/ci/test_source_max_connections.py
 
   type-check:
     runs-on: ubuntu-latest

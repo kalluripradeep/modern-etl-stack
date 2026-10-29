@@ -44,6 +44,8 @@ spec:
         - max_replication_slots=10
         - -c
         - max_wal_senders=10
+        - -c
+        - max_connections=200
         # Every order in the stack is written here first, so this container's
         # CPU limit is the ceiling on the whole pipeline's ingest rate, and it
         # has now been measured at three values with scripts/bench/ladder.sh:
@@ -51,7 +53,7 @@ spec:
         #     limit    knee           ceiling    observed peak CPU
         #     500m     4 clients      212 tps    pegged
         #     2        16 clients     594 tps    1955m -- pegged
-        #     4        to be measured
+        #     4        32 clients     1205 tps   3880m -- pegged
         #
         # Each time the limit has been the thing that bound, never the cluster:
         # at the 2 core reading the nodes were at 9 percent CPU and 15 percent
@@ -63,10 +65,23 @@ spec:
         # Freshness held at 1-2s across every arm at every limit, so none of
         # these ceilings has ever been the pipeline.
         #
-        # 4 is a step, not a destination. Whether it is also the next ceiling
-        # is answered by the peak CPU column: short of 4000m means something
-        # other than CPU now binds, most likely WAL or disk, which is the more
-        # interesting finding.
+        # The 4 core reading answers the question that row was asking.
+        # 3880m is not short of 4000m, so CPU is still what binds and the
+        # more interesting finding -- WAL or disk -- has not happened yet.
+        # The knee has tracked the limit exactly at every value: 4 clients at
+        # 500m, 16 at 2, 32 at 4. 8 is the next step, and a peak short of
+        # 8000m there is the result worth having.
+        #
+        # max_connections is set because the ladder cannot reach that step
+        # without it. Postgres defaults to 100, and reserves some of those,
+        # so a 128 client arm fails at client 89 with
+        #
+        #     FATAL: sorry, too many clients already
+        #
+        # before a single transaction runs -- a configuration limit reported
+        # as a failed measurement. 200 costs nothing to carry: measured at
+        # 128 live connections the container held 263MiB, against a 2Gi
+        # limit and the 266Mi the same pod used at 64.
         #
         # Raising the limit without raising the request leaves scheduling
         # untouched: only requests are reserved, so this still fits a cluster
