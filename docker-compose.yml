@@ -46,6 +46,11 @@ services:
       - "max_wal_senders=10"
       - "-c"
       - "max_replication_slots=10"
+      # Matches k8s/postgres-source/statefulset.yaml, where the reasoning is.
+      # The default of 100 turns a 128 client benchmark arm into a connection
+      # error rather than a measurement.
+      - "-c"
+      - "max_connections=200"
     ports:
       - "5432:5432"
     volumes:
