@@ -105,6 +105,7 @@ SUBMIT = r"""
 spark-submit --master spark://spark-master:7077 \
   --conf spark.driver.host=$(hostname -i | cut -d" " -f1) \
   --conf spark.driver.bindAddress=0.0.0.0 \
+  --conf spark.log.level=WARN \
   --conf spark.executor.memory=1g \
   --conf spark.executor.cores=1 \
   --conf spark.hadoop.fs.s3a.endpoint=${SEAWEEDFS_ENDPOINT:-http://seaweedfs:9000} \
