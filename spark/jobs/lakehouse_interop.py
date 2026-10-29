@@ -41,7 +41,15 @@ def emit(spark, **extra):
 def main():
     step = sys.argv[1]
     spark = SparkSession.builder.appName(f"interop-{step}").getOrCreate()
-    spark.sparkContext.setLogLevel("ERROR")
+    # WARN, not ERROR. ERROR silences the one line that explains a submit
+    # which hangs instead of failing:
+    #
+    #   WARN TaskSchedulerImpl: Initial job has not accepted any resources
+    #
+    # A master with no usable workers logs that every 15s and waits
+    # forever. Under ERROR the run printed nothing at all until it timed
+    # out -- ten minutes of silence on a cluster whose workers were gone.
+    spark.sparkContext.setLogLevel("WARN")
 
     if step == "create":
         spark.sql(f"DROP TABLE IF EXISTS {TABLE}")

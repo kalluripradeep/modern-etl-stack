@@ -126,9 +126,9 @@ jobs:
         run: python scripts/ci/test_ladder_liveness.py
       - name: Verify the interop runner streams Spark output
         # A submit that cannot get workers waits rather than failing, logging
-        # "has not accepted any resources" every fifteen seconds. Capturing
-        # that gave a run which printed its step heading and then nothing for
-        # ten minutes, with the explanation discarded at the end (#193).
+        # "has not accepted any resources" every fifteen seconds. That output
+        # is streamed rather than captured, so a stalled submit explains
+        # itself while it is still stalled (#193).
         run: python scripts/ci/test_interop_spark_runner.py
       - name: Verify the connector's TASK state is what gets checked
         # Kafka Connect reports the CONNECTOR as RUNNING while its task is
@@ -145,6 +145,13 @@ jobs:
         # (#192). The count depends on the host's disk, so it cannot be
         # reproduced on a laptop with room to spare.
         run: python scripts/ci/test_seaweedfs_volume_slots.py
+      - name: Verify Spark is not run at a level that hides the stall warning
+        # The stall line above is logged at WARN. The interop job set
+        # setLogLevel("ERROR"), which filtered it out at the source -- so
+        # streaming the output showed nothing, because nothing was emitted.
+        # Measured against a master with no workers: ERROR gave 0 warnings in
+        # 75s, WARN gave one every 15s (#193).
+        run: python scripts/ci/test_spark_log_level.py
 
   type-check:
     runs-on: ubuntu-latest
