@@ -1,0 +1,70 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: spark-worker
+  namespace: etl
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: spark-worker
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        # Percentage of the container's CPU *request* (500m), not its limit.
+        # A worker running one executor sits well above this, which is the
+        # intent: the ceiling worth raising is how many submissions can be
+        # served at once, not how hard one worker is driven.
+        averageUtilization: 70
+  behavior:
+    scaleUp:
+      # Workers are cheap to add and only help once registered with the
+      # master, so there is no reason to add them slowly.
+      stabilizationWindowSeconds: 30
+      policies:
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+    scaleDown:
+      # Removing a worker kills the executors running on it. Spark retries
+      # the lost tasks, but a job that loses executors repeatedly fails, so
+      # scale-down is deliberately slow: five minutes of sustained low load
+      # before the first pod goes, then one at a time.
+      #
+      # The default is 300s here too, but it is stated rather than inherited
+      # because the whole risk of this object lives in this one field.
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Pods
+        value: 1
+        periodSeconds: 120
+---
+# WHAT THIS DOES AND DOES NOT DO
+#
+# Spark runs here with static allocation -- spark.dynamicAllocation is not
+# set anywhere in this repo. Executors are assigned to an application when it
+# is submitted, so a worker that appears afterwards does not join a running
+# job. It serves the NEXT submission.
+#
+# That is still worth having, because every spark_transform_silver DAG run is
+# a new application: sustained pipeline load is exactly the case this helps.
+# But it will not rescue one slow job, and anyone expecting that will file a
+# bug against a thing working as designed.
+#
+# Making scale-up reach a running job needs spark.dynamicAllocation.enabled
+# with shuffleTracking.enabled, since standalone mode has no external shuffle
+# service. That is a separate change with its own failure modes.
+#
+# WHY THE DEPLOYMENT NO LONGER PINS replicas
+#
+# k8s/deploy.sh runs `kubectl apply -f k8s/spark/`. A Deployment that declares
+# spec.replicas has that value reapplied on every deploy, so an autoscaler
+# that had grown the tier to 5 would be reset to 2 by the next run and then
+# have to climb back. Omitting the field leaves the count to whoever is
+# managing it -- here, this object, whose minReplicas carries the floor the
+# Deployment used to state.

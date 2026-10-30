@@ -158,6 +158,13 @@ jobs:
         # anything. Set in k8s and compose alike, because a value set on one
         # side only is the shape the volume-slot bug had (#192, #188).
         run: python scripts/ci/test_source_max_connections.py
+      - name: Verify the autoscaled Spark worker tier is wired correctly
+        # deploy.sh reapplies k8s/spark/, so a Deployment that pins
+        # spec.replicas resets a tier the HPA had grown. Measured: pinned,
+        # 5 -> redeploy -> 2; unpinned, 5 -> redeploy -> 5. Also checks the
+        # CPU target has a request to be a percentage of, and that
+        # scale-down is slow enough not to evict running executors (#188).
+        run: python scripts/ci/test_spark_worker_hpa.py
 
   type-check:
     runs-on: ubuntu-latest
