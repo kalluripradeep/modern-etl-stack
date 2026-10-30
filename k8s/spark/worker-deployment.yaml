@@ -4,7 +4,10 @@ metadata:
   name: spark-worker
   namespace: etl
 spec:
-  replicas: 2   # increase replicas for more parallelism on large datasets
+  # No replicas here on purpose. worker-hpa.yaml manages the count, and
+  # deploy.sh reapplies this file on every deploy -- a pinned value would
+  # reset an autoscaled tier back to it each time. minReplicas: 2 in the
+  # HPA carries the floor this line used to state.
   selector:
     matchLabels:
       app: spark-worker

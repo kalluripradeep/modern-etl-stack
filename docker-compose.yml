@@ -51,6 +51,14 @@ services:
       # error rather than a measurement.
       - "-c"
       - "max_connections=200"
+      # Also from the statefulset: the source ran the 128MB shared_buffers
+      # default, and work_mem is deliberately left at its default here --
+      # the destination's 64MB is sized for a few bulk-load connections, not
+      # for 200.
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "effective_cache_size=1536MB"
     ports:
       - "5432:5432"
     volumes:
