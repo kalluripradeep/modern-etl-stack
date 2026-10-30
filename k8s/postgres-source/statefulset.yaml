@@ -46,6 +46,40 @@ spec:
         - max_wal_senders=10
         - -c
         - max_connections=200
+        # Memory settings, which this container was never given. The
+        # destination has set shared_buffers since it was written; the source
+        # never did, so it ran the 128MB default whatever the limit below
+        # said.
+        #
+        # Measured before shipping this, because the obvious assumption is
+        # wrong. 128 pgbench clients on a scale 20 set, the two settings run
+        # sequentially so they did not compete for CPU:
+        #
+        #     shared_buffers=128MB (default)   1918 tps   645MiB peak
+        #     shared_buffers=256MB             1890 tps   795MiB peak
+        #
+        # So this buys nothing on this workload and should not be sold as a
+        # tuning win. The source takes writes, and writes go through WAL
+        # rather than shared_buffers; the ladder has found CPU binding at
+        # every limit so far and this does not change that. It is here so the
+        # server is sized to the container it runs in and matches the
+        # destination -- not because it made anything faster.
+        #
+        # work_mem is deliberately NOT copied from the destination. There it
+        # is 64MB, which suits a handful of dbt connections doing bulk loads.
+        # Here max_connections is 200, and work_mem is allocated per sort per
+        # connection, so the same value is a worst case many times this
+        # container's limit. pgbench does not sort, so the 4MB default costs
+        # the benchmark nothing and keeps the ceiling an honest one.
+        #
+        # effective_cache_size is a planner hint, not an allocation. Postgres
+        # defaults it to 4GB, which tells the planner this container has twice
+        # the memory it is allowed, so index scans price in cache that cannot
+        # exist. 1536MB is the limit less shared_buffers.
+        - -c
+        - shared_buffers=256MB
+        - -c
+        - effective_cache_size=1536MB
         # Every order in the stack is written here first, so this container's
         # CPU limit is the ceiling on the whole pipeline's ingest rate, and it
         # has now been measured at three values with scripts/bench/ladder.sh:
@@ -87,9 +121,17 @@ spec:
         # untouched: only requests are reserved, so this still fits a cluster
         # that could run the old value. A node with fewer than 4 spare cores
         # simply never reaches the limit -- it is a ceiling, not a demand.
+        #
+        # The memory request is the exception, and it does change scheduling.
+        # It was 256Mi against a measured 645MiB peak at 128 clients -- so the
+        # pod has been running far above what it is promised, which is what
+        # decides the order things get evicted in when a node runs short. That
+        # was already true before the settings above; they move the peak to
+        # 795MiB. 1Gi covers the measurement with room and still asks for half
+        # of what the limit allows.
         resources:
           requests:
-            memory: "256Mi"
+            memory: "1Gi"
             cpu: "250m"
           limits:
             memory: "2Gi"
