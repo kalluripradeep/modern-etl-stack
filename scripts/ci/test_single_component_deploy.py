@@ -52,9 +52,10 @@ def render_body():
     """The body of render_manifests(), by brace matching at column 0."""
     lines = text().splitlines()
     start = next(
-        i for i, l in enumerate(lines) if l.startswith("render_manifests() {")
+        i for i, line in enumerate(lines)
+        if line.startswith("render_manifests() {")
     )
-    end = next(i for i, l in enumerate(lines[start:], start) if l == "}")
+    end = next(i for i, line in enumerate(lines[start:], start) if line == "}")
     return "\n".join(lines[start + 1:end]), start, end
 
 
@@ -71,11 +72,11 @@ def test_every_rewrite_lives_inside_the_renderer():
     lines = text().splitlines()
     for rewrite in REWRITES:
         outside = [
-            (i + 1, l) for i, l in enumerate(lines)
-            if rewrite in l
+            (i + 1, line) for i, line in enumerate(lines)
+            if rewrite in line
             and not (start < i < end)
-            and not l.strip().startswith("#")
-            and "$TMP_K8S" in l
+            and not line.strip().startswith("#")
+            and "$TMP_K8S" in line
         ]
         assert not outside, (
             f"deploy.sh rewrites {rewrite!r} on the temp copy outside "
