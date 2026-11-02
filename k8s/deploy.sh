@@ -30,6 +30,100 @@ ok()    { echo -e "${GREEN}[OK]${NC}    $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 
+# ─── Rendering the manifests ──────────────────────────────────────────────────
+# The committed manifests are templates, not the thing that gets applied: this
+# rewrites storageClassName, the registry, and the Airflow secret key into a
+# temp copy first. Both the full deploy and the single-component path below go
+# through here, so one component gets exactly the substitutions the full deploy
+# made. Add a rewrite here and both paths get it by construction --
+# scripts/ci/test_single_component_deploy.py fails the build if one appears
+# outside this function, because a rewrite only the full deploy knows about is
+# how the two silently diverge.
+#
+# Reads STORAGE_CLASS and REGISTRY_FOR_REPLACE; sets TMP_K8S.
+render_manifests() {
+  TMP_K8S=$(mktemp -d)
+  cp -r "$REPO_ROOT/k8s"/* "$TMP_K8S/"
+
+  if [ -n "${REGISTRY_FOR_REPLACE:-}" ]; then
+    # Apply the registry change to the temporary file
+    sed -i "s|YOUR_REGISTRY/airflow-etl|${REGISTRY_FOR_REPLACE}/airflow-etl|g" "$TMP_K8S/airflow/helm-values.yaml" 2>/dev/null || perl -pi -e "s|YOUR_REGISTRY/airflow-etl|${REGISTRY_FOR_REPLACE}/airflow-etl|g" "$TMP_K8S/airflow/helm-values.yaml"
+    sed -i "s|image: data-dashboard:latest|image: ${REGISTRY_FOR_REPLACE}/data-dashboard:latest|g" "$TMP_K8S/ui/deployment.yaml" 2>/dev/null || perl -pi -e "s|image: data-dashboard:latest|image: ${REGISTRY_FOR_REPLACE}/data-dashboard:latest|g" "$TMP_K8S/ui/deployment.yaml"
+  fi
+
+  # Replace any hardcoded storageClassName values with the chosen one
+  find "$TMP_K8S" -type f -name "*.yaml" -exec perl -pi -e "s/storageClassName: .*/storageClassName: ${STORAGE_CLASS}/g" {} +
+  # Strimzi persistent-claim storage uses `class:` instead of storageClassName
+  perl -pi -e "s/^(\s*)class: .*/\${1}class: ${STORAGE_CLASS}/" "$TMP_K8S/kafka/kafka-cluster.yaml"
+
+  # Use the randomized Airflow webserver secret key when generated secrets exist
+  # (falls back to the placeholder in helm-values.yaml otherwise)
+  if [ -f "$REPO_ROOT/k8s/01-secrets.generated.yaml" ]; then
+    WSK=$(awk '/AIRFLOW_WEBSERVER_SECRET_KEY:/ {print $2}' "$REPO_ROOT/k8s/01-secrets.generated.yaml")
+    if [ -n "$WSK" ]; then
+      perl -pi -e "s|webserverSecretKey: .*|webserverSecretKey: \"$WSK\"|" "$TMP_K8S/airflow/helm-values.yaml"
+    fi
+  fi
+}
+
+# ─── Redeploying one component ────────────────────────────────────────────────
+#   bash k8s/deploy.sh postgres-source
+#
+# Because of the rewriting above, the committed manifests cannot be applied
+# directly to a cluster this script built. Doing so fails with
+#
+#   The StatefulSet "postgres-source" is invalid: spec: Forbidden: updates to
+#   statefulset spec for fields other than 'replicas', ... are forbidden
+#
+# -- the file says storageClassName: standard, the live object has whatever
+# this script wrote, and volumeClaimTemplates is immutable. The error names
+# every field you may change and not the one that differs, so it reads like a
+# bug in the manifest rather than a rendering step you skipped.
+#
+# Without this path the only way to push one component's change was a
+# hand-written kubectl patch. That is how a max_connections fix sat unapplied
+# on a cluster for four days while the benchmark needing it failed the same
+# way every run, and how two of the patches written to work around it were
+# wrong (#188).
+COMPONENT="${1:-}"
+if [ -n "$COMPONENT" ]; then
+  command -v kubectl >/dev/null || error "kubectl not found"
+  [ -d "$REPO_ROOT/k8s/$COMPONENT" ] || error "no such component: k8s/$COMPONENT
+          try one of: $(cd "$REPO_ROOT/k8s" && ls -d */ | tr -d / | tr '
+' ' ')"
+
+  # The class has to match what the cluster already uses, or the apply fails
+  # the same way for the same reason. Prefer what is live over re-detecting:
+  # the operator may have typed a class the default-detection would not pick.
+  # This script writes one class across every manifest, so any PVC answers it.
+  if [ -z "${STORAGE_CLASS:-}" ]; then
+    STORAGE_CLASS=$(kubectl get pvc -n "$NAMESPACE" -o jsonpath='{.items[*].spec.storageClassName}' 2>/dev/null       | tr ' ' '
+' | grep -v '^$' | sort -u | head -1 || true)
+    [ -n "${STORAGE_CLASS:-}" ] && info "Using the StorageClass already in the cluster: $STORAGE_CLASS"
+  fi
+  if [ -z "${STORAGE_CLASS:-}" ]; then
+    STORAGE_CLASS=$(kubectl get sc -o jsonpath='{.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}' 2>/dev/null || true)
+    STORAGE_CLASS=${STORAGE_CLASS:-standard}
+    warn "No PVCs found to read the StorageClass from; using '$STORAGE_CLASS'."
+  fi
+
+  # Redeploying ui or airflow needs the registry too, since their manifests
+  # carry an image reference the full deploy rewrites.
+  export REGISTRY_FOR_REPLACE="${REGISTRY:-}"
+  case "$COMPONENT" in
+    ui|airflow)
+      [ -n "${REGISTRY:-}" ] || warn "REGISTRY is not set, so the image reference is left as-is.
+          Re-run as: REGISTRY=docker.io/you bash k8s/deploy.sh $COMPONENT" ;;
+  esac
+
+  render_manifests
+  info "Applying k8s/$COMPONENT to namespace $NAMESPACE..."
+  kubectl apply -f "$TMP_K8S/$COMPONENT/"
+  ok "Applied k8s/$COMPONENT. Watch it settle with:"
+  echo "  kubectl -n $NAMESPACE rollout status statefulset,deployment -l app --timeout=180s"
+  exit 0
+fi
+
 # ─── Step 0: Check prerequisites ─────────────────────────────────────────────
 info "Checking prerequisites..."
 command -v kubectl >/dev/null || error "kubectl not found"
@@ -115,28 +209,7 @@ STORAGE_CLASS=${STORAGE_CLASS:-$DEFAULT_SC}
 info "Using StorageClass: $STORAGE_CLASS"
 
 info "Preparing temporary manifests with chosen StorageClass..."
-TMP_K8S=$(mktemp -d)
-cp -r "$REPO_ROOT/k8s"/* "$TMP_K8S/"
-
-if [ -n "${REGISTRY_FOR_REPLACE:-}" ]; then
-  # Apply the registry change to the temporary file
-  sed -i "s|YOUR_REGISTRY/airflow-etl|${REGISTRY_FOR_REPLACE}/airflow-etl|g" "$TMP_K8S/airflow/helm-values.yaml" 2>/dev/null || perl -pi -e "s|YOUR_REGISTRY/airflow-etl|${REGISTRY_FOR_REPLACE}/airflow-etl|g" "$TMP_K8S/airflow/helm-values.yaml"
-  sed -i "s|image: data-dashboard:latest|image: ${REGISTRY_FOR_REPLACE}/data-dashboard:latest|g" "$TMP_K8S/ui/deployment.yaml" 2>/dev/null || perl -pi -e "s|image: data-dashboard:latest|image: ${REGISTRY_FOR_REPLACE}/data-dashboard:latest|g" "$TMP_K8S/ui/deployment.yaml"
-fi
-
-# Replace any hardcoded storageClassName values with the chosen one
-find "$TMP_K8S" -type f -name "*.yaml" -exec perl -pi -e "s/storageClassName: .*/storageClassName: ${STORAGE_CLASS}/g" {} +
-# Strimzi persistent-claim storage uses `class:` instead of storageClassName
-perl -pi -e "s/^(\s*)class: .*/\${1}class: ${STORAGE_CLASS}/" "$TMP_K8S/kafka/kafka-cluster.yaml"
-
-# Use the randomized Airflow webserver secret key when generated secrets exist
-# (falls back to the placeholder in helm-values.yaml otherwise)
-if [ -f "$REPO_ROOT/k8s/01-secrets.generated.yaml" ]; then
-  WSK=$(awk '/AIRFLOW_WEBSERVER_SECRET_KEY:/ {print $2}' "$REPO_ROOT/k8s/01-secrets.generated.yaml")
-  if [ -n "$WSK" ]; then
-    perl -pi -e "s|webserverSecretKey: .*|webserverSecretKey: \"$WSK\"|" "$TMP_K8S/airflow/helm-values.yaml"
-  fi
-fi
+render_manifests
 
 # ─── Step 2: Namespace + Secrets + ConfigMaps ─────────────────────────────────
 echo ""
