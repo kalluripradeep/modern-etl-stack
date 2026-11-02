@@ -167,6 +167,14 @@ jobs:
         # CPU target has a request to be a percentage of, and that
         # scale-down is slow enough not to evict running executors (#188).
         run: python scripts/ci/test_spark_worker_hpa.py
+      - name: Verify one component can be redeployed without the full stack
+        # deploy.sh renders the manifests before applying them, so a committed
+        # file cannot be applied to a cluster it built: volumeClaimTemplates is
+        # immutable and its storageClassName was rewritten. Reproduced against
+        # a live API server. Both the full deploy and `deploy.sh <component>`
+        # go through render_manifests so they cannot drift; this fails the
+        # build if a rewrite appears outside it (#188).
+        run: python scripts/ci/test_single_component_deploy.py
 
   type-check:
     runs-on: ubuntu-latest
