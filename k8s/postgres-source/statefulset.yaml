@@ -60,8 +60,8 @@ spec:
         #
         # So this buys nothing on this workload and should not be sold as a
         # tuning win. The source takes writes, and writes go through WAL
-        # rather than shared_buffers; the ladder has found CPU binding at
-        # every limit so far and this does not change that. It is here so the
+        # rather than shared_buffers; the ladder found CPU binding at every
+        # limit up to 4 and this does not change that. It is here so the
         # server is sized to the container it runs in and matches the
         # destination -- not because it made anything faster.
         #
@@ -82,15 +82,16 @@ spec:
         - effective_cache_size=1536MB
         # Every order in the stack is written here first, so this container's
         # CPU limit is the ceiling on the whole pipeline's ingest rate, and it
-        # has now been measured at three values with scripts/bench/ladder.sh:
+        # has now been measured at four values with scripts/bench/ladder.sh:
         #
         #     limit    knee           ceiling    observed peak CPU
         #     500m     4 clients      212 tps    pegged
         #     2        16 clients     594 tps    1955m -- pegged
         #     4        32 clients     1205 tps   3880m -- pegged
-        #     8        64-128 clients 2897 tps   7271m -- 91 percent
+        #     8        64-128 clients 2897 tps   7271m -- throttled in bursts
         #
-        # Each time the limit has been the thing that bound, never the cluster:
+        # Up to 4 the limit was the thing that bound every time, never the
+        # cluster:
         # at the 2 core reading the nodes were at 9 percent CPU and 15 percent
         # memory. The shape is the giveaway rather than the number. Throughput
         # scales while latency stays flat, then latency doubles per arm for no
@@ -101,14 +102,32 @@ spec:
         # these ceilings has ever been the pipeline.
         #
         # The 8 core reading is the first that does not peg, which is why
-        # this file now says 8. 7271m of 8000m is 91 percent, against 97 and
-        # 98 at the two limits below, and the knee moved out to somewhere
+        # this file says 8. 7271m of 8000m is 91 percent, against 97 and 98
+        # at the two limits below, and the knee moved out to somewhere
         # between 64 and 128 clients -- at 64 throughput was still scaling
-        # with latency flat. What the 91 percent means is not settled yet:
-        # kubectl top reports a rolling average, so a container throttled in
-        # bursts and idle between them reads the same as one genuinely under
-        # its limit. cgroup cpu.stat nr_throttled, before and after an arm,
-        # is the test that tells those apart, and it has not been run.
+        # with latency flat.
+        #
+        # That 91 percent turned out to be two things at once, which is what
+        # a rolling average does. cgroup cpu.stat across a whole four arm
+        # run throttled 924 periods of 4760 -- 19 percent, against a 1.25
+        # percent lifetime baseline -- while averaging 4.65 cores. So the
+        # container does still hit the limit, in bursts, and kubectl top
+        # could not have shown that.
+        #
+        # But throttling is not what bounds the rate. pg_stat_activity
+        # sampled through every arm has the backends queued on
+        # LWLock:WALWrite, with exactly one in IO:WALSync and almost never
+        # more than three actually on CPU:
+        #
+        #     16 clients    LWLock|WALWrite  15   IO|WALSync 1   (on cpu) 1
+        #     64 clients    LWLock|WALWrite  60   IO|WALSync 1   (on cpu) 1
+        #     128 clients   LWLock|WALWrite 127   IO|WALSync 1   (on cpu) 1
+        #
+        # That shape is commit serialisation, not CPU starvation. One
+        # backend holds WALWriteLock through the write and the fsync and
+        # every other backend queues behind it. The ceiling at this limit is
+        # WAL fsync latency on the local-path volume, so 16 cores is not the
+        # next useful step -- the next measurement is on the WAL side.
         #
         # Freshness stayed flat at 5-6s through every arm including 128
         # clients at 2897 tps, five times the 16 client rate. The source has
