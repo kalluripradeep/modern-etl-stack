@@ -88,6 +88,7 @@ spec:
         #     500m     4 clients      212 tps    pegged
         #     2        16 clients     594 tps    1955m -- pegged
         #     4        32 clients     1205 tps   3880m -- pegged
+        #     8        64-128 clients 2897 tps   7271m -- 91 percent
         #
         # Each time the limit has been the thing that bound, never the cluster:
         # at the 2 core reading the nodes were at 9 percent CPU and 15 percent
@@ -99,12 +100,20 @@ spec:
         # Freshness held at 1-2s across every arm at every limit, so none of
         # these ceilings has ever been the pipeline.
         #
-        # The 4 core reading answers the question that row was asking.
-        # 3880m is not short of 4000m, so CPU is still what binds and the
-        # more interesting finding -- WAL or disk -- has not happened yet.
-        # The knee has tracked the limit exactly at every value: 4 clients at
-        # 500m, 16 at 2, 32 at 4. 8 is the next step, and a peak short of
-        # 8000m there is the result worth having.
+        # The 8 core reading is the first that does not peg, which is why
+        # this file now says 8. 7271m of 8000m is 91 percent, against 97 and
+        # 98 at the two limits below, and the knee moved out to somewhere
+        # between 64 and 128 clients -- at 64 throughput was still scaling
+        # with latency flat. What the 91 percent means is not settled yet:
+        # kubectl top reports a rolling average, so a container throttled in
+        # bursts and idle between them reads the same as one genuinely under
+        # its limit. cgroup cpu.stat nr_throttled, before and after an arm,
+        # is the test that tells those apart, and it has not been run.
+        #
+        # Freshness stayed flat at 5-6s through every arm including 128
+        # clients at 2897 tps, five times the 16 client rate. The source has
+        # moved its ceiling four times now and the pipeline has not yet been
+        # the thing that binds.
         #
         # max_connections is set because the ladder cannot reach that step
         # without it. Postgres defaults to 100, and reserves some of those,
@@ -119,7 +128,7 @@ spec:
         #
         # Raising the limit without raising the request leaves scheduling
         # untouched: only requests are reserved, so this still fits a cluster
-        # that could run the old value. A node with fewer than 4 spare cores
+        # that could run the old value. A node with fewer than 8 spare cores
         # simply never reaches the limit -- it is a ceiling, not a demand.
         #
         # The memory request is the exception, and it does change scheduling.
@@ -135,7 +144,7 @@ spec:
             cpu: "250m"
           limits:
             memory: "2Gi"
-            cpu: "4"
+            cpu: "8"
         volumeMounts:
         - name: postgres-source-data
           mountPath: /var/lib/postgresql/data
