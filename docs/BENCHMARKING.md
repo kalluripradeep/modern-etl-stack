@@ -271,6 +271,7 @@ only drifts 24 seconds, which is easy to mistake for noise.
 Start from a settled mirror. This run began roughly 12-20 seconds behind, which
 costs nothing for the growth *rate* but makes the absolute numbers read worse
 than they are.
+
 ## Changing the CPU limit between arms
 
 The ladder's ceiling has moved with `postgres-source`'s CPU limit at every
@@ -313,8 +314,10 @@ for it. Read it back rather than remembering it:
 kubectl get statefulset postgres-source -n etl -o jsonpath='{.spec.template.spec.containers[0].resources.limits.cpu}'
 ```
 
-`kubectl top` reporting 11541m proves the limit was above 8 and nothing more —
-the percentage that makes a reading meaningful comes from this command.
+This is not pedantry. The 16-core run above was read off a `kubectl top` of
+11541m, which on its own proves only that the limit was above 8 — it could
+have been 12, 16 or 32, and the percentage that makes the reading mean
+anything differs in each case.
 
 ## Things that have misled us
 
