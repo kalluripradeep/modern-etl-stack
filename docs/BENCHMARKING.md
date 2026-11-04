@@ -200,6 +200,51 @@ trades the last `wal_writer_delay` of commits on a crash — fine on a benchmark
 source, not on a real one. It does not break Debezium: logical decoding still
 reads flushed WAL, the flush just moves to the WAL writer.
 
+## Changing the CPU limit between arms
+
+The ladder's ceiling has moved with `postgres-source`'s CPU limit at every
+value tested so far, so sweeping that limit is part of running the ladder
+rather than a separate exercise. Patch the live StatefulSet instead of editing
+the manifest — one line, no continuations:
+
+```bash
+kubectl patch statefulset postgres-source -n etl --type=json -p='[{"op":"replace","path":"/spec/template/spec/containers/0/resources/limits/cpu","value":"8"}]'
+```
+
+The value is **cores**, quoted: `"8"` is eight, `"500m"` is half of one.
+Keep it at or below **half the cores on the node**. Postgres shares that node
+with Kafka, Connect, ClickHouse and Spark, and a source permitted to take the
+whole machine stops measuring the source and starts measuring what the kernel
+takes away from everything else. On the 40-core nodes that ceiling is 20.
+
+Two consequences the command does not mention:
+
+- **It rolls the pod**, and the Debezium task does not come back by itself.
+  Restart it before the next arm or the freshness columns will be measuring a
+  dead pipeline:
+
+  ```bash
+  kubectl exec -n etl kafka-connect-0 -- curl -s -X POST localhost:8083/connectors/orders-cdc-connector/tasks/0/restart
+  ```
+
+  Then let the mirror settle before starting a run. A ladder begun straight
+  after a restart reports the tail of the backlog as steady-state freshness.
+
+- **`k8s/deploy.sh` reverts it.** The committed value in
+  `k8s/postgres-source/statefulset.yaml` wins on the next deploy of that
+  component, with no warning that a patch was lost. The patch is for sweeping;
+  a value worth keeping gets committed.
+
+Which means a run is only as trustworthy as the limit that was actually live
+for it. Read it back rather than remembering it:
+
+```bash
+kubectl get statefulset postgres-source -n etl -o jsonpath='{.spec.template.spec.containers[0].resources.limits.cpu}'
+```
+
+`kubectl top` reporting 11541m proves the limit was above 8 and nothing more —
+the percentage that makes a reading meaningful comes from this command.
+
 ## Things that have misled us
 
 - **`kubectl top` is an average.** It cannot distinguish bursty throttling from
