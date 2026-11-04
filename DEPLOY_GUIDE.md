@@ -296,6 +296,12 @@ is Postgres saturating, while `fresh_med_s` growing arm over arm is the
 pipeline falling behind. They are rarely the same arm, and measuring only the
 first is how a pipeline gets called fast while its mirror quietly drifts.
 
+[`docs/BENCHMARKING.md`](docs/BENCHMARKING.md) covers the rest: what each
+column means, which of the three pipelines a ladder run actually exercises
+(only Pipe 3), and the three measurements that tell you what a ceiling is made
+of — cgroup throttling counters, `pg_stat_activity` wait events, and
+`pg_test_fsync`.
+
 ### Step 6 — Open the dashboards
 
 Get your node IP:
@@ -592,12 +598,13 @@ Do **not** apply the raw manifest by hand:
 kubectl apply -f k8s/clickhouse/statefulset.yaml   # will be rejected
 ```
 
-The file carries `storageClassName: standard` and `deploy.sh` rewrites that to your actual StorageClass (`k8s/deploy.sh:128`). Since `volumeClaimTemplates` is immutable, the apply fails with a `Forbidden: updates to statefulset spec for fields other than...` error that names the storage class rather than whatever you were trying to change. To skip a full deploy, patch the pod template only:
+The file carries `storageClassName: standard` and `deploy.sh` rewrites that to your actual StorageClass (`k8s/deploy.sh:128`). Since `volumeClaimTemplates` is immutable, the apply fails with a `Forbidden: updates to statefulset spec for fields other than...` error that names the storage class rather than whatever you were trying to change. To skip a full deploy, redeploy the one component — it renders the manifests the same way and picks up the StorageClass already in the cluster:
 
 ```bash
-kubectl patch statefulset clickhouse -n etl --type=json \
-  -p='[{"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-","value":{"name":"server-config","mountPath":"/etc/clickhouse-server/config.d/<file>.xml","subPath":"<file>.xml"}}]'
+bash k8s/deploy.sh clickhouse
 ```
+
+See *A manifest change does not reach the cluster* below for why a `kubectl patch` is the wrong tool here.
 
 ### Which ClickHouse table is using the space
 
@@ -712,6 +719,142 @@ partition, so the next run repopulates the table from scratch. Check all four
 (`customers`, `products`, `orders`, `order_items`): whichever were first created
 during the period when empty files were present will each carry the same
 damage.
+
+### A manifest change does not reach the cluster, and applying it by hand is Forbidden
+
+`git pull` changes the file. It does not change the running object — nothing in
+your checkout is mounted into the cluster.
+
+Applying the file yourself does not work either:
+
+```bash
+kubectl apply -f k8s/postgres-source/statefulset.yaml   # will be rejected
+```
+
+```text
+Forbidden: updates to statefulset spec for fields other than 'replicas',
+'ordinals', 'template', 'updateStrategy', 'revisionHistoryLimit',
+'persistentVolumeClaimRetentionPolicy' and 'minReadySeconds' are forbidden
+```
+
+The error names `volumeClaimTemplates`, which is probably not what you were
+editing. Every committed manifest carries `storageClassName: standard`, and
+`deploy.sh` rewrites that into a temp copy before applying
+(`k8s/deploy.sh:128`). So on a cluster that `deploy.sh` built, the committed
+file never matches the live object, `volumeClaimTemplates` is immutable, and
+the apply is rejected over the one field you did not touch.
+
+Redeploy the single component instead — it renders the same way the full
+deploy does and detects the StorageClass already in the cluster:
+
+```bash
+bash k8s/deploy.sh postgres-source
+```
+
+Prefer this to `kubectl patch`. A patch sets the one field you name and leaves
+every other field at whatever the live object already had, so a manifest change
+beside it is silently not applied — and on a StatefulSet it rolls the pod,
+which takes the Debezium task down with it (see below).
+
+### The mirror stopped updating, but the connector says RUNNING
+
+Kafka Connect reports the **connector** and its **task** separately, and only
+the task does any work. If the task dies — a pod restart is enough — it goes
+`FAILED` and stays there, because Connect does not retry a failed task, while
+the connector goes on reporting `RUNNING`. A cluster ran for a day on exactly
+that: a mirror nothing was writing to, and every status check saying RUNNING.
+
+```bash
+kubectl exec -n etl kafka-connect-0 -- curl -s localhost:8083/connectors/orders-cdc-connector/status
+```
+
+**Read the second `"state"` in the reply.** The first is the connector's and is
+almost always `RUNNING`; the one after it, inside `tasks`, is the real answer.
+
+```bash
+kubectl exec -n etl kafka-connect-0 -- curl -s -X POST localhost:8083/connectors/orders-cdc-connector/tasks/0/restart
+```
+
+The mirror catches up on its own from the retained log. `ladder.sh` refuses to
+benchmark against a mirror in this state, because freshness measured against a
+stopped pipeline is just the age of the last row it managed to write.
+
+### Every write to object storage returns HTTP 500
+
+boto3 reports it as `ClientError: ... (InternalError) when calling the
+PutObject operation`, s3a as `AWSStatus500Exception`, and Spark buries either
+one in a stack trace that reads like an Iceberg problem. It is a quota.
+
+SeaweedFS caps how many volumes a node may create. `-volume.max=0` does **not**
+mean unlimited — `weed server -h` is explicit that zero is "free disk space
+divided by volume size", and volume size defaults to 30GB, so a 52GB node gets
+two slots. Each bucket is its own collection needing its own volumes, grown
+seven at a time, so two slots serve no bucket at all (#192).
+
+**Listing the buckets does not test this.** A bucket is only a directory in the
+filer and costs no volume, so `s3.bucket.list` reports it whether or not
+anything can be written. Probe it with a write instead — the filer takes an
+ordinary PUT over localhost and needs no credentials:
+
+```bash
+kubectl exec -n etl seaweedfs-0 -- sh -c 'echo probe > /tmp/.probe; for b in bronze silver airflow-logs; do printf "%s " "$b"; curl -s -o /dev/null -w "%{http_code}\n" -F file=@/tmp/.probe "http://localhost:8888/buckets/$b/.probe"; done'
+```
+
+Anything other than a 2xx is the quota. `scripts/ci/test_seaweedfs_volume_slots.py`
+guards the configured slot count, which is why this is worth a guard rather
+than a note: it cannot be reproduced on a laptop with disk to spare.
+
+### A Spark submit prints a step heading and then nothing
+
+A submit that cannot get workers does not fail — it waits. It is not silent
+about it either: `TaskSchedulerImpl` logs
+
+```text
+WARN TaskSchedulerImpl: Initial job has not accepted any resources;
+check your cluster UI to ensure that workers are registered
+```
+
+every fifteen seconds for as long as it waits. That line is the whole
+diagnosis, and it is logged at **WARN** — so a job that sets its own log level
+to `ERROR` filters out the one message that explains the hang, and produces ten
+minutes of silence instead. Streaming the output does not help, because the
+line is never emitted.
+
+Read the logs from the pod while it is still running rather than waiting for
+the step to return:
+
+```bash
+kubectl logs -n etl -f <spark-driver-pod>
+```
+
+If the warning is there, the workers are gone — check them before looking at
+the job. If there is no output at all, check the job's own `setLogLevel`
+before concluding anything; `scripts/ci/test_spark_log_level.py` guards
+against it being set above WARN again.
+
+### A DAG run stays queued although the DAG is unpaused
+
+Different cause from the paused case above, same symptom and the same absence
+of an error.
+
+Both DAGs set `max_active_runs=1`, so a run that never reaches a terminal state
+holds the only slot for good and every later run queues behind it. #144 hit
+exactly that: a run sat in `running` for nine days after a state mismatch, and
+the lakehouse quietly stopped being built. A queued run is not an error, so
+there is nothing to find in any log.
+
+```bash
+kubectl exec -n etl deploy/airflow-scheduler -- airflow dags list-runs -d ingest_source_to_bronze --state running
+```
+
+(Confirm the flag form with `airflow dags list-runs --help` — it has moved
+between Airflow versions. The Browse → DAG Runs view filtered to `running`
+answers the same question.)
+
+Clear the stuck run and the queue drains on its own. Deployments from this repo
+set `dagrun_timeout=timedelta(hours=2)`, which makes the scheduler fail a
+zombie run the same day instead of waiting on it forever — but a cluster
+deployed before that still needs clearing by hand.
 
 ### A test step fails
 
