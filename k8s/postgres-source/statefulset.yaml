@@ -125,9 +125,31 @@ spec:
         #
         # That shape is commit serialisation, not CPU starvation. One
         # backend holds WALWriteLock through the write and the fsync and
-        # every other backend queues behind it. The ceiling at this limit is
-        # WAL fsync latency on the local-path volume, so 16 cores is not the
-        # next useful step -- the next measurement is on the WAL side.
+        # every other backend queues behind it.
+        #
+        # pg_test_fsync on the local-path volume puts fdatasync at 207
+        # ops/sec, 4825 usec each. At 2865 tps that is 14 commits riding
+        # every flush, so group commit is already doing the heavy lifting
+        # and the WALWrite queue is backends waiting on the flush in
+        # progress.
+        #
+        # Taking fsync out of the path settles how much of the ceiling it
+        # owns. One 128 client arm:
+        #
+        #     synchronous_commit=on    2865 tps   44.7 ms   7271m
+        #     synchronous_commit=off   3702 tps   34.6 ms   7962m
+        #
+        # 1.29x, and CPU lands on 7962m of 8000m -- 99.5 percent, pegged
+        # for the first time at this limit. So the two ceilings sit close
+        # together: fsync is worth 29 percent, and the moment it stops
+        # binding, cores do. Which also means 3702 is not the fsync free
+        # ceiling, only where CPU caught it, so what faster storage alone
+        # would buy is still unmeasured. Separating them takes an arm at 16
+        # cores with synchronous_commit=off.
+        #
+        # synchronous_commit=off is a measurement here, not a setting this
+        # stack runs. It trades the last wal_writer_delay of commits on a
+        # crash, which a benchmark source can afford and a real one cannot.
         #
         # Freshness stayed flat at 5-6s through every arm including 128
         # clients at 2897 tps, five times the 16 client rate. The source has
