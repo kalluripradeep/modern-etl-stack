@@ -171,12 +171,29 @@ kubectl exec -n etl postgres-source-0 -- psql -U sourceuser -d sourcedb -c "alte
 | `synchronous_commit=off` | 3,702 | 34.6 ms | 7962m |
 
 1.29x — and CPU lands on 7962m of 8000m, pegged for the first time at that
-limit. So the two ceilings sit close together: fsync is worth 29%, and the
-moment it stops binding, cores do.
+limit. So at 8 cores fsync was worth 29%, and the moment it stopped binding,
+cores did.
 
-Which also means 3,702 is **not** the fsync-free ceiling, only where CPU caught
-it. Separating them takes an arm at a higher CPU limit with
-`synchronous_commit=off`.
+### Which of the two mattered more
+
+Raising the CPU limit settled it. At 16 cores, with fsync back in the path:
+
+| limit | tps | lat | CPU |
+|---|---|---|---|
+| 8 | 2,865 | 44.7 ms | 7271m of 8000m — 91% |
+| 16 | 6,001 | 21.3 ms | 11541m of 16000m — 72% |
+
+2.09x the throughput at **half** the latency, and the first reading with real
+headroom under the limit. So CPU was the binding constraint at 8 cores after
+all, and the queue on `LWLock:WALWrite` was substantially a symptom of it — a
+backend that is throttled while holding the lock stalls every backend behind
+it.
+
+The reason 207 flushes a second never capped throughput is **group commit**.
+The batch grows with concurrency: 14 commits rode each flush at 2,865 tps, 29
+at 6,001. The fsync rate sets a floor on commit latency, not a ceiling on
+throughput, which is why reasoning from `ops/sec` straight to a tps limit gets
+it wrong.
 
 `synchronous_commit=off` is a measurement, not a setting this stack runs. It
 trades the last `wal_writer_delay` of commits on a crash — fine on a benchmark
@@ -189,10 +206,19 @@ reads flushed WAL, the flush just moves to the WAL writer.
   a genuine sub-limit ceiling. Use `nr_throttled`.
 - **`throttled_usec` is summed per runqueue.** 117s over a 476s run is not 25%
   of wall clock.
+- **A long `LWLock:WALWrite` queue is not proof that WAL bounds the rate.**
+  Backends queue there whenever commits are serialised, including when the
+  backend holding the lock is itself being throttled. Read it together with
+  `nr_throttled`, and with what happens when the CPU limit moves.
 - **A stopped pipeline does not read as zero freshness.** `max(updated_at)`
   simply stops moving, so lag climbs at one second per second and lands in the
   table as an ordinary-looking number. `ladder.sh` proves the mirror is live
   before measuring anything against it, and aborts if it is not.
+- **That liveness check proves a write lands, not that the mirror has caught
+  up.** A run started immediately after a failed Connect task is restarted can
+  report the tail of the backlog as steady-state freshness. Let the mirror
+  settle first, or re-run the arm before believing a freshness number that
+  jumped.
 - **The row picker is part of the measurement.** `orders.sql` picks its rows
   with `ORDER BY random() LIMIT 1` on `customers` and `products`, twice per
   transaction. Its comment calls that "noise next to the write", which was
