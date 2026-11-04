@@ -102,8 +102,8 @@ spec:
         # Freshness held at 1-2s across every arm at every limit, so none of
         # these ceilings has ever been the pipeline.
         #
-        # The 8 core reading is the first that does not peg, which is why
-        # this file says 8. 7271m of 8000m is 91 percent, against 97 and 98
+        # The 8 core reading is the first that does not peg. 7271m of
+        # 8000m is 91 percent, against 97 and 98
         # at the two limits below, and the knee moved out to somewhere
         # between 64 and 128 clients -- at 64 throughput was still scaling
         # with latency flat.
@@ -175,6 +175,14 @@ spec:
         # a second against a source that can now produce 6400. Raising this
         # limit again moves a ceiling that is no longer the one in the way.
         #
+        # Which is why this file says 16 rather than 8 or 32. 8 cannot
+        # outrun the pipeline -- at 2865 tps it sits below Pipe 3's rate,
+        # so the pipeline never shows up as the constraint and four
+        # ladders in a row concluded the source was. 16 clears it with
+        # room, which is what makes Pipe 3 measurable at all. Higher buys
+        # a ceiling nothing is pressing against, and 16 stays inside the
+        # rule that this does not exceed half a node's cores.
+        #
         # max_connections is set because the ladder cannot reach that step
         # without it. Postgres defaults to 100, and reserves some of those,
         # so a 128 client arm fails at client 89 with
@@ -204,7 +212,7 @@ spec:
             cpu: "250m"
           limits:
             memory: "2Gi"
-            cpu: "8"
+            cpu: "16"
         volumeMounts:
         - name: postgres-source-data
           mountPath: /var/lib/postgresql/data
