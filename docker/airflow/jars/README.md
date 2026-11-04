@@ -15,7 +15,7 @@ fetched normally.
 
 Download these on a machine with access, then copy them into this directory:
 
-```
+```text
 hadoop-aws-3.3.4.jar
   https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar
 

@@ -51,7 +51,7 @@ That identity is why a knee looks the way it does. Past saturation the server
 cannot raise tps, so every added client comes out as latency instead. Reading
 the two columns together is the whole diagnosis:
 
-```
+```text
 clients   tps    lat_ms
  16        559    28.6
  32       1138    28.1     throughput doubling, latency flat     -> headroom
@@ -92,7 +92,7 @@ kubectl exec -n etl postgres-source-0 -- sh -c 'cat /sys/fs/cgroup/cpu.stat 2>/d
 
 Worked example, four arms at 120s against an 8-core limit:
 
-```
+```text
 nr_periods     74,065 -> 78,825     delta 4,760 periods = 476s  (the run was 480s)
 nr_throttled      928 ->  1,852     delta 924 = 19.4% of periods
 usage_usec  3,396,535 -> 5,609,110  delta 2,212s CPU = 4.65 cores averaged
@@ -121,7 +121,7 @@ kubectl exec -n etl postgres-source-0 -- psql -U sourceuser -d sourcedb -tAc "se
 
 The measured shape at every arm:
 
-```
+```text
  16 clients   LWLock|WALWrite  15   IO|WALSync 1   (on cpu) 1
  64 clients   LWLock|WALWrite  60   IO|WALSync 1   (on cpu) 1
 128 clients   LWLock|WALWrite 127   IO|WALSync 1   (on cpu) 1
@@ -142,7 +142,7 @@ one that matters — it is Linux's default `wal_sync_method`.
 
 On the `local-path` volume:
 
-```
+```text
 fdatasync   207.237 ops/sec   4825 usecs/op
 fsync        64.541 ops/sec  15494 usecs/op
 ```
@@ -205,7 +205,7 @@ reads flushed WAL, the flush just moves to the WAL writer.
 Every ladder up to this point measured the source. At a 16-core limit the
 source stopped being the interesting half.
 
-```
+```text
 clients   tps    lat_ms   fresh_med_s   fresh_max_s
  32      5912      5.4         22            32
  64      6181     10.4         51            57
@@ -220,7 +220,7 @@ ceiling is about 6,400 tps.
 
 The cgroup counters confirm CPU is not what holds it there:
 
-```
+```text
 nr_periods    578 ->  5,074    delta 4,496 periods = 450s
 nr_throttled    0 ->      2    delta 2 = 0.04% of periods
 usage_usec  10.3M -> 4,110.4M  delta 4,100s CPU = 11.4 cores over the 360s of load
@@ -237,7 +237,7 @@ That rate is what converts into a number for Pipe 3. If lag grows at `r`
 seconds per second while the source produces `I` rows per second, the mirror is
 consuming `I x (1 - r)`:
 
-```
+```text
  64 clients   6181 tps   r=0.21   -> ~4,900 rows/s
 128 clients   6374 tps   r=0.28   -> ~4,600 rows/s
 ```
