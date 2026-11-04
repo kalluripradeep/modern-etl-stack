@@ -51,7 +51,7 @@ That identity is why a knee looks the way it does. Past saturation the server
 cannot raise tps, so every added client comes out as latency instead. Reading
 the two columns together is the whole diagnosis:
 
-```
+```text
 clients   tps    lat_ms
  16        559    28.6
  32       1138    28.1     throughput doubling, latency flat     -> headroom
@@ -92,7 +92,7 @@ kubectl exec -n etl postgres-source-0 -- sh -c 'cat /sys/fs/cgroup/cpu.stat 2>/d
 
 Worked example, four arms at 120s against an 8-core limit:
 
-```
+```text
 nr_periods     74,065 -> 78,825     delta 4,760 periods = 476s  (the run was 480s)
 nr_throttled      928 ->  1,852     delta 924 = 19.4% of periods
 usage_usec  3,396,535 -> 5,609,110  delta 2,212s CPU = 4.65 cores averaged
@@ -121,7 +121,7 @@ kubectl exec -n etl postgres-source-0 -- psql -U sourceuser -d sourcedb -tAc "se
 
 The measured shape at every arm:
 
-```
+```text
  16 clients   LWLock|WALWrite  15   IO|WALSync 1   (on cpu) 1
  64 clients   LWLock|WALWrite  60   IO|WALSync 1   (on cpu) 1
 128 clients   LWLock|WALWrite 127   IO|WALSync 1   (on cpu) 1
@@ -142,7 +142,7 @@ one that matters — it is Linux's default `wal_sync_method`.
 
 On the `local-path` volume:
 
-```
+```text
 fdatasync   207.237 ops/sec   4825 usecs/op
 fsync        64.541 ops/sec  15494 usecs/op
 ```
@@ -200,6 +200,125 @@ trades the last `wal_writer_delay` of commits on a crash — fine on a benchmark
 source, not on a real one. It does not break Debezium: logical decoding still
 reads flushed WAL, the flush just moves to the WAL writer.
 
+## When the pipeline is the ceiling
+
+Every ladder up to this point measured the source. At a 16-core limit the
+source stopped being the interesting half.
+
+```text
+clients   tps    lat_ms   fresh_med_s   fresh_max_s
+ 32      5912      5.4         22            32
+ 64      6181     10.4         51            57
+128      6374     20.1         84            91
+```
+
+Read the left half first. Throughput moves 7.8% across a fourfold rise in
+clients while latency goes 5.4 → 10.4 → 20.1, doubling every arm. That is the
+shape from the knee section, and it means **every arm here is already past the
+knee** — at 16 cores the knee sits somewhere below 32 clients, and the source
+ceiling is about 6,400 tps.
+
+The cgroup counters confirm CPU is not what holds it there:
+
+```text
+nr_periods    578 ->  5,074    delta 4,496 periods = 450s
+nr_throttled    0 ->      2    delta 2 = 0.04% of periods
+usage_usec  10.3M -> 4,110.4M  delta 4,100s CPU = 11.4 cores over the 360s of load
+```
+
+0.04% against 19.4% at the 8-core limit. The container is no longer hitting
+its quota in any meaningful way, and the node had 22 cores spare.
+
+Now the right half, which has never done this before. `fresh_med_s` grows
+every arm: 22, 51, 84. Lag climbs roughly 25-35 seconds per 120-second arm, so
+the mirror falls about **0.2-0.3 seconds behind for every second of load**.
+
+That rate is what converts into a number for Pipe 3. If lag grows at `r`
+seconds per second while the source produces `I` rows per second, the mirror is
+consuming `I x (1 - r)`:
+
+```text
+ 64 clients   6181 tps   r=0.21   -> ~4,900 rows/s
+128 clients   6374 tps   r=0.28   -> ~4,600 rows/s
+```
+
+**Pipe 3 absorbs somewhere around 4,500-5,000 rows a second.** It is the first
+figure we have for it, and it sits well under what the source can now produce.
+
+### Confirming it, and why the obvious reading is wrong
+
+A lag that grows is not automatically a pipeline that is too slow. It is also
+what a backlog looks like while it drains — which is what we assumed the first
+time a freshness number moved, because that run had followed a task restart.
+
+The two are easy to tell apart, and this run settles it: **a draining backlog
+makes lag fall.** Lag that rises monotonically, arm after arm, at a rate that
+climbs with the offered load, is a consumer that cannot keep up.
+
+To pin the capacity down rather than infer it, hold the rate instead of
+saturating and watch whether lag stays flat:
+
+```bash
+TARGET=k8s RATE=4500 CLIENTS=64 DURATION=300 bash scripts/bench/ladder.sh
+```
+
+`RATE` passes pgbench's `-R`, so the arm offers a fixed transactions-per-second
+instead of as many as the clients can push. Flat freshness means Pipe 3 is at
+or above that rate; growing freshness means below it. A few runs either side
+bracket the real number. Use a long `DURATION` — at 0.2 s/s a 120-second arm
+only drifts 24 seconds, which is easy to mistake for noise.
+
+Start from a settled mirror. This run began roughly 12-20 seconds behind, which
+costs nothing for the growth *rate* but makes the absolute numbers read worse
+than they are.
+
+## Changing the CPU limit between arms
+
+The ladder's ceiling has moved with `postgres-source`'s CPU limit at every
+value tested so far, so sweeping that limit is part of running the ladder
+rather than a separate exercise. Patch the live StatefulSet instead of editing
+the manifest — one line, no continuations:
+
+```bash
+kubectl patch statefulset postgres-source -n etl --type=json -p='[{"op":"replace","path":"/spec/template/spec/containers/0/resources/limits/cpu","value":"8"}]'
+```
+
+The value is **cores**, quoted: `"8"` is eight, `"500m"` is half of one.
+Keep it at or below **half the cores on the node**. Postgres shares that node
+with Kafka, Connect, ClickHouse and Spark, and a source permitted to take the
+whole machine stops measuring the source and starts measuring what the kernel
+takes away from everything else. On the 40-core nodes that ceiling is 20.
+
+Two consequences the command does not mention:
+
+- **It rolls the pod**, and the Debezium task does not come back by itself.
+  Restart it before the next arm or the freshness columns will be measuring a
+  dead pipeline:
+
+  ```bash
+  kubectl exec -n etl kafka-connect-0 -- curl -s -X POST localhost:8083/connectors/orders-cdc-connector/tasks/0/restart
+  ```
+
+  Then let the mirror settle before starting a run. A ladder begun straight
+  after a restart reports the tail of the backlog as steady-state freshness.
+
+- **`k8s/deploy.sh` reverts it.** The committed value in
+  `k8s/postgres-source/statefulset.yaml` wins on the next deploy of that
+  component, with no warning that a patch was lost. The patch is for sweeping;
+  a value worth keeping gets committed.
+
+Which means a run is only as trustworthy as the limit that was actually live
+for it. Read it back rather than remembering it:
+
+```bash
+kubectl get statefulset postgres-source -n etl -o jsonpath='{.spec.template.spec.containers[0].resources.limits.cpu}'
+```
+
+This is not pedantry. The 16-core run above was read off a `kubectl top` of
+11541m, which on its own proves only that the limit was above 8 — it could
+have been 12, 16 or 32, and the percentage that makes the reading mean
+anything differs in each case.
+
 ## Things that have misled us
 
 - **`kubectl top` is an average.** It cannot distinguish bursty throttling from
@@ -225,3 +344,15 @@ reads flushed WAL, the flush just moves to the WAL writer.
   written when the source was doing 212 tps. At 2897 it is around 5,800 sorts
   a second. It is not what bounds the rate — those backends would show as
   `(on cpu)` — but it is a tax on the measurement.
+- **pgbench runs inside the container it is measuring.** `ladder.sh` drives it
+  with `kubectl exec ... postgres-source-0 -- pgbench` over loopback, so the
+  load generator shares Postgres's cgroup and spends the same quota. Every
+  `tps` figure in this document is what the source sustains *while also hosting
+  its own client*, and every CPU reading includes it. It does not invalidate
+  comparisons between arms — it has been true of all of them — but a tight CPU
+  limit squeezes pgbench too, so some part of the 8-to-16 core jump is the
+  client getting room rather than the server.
+- **A growing freshness number is not necessarily a slow pipeline.** It is also
+  what a draining backlog looks like. The difference is direction over time: a
+  backlog shrinks, a pipeline that cannot keep up does not. Check which one you
+  have before concluding anything, and start runs from a settled mirror.
