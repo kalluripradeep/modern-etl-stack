@@ -70,6 +70,17 @@ almost always `RUNNING`; the task underneath is the one that stops, and Connect
 never retries a failed task. `ladder.sh` runs its own liveness check and aborts
 on this, so mostly it is what you run after it aborts.
 
+If it is not `RUNNING`, restart the task:
+
+```bash
+kubectl exec -n etl kafka-connect-0 -- curl -s -X POST localhost:8083/connectors/orders-cdc-connector/tasks/0/restart
+```
+
+Then **go back to check 1 and wait**. The task comes back and starts draining
+whatever piled up while it was down, and the mirror is not settled until that
+finishes. A ladder started on the drain reports it as steady-state freshness,
+which is the one failure mode these checks exist to prevent.
+
 ### 4. What are the cgroup counters at?
 
 ```bash
