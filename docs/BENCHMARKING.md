@@ -30,6 +30,76 @@ talking about.
 `scripts/benchmark.py` is the tool that compares all three, on the same rows at
 the same moment. The two answer different questions.
 
+## Baseline the system before every run
+
+A ladder run takes the stack as it finds it. Four of the five numbers below have
+each, at some point, turned a whole run into something that read as a
+measurement and was not one. Check them before starting, every time.
+
+Each is a single line — `\` continuations get mangled by some terminals.
+
+### 1. Is the mirror settled?
+
+```bash
+kubectl exec -n etl clickhouse-0 -- clickhouse-client --user chuser --password "$(kubectl get secret etl-secrets -n etl -o jsonpath='{.data.CLICKHOUSE_PASSWORD}' | base64 -d)" -q "SELECT dateDiff('second', max(updated_at), now()) FROM mirror.orders"
+```
+
+A few seconds is settled. Twenty or more means the mirror is still draining
+something, and the run will report that drain as its own freshness. Wait.
+
+### 2. What is the CPU limit actually set to?
+
+```bash
+kubectl get statefulset postgres-source -n etl -o jsonpath='{.spec.template.spec.containers[0].resources.limits.cpu}'
+```
+
+`kubectl top` gives a number of cores with no denominator. 11541m means 72% at
+a 16-core limit and 36% at 32, and nothing at all without this.
+
+Worth re-reading after any deploy: `k8s/deploy.sh` restores the committed value
+and silently discards a `kubectl patch`.
+
+### 3. Is the connector task running?
+
+```bash
+kubectl exec -n etl kafka-connect-0 -- curl -s localhost:8083/connectors/orders-cdc-connector/status
+```
+
+**Read the second `"state"` in the reply.** The first is the connector's and is
+almost always `RUNNING`; the task underneath is the one that stops, and Connect
+never retries a failed task. `ladder.sh` runs its own liveness check and aborts
+on this, so mostly it is what you run after it aborts.
+
+### 4. What are the cgroup counters at?
+
+```bash
+kubectl exec -n etl postgres-source-0 -- sh -c 'cat /sys/fs/cgroup/cpu.stat 2>/dev/null || cat /sys/fs/cgroup/cpu/cpu.stat'
+```
+
+These are lifetime totals, so they are only useful as a pair — take them again
+after the run and subtract. `nr_throttled` is the number to trust; see the
+throttling section below for how to read the deltas.
+
+### 5. Where is the backlog, while the load runs?
+
+The four above are pre-flight. This one has to be sampled **during** an arm,
+which is the whole point of it — at rest everything reads zero because the
+pipeline has had time to catch up. Run it in a second terminal:
+
+```bash
+while true; do echo "$(date +%T) lag=$(kubectl exec -n etl etl-kafka-dual-role-0 -- bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group clickhouse-mirror-orders 2>/dev/null | grep cdc.public.orders | awk '{print $6}')"; sleep 10; done
+```
+
+It splits Pipe 3 in half and says which side is slow:
+
+| During an arm | Meaning |
+|---|---|
+| `lag` climbing | Rows are reaching Kafka faster than ClickHouse drains them. **ClickHouse is the slow side** — the topic has one partition and `kafka_num_consumers` is unset, so one consumer does all of it |
+| `lag` near zero, but `fresh_med_s` still growing | Rows are not reaching Kafka fast enough to queue. **Debezium is the slow side**, and partitions change nothing — the Postgres connector is one task by design, reading one replication slot |
+
+Both are plausible and the fix for one does nothing for the other, so sample
+before changing anything.
+
 ## The columns
 
 | Column | What it is |
