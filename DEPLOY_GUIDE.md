@@ -560,6 +560,43 @@ the workload inside it is the thing to look at. For ClickHouse — the largest
 claim in this stack, and the one that took a node down in #144 — see
 [Which ClickHouse table is using the space](#which-clickhouse-table-is-using-the-space).
 
+On a cluster that has been benchmarked, look at Kafka before ClickHouse. The
+local-path provisioner puts every claim under one directory, so one command
+ranks them:
+
+```bash
+sudo du -xh --max-depth=2 /opt/local-path-provisioner | sort -h | tail
+```
+
+A `kafka-log0` entry in the tens of gigabytes is CDC traffic that has not aged
+out. `scripts/bench/orders.sql` writes two messages per transaction to
+`cdc.public.orders` — the INSERT and the UPDATE — so a few ladder runs at
+several thousand tps leave millions of Debezium envelopes behind, and Kafka
+keeps them for `log.retention.hours` whether or not anything consumed them.
+
+That is bounded in `k8s/kafka/kafka-cluster.yaml` now (24 hours, 4 GiB per
+partition). A cluster deployed before that carries the old seven-day default
+until it is redeployed:
+
+```bash
+bash k8s/deploy.sh kafka
+```
+
+Retention is applied by a background thread, not at startup, so space comes
+back over the next few minutes rather than at once. Check progress with the
+`du` above.
+
+Be careful tightening those numbers by hand. Retention deletes unconsumed
+messages exactly as readily as consumed ones, and a bound below the
+consumer's peak lag silently removes rows the mirror never read — the
+pipeline reports no error, the mirror is simply missing data. ClickHouse
+peaked 3.17M messages behind during the #188 ladder, about 2.1 GiB.
+
+SeaweedFS is the other large claim, and it has its own story: the Iceberg
+maintenance task expires snapshots daily, so growth there usually means the
+`spark_transform_silver` DAG has not run rather than that retention is
+missing.
+
 Once `DiskPressure` returns to `False`, the rejected pods schedule on their own. This just tidies the list:
 
 ```bash
