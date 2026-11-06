@@ -52,6 +52,30 @@ spec:
       # looped on UNKNOWN_TOPIC_OR_PARTITION while the connector still
       # reported RUNNING, and the mirror silently stayed empty.
       auto.create.topics.enable: "true"
+      # Kafka keeps messages for log.retention.hours after they are consumed,
+      # and the default is 168 -- a week. Nothing here ever set it, so every
+      # benchmark run's CDC traffic stayed on disk for seven days.
+      #
+      # That took a node down in #225. kafka-log0 held 17G of a 43G
+      # local-path directory, the kubelet put kangra into DiskPressure, and
+      # dozens of pods were evicted on arrival. A ladder run writes two
+      # messages per transaction to cdc.public.orders -- the INSERT and the
+      # UPDATE -- so a single afternoon at ~11,000 msg/s is millions of
+      # envelopes at roughly 680 bytes each.
+      #
+      # Bounded by size as well as time, because time alone does not help
+      # when one afternoon writes more than the disk holds. retention.bytes
+      # is per partition and never touches the active segment, so the real
+      # ceiling per partition is roughly retention + segment.
+      #
+      # 4 GiB rather than something tighter because retention deletes
+      # unconsumed messages too. ClickHouse peaked 3.17M messages behind
+      # during the #188 ladder -- about 2.1 GiB -- and anything below that
+      # would have dropped rows the mirror had not read yet, silently. Lower
+      # this only once Pipe 3 keeps up.
+      log.retention.hours: 24
+      log.retention.bytes: 4294967296
+      log.segment.bytes: 268435456
   entityOperator:
     topicOperator: {}
     userOperator: {}

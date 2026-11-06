@@ -113,6 +113,12 @@ services:
       CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # Mirrors k8s/kafka/kafka-cluster.yaml -- see the reasoning there (#225).
+      # A value set on one side only is the shape of bug scripts/ci guards
+      # exist to catch, so both deployments carry the same three.
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_LOG_RETENTION_BYTES: 4294967296
+      KAFKA_LOG_SEGMENT_BYTES: 268435456
     volumes:
       - kafka-data:/var/lib/kafka/data
     networks:
