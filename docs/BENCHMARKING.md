@@ -32,9 +32,11 @@ the same moment. The two answer different questions.
 
 ## Baseline the system before every run
 
-A ladder run takes the stack as it finds it. Four of the five numbers below have
-each, at some point, turned a whole run into something that read as a
-measurement and was not one. Check them before starting, every time.
+A ladder run takes the stack as it finds it. Checks 1 to 4 run before you
+start, and each has at some point turned a whole run into something that read
+as a measurement and was not one. Checks 5 and 6 are sampled **while the load
+runs**, in a second terminal, and are the only way to see which component is
+the one in trouble.
 
 Each is a single line — `\` continuations get mangled by some terminals.
 
@@ -93,9 +95,9 @@ throttling section below for how to read the deltas.
 
 ### 5. Where is the backlog, while the load runs?
 
-The four above are pre-flight. This one has to be sampled **during** an arm,
-which is the whole point of it — at rest everything reads zero because the
-pipeline has had time to catch up. Run it in a second terminal:
+This has to be sampled **during** an arm, which is the whole point of it — at
+rest it always reads zero, because by then the pipeline has caught up whatever
+it did under load:
 
 ```bash
 while true; do echo "$(date +%T) lag=$(kubectl exec -n etl etl-kafka-dual-role-0 -- bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group clickhouse-mirror-orders 2>/dev/null | grep cdc.public.orders | awk '{print $6}')"; sleep 10; done
@@ -110,6 +112,46 @@ It splits Pipe 3 in half and says which side is slow:
 
 Both are plausible and the fix for one does nothing for the other, so sample
 before changing anything.
+
+### 6. What is each container actually using?
+
+Also during the run, and both pods at once so the two numbers line up in time:
+
+```bash
+while true; do kubectl top pods -n etl postgres-source-0 clickhouse-0 --no-headers | awk -v t="$(date +%T)" '{print t, $1, $2, $3}'; sleep 10; done
+```
+
+Read each against its own limit — `postgres-source` is 16 cores,
+`clickhouse` is 2 (`k8s/clickhouse/statefulset.yaml`). A number without its
+denominator means nothing, which is what check 2 is for.
+
+| Reading | What it means |
+|---|---|
+| ClickHouse near 2000m | It is pegged at its limit. CPU is the constraint and raising it is worth trying |
+| ClickHouse well under 2000m while check 5's lag grows | It is **not** CPU-starved. One partition and one consumer is a single thread, and more cores cannot be used by a thread that does not exist |
+| `postgres-source` well under 16 cores | The source has headroom, as it has had since the limit went to 16 |
+
+The second row is the one worth waiting for. It decides whether the fix is a
+bigger CPU limit or more partitions and consumers, and those are different
+changes with no overlap.
+
+Remember `kubectl top` is a rolling average — it answers "is this pegged",
+not "was this throttled". For throttling, use the cgroup counters in check 4.
+
+### These belong on a dashboard
+
+Both run-time checks are already collected and neither needs a new exporter:
+
+| Metric | Source | Scrape job |
+|---|---|---|
+| `container_cpu_usage_seconds_total{namespace="etl", pod="clickhouse-0"}` | cAdvisor | `kubernetes-cadvisor` |
+| `kafka_consumergroup_lag{consumergroup="clickhouse-mirror-orders"}` | kafka-exporter | `kafka-exporter` |
+
+Both jobs are in `k8s/02-configmaps.yaml` and scraping now, so a panel over
+them is the only missing piece. Use `rate(...[1m])` on the cAdvisor counter to
+get cores. A time series beats the loop above for anything longer than one
+ladder — the loop is for when you want the numbers in the same terminal as the
+run.
 
 ## The columns
 
