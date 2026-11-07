@@ -395,6 +395,74 @@ Start from a settled mirror. This run began roughly 12-20 seconds behind, which
 costs nothing for the growth *rate* but makes the absolute numbers read worse
 than they are.
 
+## Measuring the consumer on its own
+
+`ladder.sh` measures the source and the pipeline together, so a slow consumer
+and a slow producer look alike — freshness grows either way. `drain.sh`
+separates them. It stops ClickHouse reading, builds a known backlog in Kafka,
+then starts it again and times the clear. Nothing is produced during the timed
+part, so the number is the consumer's ceiling and nothing else.
+
+```bash
+TARGET=k8s CLIENTS=64 BUILD=90 bash scripts/bench/drain.sh
+```
+
+It works by dropping `mirror.orders_mv`. The Kafka engine only consumes while
+something reads from it, so that is enough to stop it, and the offsets stay
+committed under the same group name — recreating the view resumes rather than
+replaying.
+
+### What it found, and what that ruled out
+
+The #188 ladder had ClickHouse draining about **1,750 msg/s** while the source
+offered ~11,200. Three explanations were on the table, all config, and all of
+them looked reasonable:
+
+1. One partition and `kafka_num_consumers` unset — a single consumer thread.
+2. `cpu: "2"` on the ClickHouse container, against 16 for Postgres.
+3. The materialized view re-parsing the Debezium envelope about eleven times
+   per message.
+
+`drain.sh` on Docker Compose, against the same `clickhouse-server:25.3`, the
+same generated schema, one partition, one consumer and the same view:
+
+| ClickHouse limits | Drain rate |
+|---|---|
+| unconstrained (8 cores available) | 43,797 msg/s |
+| `--cpus 2` | 33,880 msg/s |
+| `--cpus 2 --memory 4g` — the cluster's exact limits | **32,312 msg/s** |
+
+Peak CPU across all three runs was close to **one core**, never the two it was
+allowed.
+
+So all three explanations are wrong. A single consumer on a single partition
+drains 32,000 msg/s with those eleven JSON parses in the path and the cluster's
+own CPU and memory limits applied — eighteen times what kangra managed, and
+three times what the source can offer it. **Adding partitions or consumers
+would have fixed nothing**, and because `log.retention.bytes` is per partition
+(#225) it would have multiplied Kafka's disk bound on a node that was already
+out of space.
+
+What is left is the node rather than the configuration — most plausibly its
+disk, which `pg_test_fsync` put at 207 `fdatasync`/sec earlier in #188, and
+which was full enough to hold the node in `DiskPressure`.
+
+### The measurement that would settle it
+
+Run `drain.sh` on the cluster once the disk is healthy. Same script, same
+schema, same limits, so the only variable left is the node:
+
+- **~32,000 msg/s** — ClickHouse is fine and the earlier reading was the node
+  being out of disk.
+- **~1,750 msg/s again** — something on kangra is specific to it, and
+  `system.kafka_consumers` is the next place to look. It carries
+  `num_rebalance_assignments` and `exceptions` per consumer, which is where a
+  consumer that keeps being kicked out of its group shows up:
+
+```bash
+kubectl exec -n etl clickhouse-0 -- clickhouse-client --user chuser --password "$(kubectl get secret etl-secrets -n etl -o jsonpath='{.data.CLICKHOUSE_PASSWORD}' | base64 -d)" -q "SELECT table, num_messages_read, num_rebalance_assignments, length(exceptions) FROM system.kafka_consumers FORMAT Vertical"
+```
+
 ## Changing the CPU limit between arms
 
 The ladder's ceiling has moved with `postgres-source`'s CPU limit at every
@@ -479,3 +547,9 @@ anything differs in each case.
   what a draining backlog looks like. The difference is direction over time: a
   backlog shrinks, a pipeline that cannot keep up does not. Check which one you
   have before concluding anything, and start runs from a settled mirror.
+- **A component that looks starved may not be.** ClickHouse held the pipeline
+  to 1,750 msg/s on the cluster, and had every appearance of a config problem:
+  one partition, one consumer, two CPUs, a view that parses the same JSON
+  eleven times. The same configuration drains 32,000 msg/s on a laptop.
+  Reproduce a bottleneck somewhere else before changing the thing it points
+  at — `scripts/bench/drain.sh` exists for that.
