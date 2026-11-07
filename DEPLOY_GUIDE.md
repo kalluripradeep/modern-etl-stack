@@ -538,7 +538,36 @@ kubectl describe node | grep DiskPressure
 
 If that says `True`, the node is out of disk and the kubelet is **rejecting** new pods — so you will see dozens of Evicted pods appear within seconds of each other. They were never running; they were turned away on arrival. Nothing schedules until space is freed.
 
-The usual culprit is Docker's build store, not the pipeline. `deploy.sh` rebuilds a 5GB+ Airflow image on every run, and the previous layers plus the BuildKit cache stay behind. The script now prunes what it orphans, but a machine with a backlog from earlier deploys needs one manual pass:
+**The evicted pods are not the pods using the disk.** The kubelet ranks
+candidates by how far each exceeds its `ephemeral-storage` *request*, and
+nothing in this stack sets one — so every pod's request is 0 and every pod is
+over it. Smaller, more disposable pods get killed first:
+
+```text
+Container trino-worker was using 2156Ki, request is 0, has larger
+consumption of ephemeral-storage.
+```
+
+2 MB. Trino and kafka-ui are the ones you will see in the Evicted list, while
+Kafka, SeaweedFS and Postgres — holding tens of gigabytes between them — carry
+on untouched, because their data is in PersistentVolumes rather than ephemeral
+storage. Chasing the evicted pods leads nowhere.
+
+Start instead with how much room the kubelet thinks it needs. The threshold is
+in the eviction message:
+
+```bash
+kubectl describe node kangra | grep -A5 "Conditions:"
+df -h /
+```
+
+The default threshold is `nodefs.available<10%`, so a message asking for 15.7GB
+free is describing a ~157GB filesystem. Compare that against what the PVs
+actually hold before assuming the pipeline is responsible — if the claims add
+up to 43GB on a 157GB disk, the other 114GB is the thing to find, and it is not
+in this stack.
+
+The usual culprit there is an image store, not the pipeline. `deploy.sh` rebuilds a 5GB+ Airflow image on every run, and the previous layers plus the BuildKit cache stay behind. The script now prunes what it orphans, but a machine with a backlog from earlier deploys needs one manual pass:
 
 ```bash
 docker system prune -a --volumes    # Docker's store: build layers and cache
@@ -546,7 +575,14 @@ sudo crictl rmi --prune             # containerd's store: images Kubernetes runs
 sudo journalctl --vacuum-size=500M  # systemd journal, often several GB
 ```
 
-Those are two separate stores. `crictl` will not touch Docker's, and pruning Docker cannot disturb anything running on the cluster.
+Those are two separate stores, and **on a worker node the Docker one is usually
+the smaller of the two**. Kubernetes runs images out of containerd; Docker's
+store only has whatever was built on that machine. Running `docker system prune`
+alone and reclaiming a gigabyte or two does not mean the disk is not full of
+images — it means you pruned the wrong store. Run all three.
+
+`crictl` will not touch Docker's store, and pruning Docker cannot disturb
+anything running on the cluster.
 
 Find what is actually holding the space before guessing:
 
@@ -579,8 +615,20 @@ partition). A cluster deployed before that carries the old seven-day default
 until it is redeployed:
 
 ```bash
+git pull
 bash k8s/deploy.sh kafka
 ```
+
+**Check what that prints.** `deploy.sh` applies the manifests in *your
+checkout*, so a fix that has not been pulled is applied as the version you
+already have:
+
+```text
+kafka.kafka.strimzi.io/etl-kafka unchanged
+```
+
+`unchanged` means nothing reached the cluster. A retention change that landed
+reports `configured`.
 
 Retention is applied by a background thread, not at startup, so space comes
 back over the next few minutes rather than at once. Check progress with the
