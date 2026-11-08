@@ -166,3 +166,19 @@ test('a failed query still appears in the record', () => {
   assert.equal(rec.queries[0].error, 'syntax error');
   assert.match(summarise(rec), /1 query/);
 });
+
+test('a query that failed is called out, not counted as if it worked', () => {
+  const text = summarise(
+    record({ queries: [query({ error: 'syntax error', rows: null })] }),
+  );
+  assert.match(text, /1 query \(1 failed\)/);
+});
+
+test('a mix of working and failed queries reports both', () => {
+  const text = summarise(
+    record({
+      queries: [query(), query({ error: 'boom', rows: null }), query()],
+    }),
+  );
+  assert.match(text, /3 queries \(1 failed\)/);
+});

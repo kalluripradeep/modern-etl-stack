@@ -123,6 +123,10 @@ export function summarise(record: ProvenanceRecord): string {
     ? ` Touched ${sensitive.map((e) => `${e.classification} columns in ${e.table}`).join(', ')}.`
     : '';
 
-  const count = record.queries.length === 1 ? '1 query' : `${record.queries.length} queries`;
+  const total = record.queries.length;
+  const failed = record.queries.filter((q) => q.error).length;
+  // "1 query" beside an answer reads as "and it worked". Say when it did not.
+  const count = `${total} ${total === 1 ? 'query' : 'queries'}`
+    + (failed ? ` (${failed} failed)` : '');
   return `Answered from ${parts.join(' and ')} — ${count}.${warning} trace ${record.traceId}`;
 }

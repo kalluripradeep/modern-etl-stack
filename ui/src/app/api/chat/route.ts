@@ -180,7 +180,16 @@ async function executeTool(
     // A rejected query is part of the record. An audit trail that keeps only
     // the successes describes a different session than the one that happened.
     if (store) {
-      log.push({ store, sql, rows: null, ms: Date.now() - started, error: message });
+      // Capped: a database can return a multi-kilobyte error (ClickHouse
+      // returns its whole JSON envelope), and an audit line that can grow
+      // without bound is a logging problem wearing an audit trail's clothes.
+      log.push({
+        store,
+        sql,
+        rows: null,
+        ms: Date.now() - started,
+        error: message.length > 500 ? `${message.slice(0, 500)}...` : message,
+      });
     }
     // Surface the error to the model so it can correct the query
     throw new Error(message);
