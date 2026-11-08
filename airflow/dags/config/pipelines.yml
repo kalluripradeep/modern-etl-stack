@@ -84,6 +84,47 @@ stores:
     date_trunc: toDate({})
     freshness: SELECT dateDiff('second', max({col}), now()) FROM {table}
 
+# ─────────────────────────────────────────────────────────────────────────────
+# routing_policy (#231 phase 2)
+#
+# How the assistant decides where to answer from. Until now it decided from
+# two adjectives in a system prompt: "seconds fresh" for the mirror, "batch,
+# daily fresh" for the warehouse. #188 measured the mirror at 84 seconds and
+# #225 found it a day behind a connector task that was still reporting
+# RUNNING. On both occasions an agent reading those adjectives would have
+# answered a question about now from data that was not.
+#
+# The `freshness` expression on each store above has been in this file since
+# the stores were declared and nothing has ever run it. This is its first
+# consumer.
+#
+# The policy is data rather than more English in a prompt so that it is
+# reviewable in a pull request, identical for every consumer, and capable of
+# being tested without an API key.
+# ─────────────────────────────────────────────────────────────────────────────
+
+routing_policy:
+  # What the probe reads. `orders` is the table all three pipelines carry and
+  # the one the ladder measures, so this number is directly comparable with
+  # every freshness figure recorded on #188.
+  probe:
+    table: orders
+    column: updated_at
+
+  # A store measured outside its sla is not offered for a question about
+  # current state. Deliberately an exclusion and not a warning -- a warning
+  # is roughly what the prose already amounted to, and it was ignored.
+  stale_excludes_store: true
+
+  # Below this the store is still offered, but the score travels with the
+  # answer. A NULL score (phase 1: untested) is unknown, and unknown never
+  # counts as passing.
+  quality_warn_below: 0.95
+
+  # How long a freshness reading may be reused. The mirror's sla is 30s, so
+  # a reading older than this cannot be used to judge it.
+  measurement_ttl_seconds: 10
+
 source_schema: public
 topic_prefix: cdc
 

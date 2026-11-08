@@ -9,6 +9,7 @@ Usage (from the repo root):  python scripts/generate_pipeline_assets.py
 CI runs this and fails if the committed artifacts differ.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -130,10 +131,13 @@ def gen_stores_ts(manifest):
         '  tables: Record<string, string>;',
         '  dateTrunc: string;',
         '  slaFreshnessSeconds: number;',
+        '  freshnessSql: string;',
         '}',
         '',
         'export const STORES: Record<string, StoreDef> = {',
     ]
+    policy = manifest['routing_policy']
+    probe = policy['probe']
     for name, store in manifest['stores'].items():
         tables = ', '.join(
             "%s: '%s'" % (t, store['table'].format(table=t))
@@ -146,6 +150,18 @@ def gen_stores_ts(manifest):
             '    tables: { %s },' % tables,
             "    dateTrunc: '%s'," % store['date_trunc'],
             '    slaFreshnessSeconds: %d,' % store['sla']['freshness_seconds'],
+            # Resolved here rather than in TypeScript: the template, the
+            # physical table name and the probe column all live in the
+            # manifest, and a second renderer is a second thing to drift.
+            #
+            # json.dumps rather than quoting by hand. The ClickHouse
+            # expression contains its own single quotes -- dateDiff('second',
+            # ...) -- and a hand-rolled escape emitted a string that ended
+            # early and left the rest as syntax.
+            '    freshnessSql: %s,' % json.dumps(store['freshness'].format(
+                table=pc.store_table(manifest, name, probe['table']),
+                col=probe['column'],
+            )),
             '  },',
         ]
     lines += [
@@ -188,6 +204,18 @@ def gen_stores_ts(manifest):
         '// enforces this yet -- see #231 phase 4. Exported now so the list',
         '// has one definition when something does.',
         "export const SENSITIVE: Classification[] = ['pii', 'phi'];",
+        '',
+        '// How the assistant decides where to answer from (#231 phase 2).',
+        '// Data rather than prose in a system prompt, so the rule is',
+        '// reviewable in a PR and testable without an API key.',
+        '// The RoutingPolicy type lives in routing.ts, which deliberately',
+        '// imports nothing so node --test can run it against the TypeScript',
+        '// directly. This value is structurally that type.',
+        'export const ROUTING_POLICY = {',
+        '  staleExcludesStore: %s,' % ('true' if policy['stale_excludes_store'] else 'false'),
+        '  qualityWarnBelow: %s,' % policy['quality_warn_below'],
+        '  measurementTtlSeconds: %d,' % policy['measurement_ttl_seconds'],
+        '};',
         '',
     ]
     return '\n'.join(lines)

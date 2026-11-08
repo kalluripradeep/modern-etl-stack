@@ -161,7 +161,10 @@ export async function getSchemaOverview(): Promise<string> {
       GROUP BY 1 ORDER BY 1
     `);
     parts.push(
-      'WAREHOUSE (PostgreSQL — query_warehouse; raw/int/prs/gold = dbt layers, batch fresh):\n' +
+      // No freshness adjective. It is measured per request and handed to
+      // the model under STORE HEALTH (#231 phase 2); a second, static claim
+      // in the schema dump is the kind that was wrong on #188 and #225.
+      'WAREHOUSE (PostgreSQL — query_warehouse; raw/int/prs/gold = dbt layers):\n' +
       pg.rows.map(([t, c]) => `  ${t}: ${c}`).join('\n'),
     );
   } catch (e) {
