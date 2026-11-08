@@ -20,6 +20,8 @@ real run_results.json requires a built warehouse and the shape of an entry
 file.
 """
 import json
+import subprocess
+import re
 import pathlib
 import sys
 
@@ -219,3 +221,58 @@ def test_a_later_run_overwrites_an_earlier_score(conn, tmp_path):
 
 def test_no_manifest_is_not_a_failure(conn, tmp_path):
     assert da.persist(conn, tmp_path / 'does-not-exist') is None
+
+
+# ── The task must produce its own artifacts ──────────────────────────────────
+#
+# The first version of persist_dbt_metadata read DBT_PROJECT_PATH/target. In a
+# deployed stack that directory does not exist: Cosmos clones the project into
+# a tempfile.TemporaryDirectory() and runs dbt there, so nothing is written
+# back, and dbt/target/ is gitignored, so on Kubernetes -- where the DAGs
+# arrive by git-sync -- it is absent entirely. The task logged "no manifest"
+# and returned, which looks identical to "nothing to do".
+#
+# It worked on a developer machine only because stale artifacts happened to be
+# lying about, which is the worst way for a thing to appear to work.
+
+DAG_SOURCE = (REPO / 'airflow' / 'dags' / 'ingest_source_to_bronze.py').read_text(encoding='utf-8')
+
+
+def test_dbt_target_is_not_committed():
+    """If this ever changes, the reasoning below needs revisiting."""
+    tracked = subprocess.run(
+        ['git', 'ls-files', 'dbt/target'],
+        cwd=REPO, capture_output=True, text=True,
+    ).stdout.strip()
+    assert not tracked, (
+        'dbt/target is tracked now; the task could read it directly again, '
+        'but only if Cosmos also stopped running dbt in a temporary directory'
+    )
+
+
+def test_the_task_does_not_read_the_projects_target_directory():
+    assert 'DBT_PROJECT_PATH / "target"' not in DAG_SOURCE, (
+        'persist_dbt_metadata reads the project target directory again; it is '
+        'empty under Cosmos and absent on Kubernetes'
+    )
+    assert '"--target-path"' in DAG_SOURCE, \
+        'the task no longer directs dbt to a target path it controls'
+
+
+def test_failing_tests_do_not_fail_the_capture():
+    """A failing test is the finding. Exit 1 must be accepted."""
+    assert 'returncode not in (0, 1)' in DAG_SOURCE, \
+        'the task no longer treats "some tests failed" as data'
+
+
+def test_the_capture_runs_even_when_an_upstream_dbt_test_failed():
+    """Otherwise it skips precisely when there is something to record."""
+    block = re.search(r'task_id="persist_dbt_metadata".*?\)', DAG_SOURCE, re.S)
+    assert block and 'trigger_rule="all_done"' in block.group(0), \
+        'persist_dbt_metadata would be skipped when a dbt test task fails'
+
+
+def test_an_absent_manifest_is_loud():
+    """Silence is what hid the original bug."""
+    assert re.search(r'if summary is None:.*?raise AirflowException', DAG_SOURCE, re.S), \
+        'a missing manifest is logged and swallowed again'

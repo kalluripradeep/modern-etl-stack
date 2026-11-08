@@ -9,6 +9,8 @@ import sys
 import glob
 import tempfile
 import logging
+import shutil
+import subprocess
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -87,6 +89,8 @@ default_args = {
     'retries': 1,
     'retry_delay': timedelta(minutes=2),
 }
+
+DBT_EXECUTABLE = "/home/airflow/.local/bin/dbt"
 
 dbt_k8s_path = Path("/opt/airflow/dags/repo/dbt")
 dbt_docker_path = Path("/opt/airflow/dbt")
@@ -546,24 +550,62 @@ def _empty_parquet_keys(s3_hook, bucket, keys):
 def persist_dbt_metadata(**kwargs):
     """Keep dbt's own run artifacts instead of discarding them.
 
-    Runs after dbt rather than beside it: before the test results exist there
-    is nothing to read, and a stale target/ would be published as current.
+    This produces the artifacts rather than reading the project's `target/`,
+    because in a deployed stack that directory does not exist. Cosmos clones
+    the project into a tempfile.TemporaryDirectory() and runs dbt there, so
+    nothing is ever written back; and `dbt/target/` is gitignored, so on
+    Kubernetes -- where the DAGs arrive by git-sync -- it is absent entirely.
+    Reading it worked only on a developer machine that happened to have stale
+    artifacts lying about, which is the worst way for a thing to appear to
+    work.
 
-    The work is in dbt_artifacts.persist so it can be executed against a real
-    database by scripts/ci/test_dbt_artifacts.py. A task body that only an
-    Airflow worker can run is a task body nothing tests, and the SQL here is
-    the part worth testing.
+    One `dbt test` into a directory this task owns gives a single coherent
+    run_results.json covering every test, plus the manifest dbt rewrites on
+    any invocation. Cosmos has already run these tests in its own task group,
+    so this is a second execution -- accepted deliberately. Stitching eight
+    partial results back out of Cosmos's internals is the alternative, and a
+    governance signal should not depend on another library's private
+    behaviour.
+
+    The task does not fail when tests fail. A failing test is the finding, not
+    an error, and a capture that only survives a clean run records the days
+    nothing was wrong.
     """
-    hook = PostgresHook(postgres_conn_id="dest_postgres")
-    conn = hook.get_conn()
+    target = Path(tempfile.mkdtemp(prefix="dbt-metadata-"))
     try:
-        summary = dbt_artifacts.persist(conn, DBT_PROJECT_PATH / "target")
+        # Fixed argv, no shell: nothing here comes from a user or a table.
+        result = subprocess.run(
+            [
+                DBT_EXECUTABLE, "test",
+                "--project-dir", str(DBT_PROJECT_PATH),
+                "--profiles-dir", str(DBT_PROJECT_PATH),
+                "--target-path", str(target),
+            ],
+            capture_output=True, text=True, timeout=1800, check=False,
+        )
+        # 1 is "some tests failed", which is data. Anything else means dbt did
+        # not get far enough to write artifacts worth reading.
+        if result.returncode not in (0, 1):
+            log.error("dbt test could not run (exit %s): %s",
+                      result.returncode, (result.stderr or result.stdout)[-800:])
+            raise AirflowException(
+                f"dbt test exited {result.returncode}; no metadata captured"
+            )
+
+        hook = PostgresHook(postgres_conn_id="dest_postgres")
+        conn = hook.get_conn()
+        try:
+            summary = dbt_artifacts.persist(conn, target)
+        finally:
+            conn.close()
     finally:
-        conn.close()
+        shutil.rmtree(target, ignore_errors=True)
 
     if summary is None:
-        log.warning("No dbt manifest under %s; skipped metadata capture", DBT_PROJECT_PATH)
-        return
+        # dbt returned 0 or 1 and still wrote no manifest. That is a broken
+        # project, not an empty one, and silence here is what hid the bug
+        # this function was rewritten to fix.
+        raise AirflowException(f"dbt wrote no manifest to {target}")
 
     log.info("dbt metadata: %d tables scored, %d lineage edges",
              summary["tables"], summary["edges"])
@@ -588,7 +630,7 @@ with dag:
         group_id="dbt_transformations",
         project_config=ProjectConfig(DBT_PROJECT_PATH),
         profile_config=profile_config,
-        execution_config=ExecutionConfig(dbt_executable_path="/home/airflow/.local/bin/dbt"),
+        execution_config=ExecutionConfig(dbt_executable_path=DBT_EXECUTABLE),
     )
 
     # After ingestion completes, branch off to execute both the analytical warehouse (dbt)
@@ -609,6 +651,10 @@ with dag:
     dbt_metadata = PythonOperator(
         task_id="persist_dbt_metadata",
         python_callable=persist_dbt_metadata,
+        # A failing dbt test fails its Cosmos task, which would leave this one
+        # upstream_failed -- so the quality capture would skip precisely when
+        # there is a quality problem to record.
+        trigger_rule="all_done",
     )
 
     # Drop Bronze partitions past their retention window. Runs after the
