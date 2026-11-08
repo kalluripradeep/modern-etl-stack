@@ -11,6 +11,16 @@ import { STORES } from '@/lib/stores.generated';
 
 const MAX_TOOL_ITERATIONS = 8;
 
+// One constant rather than a literal at each messages.create call. The two
+// were identical only by habit, and the loop below re-sends the model on
+// every tool round trip -- a bump that updated one of them would have run
+// two different models in a single conversation.
+//
+// Switching tiers is a one-word change here. Opus suits the harder questions
+// this answers, where a wrong join is worse than a slow reply; Sonnet is the
+// cheaper, faster choice if the dashboard is mostly answering simple ones.
+const MODEL = 'claude-opus-5-5';
+
 // Table names in these descriptions come from the generated store registry
 // rather than being spelled out again here. The model is told which tables
 // exist, so a name typed from memory is a name it will confidently query and
@@ -139,7 +149,7 @@ export async function POST(request: Request) {
 
   try {
     let response = await anthropic.messages.create({
-      model: 'claude-opus-4-8',
+      model: MODEL,
       max_tokens: 3000,
       system: SYSTEM_PROMPT,
       tools: TOOLS,
@@ -173,7 +183,7 @@ export async function POST(request: Request) {
       messages.push({ role: 'user', content: results });
 
       response = await anthropic.messages.create({
-        model: 'claude-opus-4-8',
+        model: MODEL,
         max_tokens: 3000,
         system: SYSTEM_PROMPT,
         tools: TOOLS,
