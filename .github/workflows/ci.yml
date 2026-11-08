@@ -351,13 +351,18 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # 22 rather than 20 so `node --test` can run the routing tests
+          # against the TypeScript directly -- no bundler, no test framework,
+          # no new dependency (#231 phase 2).
+          node-version: '22'
           cache: npm
           cache-dependency-path: ui/package-lock.json
       - name: Install dependencies
         run: npm ci
       - name: ESLint
         run: npx eslint .
+      - name: Routing policy tests
+        run: npm test
       - name: Build
         run: npm run build
 

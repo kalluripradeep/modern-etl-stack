@@ -8,6 +8,7 @@ import {
   resultToMarkdown,
 } from '@/lib/datastores';
 import { STORES } from '@/lib/stores.generated';
+import { measureStores, describeStores, provenance } from '@/lib/store-health';
 
 const MAX_TOOL_ITERATIONS = 8;
 
@@ -37,7 +38,7 @@ const SYSTEM_PROMPT = `
 You are the data analyst for a Modern ETL Stack. You answer questions by
 querying one of three read-only data stores, each with its own tool:
 
-1. query_warehouse — PostgreSQL analytics warehouse (batch, daily fresh).
+1. query_warehouse — PostgreSQL analytics warehouse (batch).
    - gold.fact_order_items + gold.dim_customer / dim_product / dim_date:
      star schema. Prefer this for anything sliced by customer, product or
      time — join the fact to the dimensions on customer_id, product_id and
@@ -55,9 +56,9 @@ querying one of three read-only data stores, each with its own tool:
 2. query_lakehouse — Trino over Apache Iceberg (historical silver layer).
    Tables: ${tableList('lakehouse')}. Trino SQL dialect. Use for large
    historical scans.
-3. query_mirror — ClickHouse, the LIVE real-time mirror of the operational
-   tables (seconds fresh, via CDC). Tables: ${tableList('mirror')}. Use for
-   any "right now" question and for fast aggregations over live data.
+3. query_mirror — ClickHouse, a CDC mirror of the operational tables.
+   Tables: ${tableList('mirror')}. Normally the freshest store, but how fresh
+   it is right now is measured and given to you below — never assume it.
 
 Rules:
 - Call get_schema first when you are unsure about table or column names.
@@ -67,6 +68,14 @@ Rules:
 - Finish with a concise answer: a short observation, the result as a
   markdown table when tabular, and the SQL you ran in a \`\`\`sql block.
 - For non-data questions, answer briefly as a data assistant without tools.
+
+Freshness is measured before every question and appears under STORE HEALTH
+below. It replaces any assumption about which store is current.
+- Never answer a question about the present from a store marked DO NOT USE.
+- If no store is usable, say so and give the measured lag. Do not quietly
+  fall back to the least stale one and present its figures as current.
+- Close with one short line naming the store you used and how far behind it
+  was.
 `;
 
 function lakehouseDescription(): string {
@@ -153,11 +162,21 @@ export async function POST(request: Request) {
   const anthropic = new Anthropic({ apiKey });
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content: query }];
 
+  // Measured before the model sees the question, so the choice of store rests
+  // on evidence rather than on the adjectives that used to be in the prompt
+  // above. #188 measured the mirror at 84s against a 30s SLA and #225 found
+  // it a day behind; both would have read as "seconds fresh".
+  const verdicts = await measureStores();
+  const system = `${SYSTEM_PROMPT}
+
+STORE HEALTH
+${describeStores(verdicts)}`;
+
   try {
     let response = await anthropic.messages.create({
       model: MODEL,
       max_tokens: 3000,
-      system: SYSTEM_PROMPT,
+      system,
       tools: TOOLS,
       messages,
     });
@@ -191,7 +210,7 @@ export async function POST(request: Request) {
       response = await anthropic.messages.create({
         model: MODEL,
         max_tokens: 3000,
-        system: SYSTEM_PROMPT,
+        system,
         tools: TOOLS,
         messages,
       });
@@ -213,6 +232,9 @@ export async function POST(request: Request) {
     return NextResponse.json({
       role: 'assistant',
       content: text || 'I ran out of steps while researching that — try a more specific question.',
+      // The measurement the routing rested on, travelling with the answer.
+      // Phase 3 turns this into a full provenance record.
+      storeHealth: provenance(verdicts),
     });
   } catch (err) {
     console.error(err);

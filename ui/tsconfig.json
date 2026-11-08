@@ -6,6 +6,9 @@
     "skipLibCheck": true,
     "strict": true,
     "noEmit": true,
+    // routing.test.ts imports ./routing.ts by its real extension so
+    // `node --test` can resolve it without a bundler (#231 phase 2).
+    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "module": "esnext",
     "moduleResolution": "bundler",

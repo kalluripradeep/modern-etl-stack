@@ -8,6 +8,7 @@ export interface StoreDef {
   tables: Record<string, string>;
   dateTrunc: string;
   slaFreshnessSeconds: number;
+  freshnessSql: string;
 }
 
 export const STORES: Record<string, StoreDef> = {
@@ -17,6 +18,7 @@ export const STORES: Record<string, StoreDef> = {
     tables: { customers: 'raw.customers_source', products: 'raw.products_source', orders: 'raw.orders_source', order_items: 'raw.order_items_source' },
     dateTrunc: 'date({})',
     slaFreshnessSeconds: 7200,
+    freshnessSql: "SELECT EXTRACT(EPOCH FROM (now() - MAX(updated_at))) FROM raw.orders_source",
   },
   lakehouse: {
     label: 'Pipe 2 · lakehouse (Iceberg via Trino)',
@@ -24,6 +26,7 @@ export const STORES: Record<string, StoreDef> = {
     tables: { customers: 'iceberg.lake.customers', products: 'iceberg.lake.products', orders: 'iceberg.lake.orders', order_items: 'iceberg.lake.order_items' },
     dateTrunc: 'cast({} as date)',
     slaFreshnessSeconds: 10800,
+    freshnessSql: "SELECT to_unixtime(current_timestamp) - to_unixtime(max(updated_at)) FROM iceberg.lake.orders",
   },
   mirror: {
     label: 'Pipe 3 · mirror (ClickHouse)',
@@ -31,6 +34,7 @@ export const STORES: Record<string, StoreDef> = {
     tables: { customers: 'mirror.customers_current', products: 'mirror.products_current', orders: 'mirror.orders_current', order_items: 'mirror.order_items_current' },
     dateTrunc: 'toDate({})',
     slaFreshnessSeconds: 30,
+    freshnessSql: "SELECT dateDiff('second', max(updated_at), now()) FROM mirror.orders_current",
   },
 };
 
@@ -70,3 +74,15 @@ export const CONTRACT: Record<string, TableContract> = {
 // enforces this yet -- see #231 phase 4. Exported now so the list
 // has one definition when something does.
 export const SENSITIVE: Classification[] = ['pii', 'phi'];
+
+// How the assistant decides where to answer from (#231 phase 2).
+// Data rather than prose in a system prompt, so the rule is
+// reviewable in a PR and testable without an API key.
+// The RoutingPolicy type lives in routing.ts, which deliberately
+// imports nothing so node --test can run it against the TypeScript
+// directly. This value is structurally that type.
+export const ROUTING_POLICY = {
+  staleExcludesStore: true,
+  qualityWarnBelow: 0.95,
+  measurementTtlSeconds: 10,
+};
