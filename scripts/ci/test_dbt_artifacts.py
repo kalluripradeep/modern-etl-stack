@@ -128,3 +128,94 @@ def test_missing_run_results_is_not_a_crash():
     rows = da.quality(MANIFEST, {'results': []})
     assert rows, 'models should still be listed'
     assert all(r['score'] is None for r in rows), 'nothing ran, so nothing is scored'
+
+
+# ── The SQL, against a real database ─────────────────────────────────────────
+#
+# Everything above parses JSON. None of it touches the statements that
+# actually ship, and a parameter-binding mistake there fails only in Airflow,
+# at the end of a pipeline run, where nobody is watching. These run when a
+# Postgres is reachable and skip when it is not, so they cover the real
+# statements locally and during deploy smoke without making unit CI need a
+# database.
+
+import os  # noqa: E402
+
+import pytest  # noqa: E402
+
+DSN = os.environ.get(
+    'META_TEST_DSN',
+    'host=localhost port=5433 dbname=destdb user=destuser password=destpass',
+)
+
+
+@pytest.fixture()
+def conn():
+    psycopg2 = pytest.importorskip('psycopg2')
+    try:
+        connection = psycopg2.connect(DSN, connect_timeout=3)
+    except Exception as exc:  # pragma: no cover - environment dependent
+        pytest.skip(f'no Postgres for the meta schema test: {exc}')
+    with connection.cursor() as cur:
+        cur.execute('DROP SCHEMA IF EXISTS meta CASCADE')
+    connection.commit()
+    yield connection
+    connection.close()
+
+
+def _target(tmp_path, statuses):
+    (tmp_path / 'manifest.json').write_text(
+        json.dumps(MANIFEST), encoding='utf-8')
+    (tmp_path / 'run_results.json').write_text(
+        json.dumps(results_for(statuses)), encoding='utf-8')
+    return tmp_path
+
+
+def test_persist_creates_the_schema_and_writes_both_tables(conn, tmp_path):
+    summary = da.persist(conn, _target(tmp_path, {}))
+    assert summary['tables'] > 0 and summary['edges'] > 0
+
+    with conn.cursor() as cur:
+        cur.execute('SELECT count(*) FROM meta.dbt_quality')
+        assert cur.fetchone()[0] == summary['tables']
+        cur.execute('SELECT count(*) FROM meta.dbt_lineage')
+        assert cur.fetchone()[0] == summary['edges']
+
+        # The NULL has to survive the round trip through NUMERIC(5,4). A
+        # driver or column type that coerced it to 0 would turn "untested"
+        # into "failed everything", which is a different lie.
+        cur.execute('SELECT score FROM meta.dbt_quality WHERE tests_total = 0')
+        scores = [r[0] for r in cur.fetchall()]
+        assert scores and all(s is None for s in scores)
+
+
+def test_persist_is_idempotent(conn, tmp_path):
+    first = da.persist(conn, _target(tmp_path, {}))
+    second = da.persist(conn, _target(tmp_path, {}))
+    assert first == second
+
+    with conn.cursor() as cur:
+        cur.execute('SELECT count(*) FROM meta.dbt_quality')
+        assert cur.fetchone()[0] == first['tables'], 'rows duplicated on re-run'
+        cur.execute('SELECT count(*) FROM meta.dbt_lineage')
+        assert cur.fetchone()[0] == first['edges']
+
+
+def test_a_later_run_overwrites_an_earlier_score(conn, tmp_path):
+    victim = TEST_IDS[0]
+    owner = da._index(MANIFEST)[MANIFEST['nodes'][victim]['depends_on']['nodes'][0]]
+
+    da.persist(conn, _target(tmp_path, {victim: 'fail'}))
+    with conn.cursor() as cur:
+        cur.execute('SELECT score FROM meta.dbt_quality WHERE table_name = %s', (owner,))
+        failed = cur.fetchone()[0]
+    assert failed < 1
+
+    da.persist(conn, _target(tmp_path, {}))
+    with conn.cursor() as cur:
+        cur.execute('SELECT score FROM meta.dbt_quality WHERE table_name = %s', (owner,))
+        assert cur.fetchone()[0] == 1, 'a fixed table kept its old failing score'
+
+
+def test_no_manifest_is_not_a_failure(conn, tmp_path):
+    assert da.persist(conn, tmp_path / 'does-not-exist') is None

@@ -122,3 +122,84 @@ def load(target_dir):
     results_path = target / 'run_results.json'
     results = json.loads(results_path.read_text(encoding='utf-8')) if results_path.exists() else {'results': []}
     return manifest, results
+
+
+META_DDL = """
+CREATE SCHEMA IF NOT EXISTS meta;
+
+CREATE TABLE IF NOT EXISTS meta.dbt_quality (
+    table_name   TEXT PRIMARY KEY,
+    tests_total  INTEGER NOT NULL,
+    tests_passed INTEGER NOT NULL,
+    failures     INTEGER NOT NULL,
+    -- NULL means untested. Not 0, and emphatically not 1: passed/total gives
+    -- a table nobody tested a perfect score, which reads as "verified" and
+    -- means "nobody looked".
+    score        NUMERIC(5,4),
+    run_at       TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS meta.dbt_lineage (
+    child  TEXT NOT NULL,
+    parent TEXT NOT NULL,
+    PRIMARY KEY (child, parent)
+);
+"""
+
+
+def persist(conn, target_dir):
+    """Write one dbt run's quality and lineage into the warehouse.
+
+    Takes a DBAPI connection rather than an Airflow hook so the real SQL can
+    be exercised against a real database in CI. Commits on success, rolls
+    back on anything else; returns None when there is no manifest to read,
+    which is a first run rather than a failure.
+    """
+    target = pathlib.Path(target_dir)
+    if not (target / 'manifest.json').exists():
+        return None
+
+    manifest, results = load(target)
+    rows = quality(manifest, results)
+    edges = lineage(manifest)
+    run_at = run_timestamp(results)
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(META_DDL)
+            for row in rows:
+                cur.execute(
+                    """
+                    INSERT INTO meta.dbt_quality
+                        (table_name, tests_total, tests_passed, failures, score, run_at)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (table_name) DO UPDATE SET
+                        tests_total  = EXCLUDED.tests_total,
+                        tests_passed = EXCLUDED.tests_passed,
+                        failures     = EXCLUDED.failures,
+                        score        = EXCLUDED.score,
+                        run_at       = EXCLUDED.run_at
+                    """,
+                    (row['table_name'], row['tests_total'], row['tests_passed'],
+                     row['failures'], row['score'], run_at),
+                )
+            # Replaced wholesale rather than upserted: an edge that no longer
+            # exists has to disappear and there is no key to delete it by.
+            # Same transaction, so the table is never briefly empty.
+            cur.execute("DELETE FROM meta.dbt_lineage")
+            for edge in edges:
+                cur.execute(
+                    "INSERT INTO meta.dbt_lineage (child, parent) VALUES (%s, %s)"
+                    " ON CONFLICT DO NOTHING",
+                    (edge['child'], edge['parent']),
+                )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    return {
+        'tables': len(rows),
+        'edges': len(edges),
+        'untested': [r['table_name'] for r in rows if r['score'] is None],
+    }

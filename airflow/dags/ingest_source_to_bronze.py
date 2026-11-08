@@ -540,95 +540,36 @@ def _empty_parquet_keys(s3_hook, bucket, keys):
 
 
 
-# ── dbt metadata (#231 phase 1) ──────────────────────────────────────────────
-
-META_DDL = """
-CREATE SCHEMA IF NOT EXISTS meta;
-
-CREATE TABLE IF NOT EXISTS meta.dbt_quality (
-    table_name   TEXT PRIMARY KEY,
-    tests_total  INTEGER NOT NULL,
-    tests_passed INTEGER NOT NULL,
-    failures     INTEGER NOT NULL,
-    -- NULL means untested. Not 0, and emphatically not 1: passed/total gives
-    -- a table nobody tested a perfect score, which reads as "verified" and
-    -- means "nobody looked".
-    score        NUMERIC(5,4),
-    run_at       TIMESTAMPTZ NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS meta.dbt_lineage (
-    child  TEXT NOT NULL,
-    parent TEXT NOT NULL,
-    PRIMARY KEY (child, parent)
-);
-"""
+# ── dbt metadata (#231 phase 1) ────────────────────────────────────
 
 
 def persist_dbt_metadata(**kwargs):
     """Keep dbt's own run artifacts instead of discarding them.
 
-    `dbt test` writes target/run_results.json and every dbt invocation
-    rewrites target/manifest.json. Both were deleted with the task container.
-    Together they answer "is this table trustworthy" and "where did it come
-    from", which #231 phase 2 needs in order to choose a store on evidence
-    rather than on adjectives in a system prompt.
-
     Runs after dbt rather than beside it: before the test results exist there
     is nothing to read, and a stale target/ would be published as current.
+
+    The work is in dbt_artifacts.persist so it can be executed against a real
+    database by scripts/ci/test_dbt_artifacts.py. A task body that only an
+    Airflow worker can run is a task body nothing tests, and the SQL here is
+    the part worth testing.
     """
-    target = DBT_PROJECT_PATH / "target"
-    if not (target / "manifest.json").exists():
-        log.warning("No dbt manifest at %s; skipping metadata capture", target)
-        return
-
-    manifest, results = dbt_artifacts.load(target)
-    quality = dbt_artifacts.quality(manifest, results)
-    lineage = dbt_artifacts.lineage(manifest)
-    run_at = dbt_artifacts.run_timestamp(results)
-
     hook = PostgresHook(postgres_conn_id="dest_postgres")
     conn = hook.get_conn()
     try:
-        with conn.cursor() as cur:
-            cur.execute(META_DDL)
-            for row in quality:
-                cur.execute(
-                    """
-                    INSERT INTO meta.dbt_quality
-                        (table_name, tests_total, tests_passed, failures, score, run_at)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (table_name) DO UPDATE SET
-                        tests_total  = EXCLUDED.tests_total,
-                        tests_passed = EXCLUDED.tests_passed,
-                        failures     = EXCLUDED.failures,
-                        score        = EXCLUDED.score,
-                        run_at       = EXCLUDED.run_at
-                    """,
-                    (row["table_name"], row["tests_total"], row["tests_passed"],
-                     row["failures"], row["score"], run_at),
-                )
-            # Replaced wholesale rather than upserted: an edge that no longer
-            # exists has to disappear, and there is no key to delete it by.
-            # One transaction, so the table is never briefly empty.
-            cur.execute("DELETE FROM meta.dbt_lineage")
-            for edge in lineage:
-                cur.execute(
-                    "INSERT INTO meta.dbt_lineage (child, parent) VALUES (%s, %s)"
-                    " ON CONFLICT DO NOTHING",
-                    (edge["child"], edge["parent"]),
-                )
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
+        summary = dbt_artifacts.persist(conn, DBT_PROJECT_PATH / "target")
     finally:
         conn.close()
 
-    untested = [r["table_name"] for r in quality if r["score"] is None]
-    log.info("dbt metadata: %d tables scored, %d lineage edges", len(quality), len(lineage))
-    if untested:
-        log.warning("Tables with no dbt tests (score left NULL): %s", ", ".join(untested))
+    if summary is None:
+        log.warning("No dbt manifest under %s; skipped metadata capture", DBT_PROJECT_PATH)
+        return
+
+    log.info("dbt metadata: %d tables scored, %d lineage edges",
+             summary["tables"], summary["edges"])
+    if summary["untested"]:
+        log.warning("Tables with no dbt tests (score left NULL): %s",
+                    ", ".join(summary["untested"]))
 
 
 with dag:
