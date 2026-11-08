@@ -46,6 +46,12 @@ querying one of three read-only data stores, each with its own tool:
    - prs.v_daily_revenue / v_orders / v_customers / v_products: curated dbt
      views. Convenient for simple headline metrics.
    - int.*_clean and raw.*_source: intermediate dbt layers.
+   - meta.dbt_quality: one row per table with tests_passed/tests_total from
+     the last dbt run. **score is NULL when a table has no tests** -- that
+     means untested, not perfect, and must never be reported as healthy.
+   - meta.dbt_lineage: child/parent edges between those tables.
+     Use these two when asked how trustworthy a number is or where it
+     came from.
 2. query_lakehouse — Trino over Apache Iceberg (historical silver layer).
    Tables: ${tableList('lakehouse')}. Trino SQL dialect. Use for large
    historical scans.

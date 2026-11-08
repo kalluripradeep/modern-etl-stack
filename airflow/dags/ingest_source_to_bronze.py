@@ -31,6 +31,7 @@ from pipeline_config import (  # noqa: E402
     raw_ddl,
     drop_legacy_unique_ddl,
 )
+import dbt_artifacts  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -538,6 +539,39 @@ def _empty_parquet_keys(s3_hook, bucket, keys):
     return empty
 
 
+
+# ── dbt metadata (#231 phase 1) ────────────────────────────────────
+
+
+def persist_dbt_metadata(**kwargs):
+    """Keep dbt's own run artifacts instead of discarding them.
+
+    Runs after dbt rather than beside it: before the test results exist there
+    is nothing to read, and a stale target/ would be published as current.
+
+    The work is in dbt_artifacts.persist so it can be executed against a real
+    database by scripts/ci/test_dbt_artifacts.py. A task body that only an
+    Airflow worker can run is a task body nothing tests, and the SQL here is
+    the part worth testing.
+    """
+    hook = PostgresHook(postgres_conn_id="dest_postgres")
+    conn = hook.get_conn()
+    try:
+        summary = dbt_artifacts.persist(conn, DBT_PROJECT_PATH / "target")
+    finally:
+        conn.close()
+
+    if summary is None:
+        log.warning("No dbt manifest under %s; skipped metadata capture", DBT_PROJECT_PATH)
+        return
+
+    log.info("dbt metadata: %d tables scored, %d lineage edges",
+             summary["tables"], summary["edges"])
+    if summary["untested"]:
+        log.warning("Tables with no dbt tests (score left NULL): %s",
+                    ", ".join(summary["untested"]))
+
+
 with dag:
     # Dynamically generate tasks for each configured table
     ingestion_tasks = []
@@ -571,6 +605,12 @@ with dag:
         python_callable=emit_data_quality_metrics,
     )
 
+    # dbt's own artifacts, kept rather than discarded (#231 phase 1).
+    dbt_metadata = PythonOperator(
+        task_id="persist_dbt_metadata",
+        python_callable=persist_dbt_metadata,
+    )
+
     # Drop Bronze partitions past their retention window. Runs after the
     # Spark trigger so the current extract is never removed before the
     # lakehouse has had the chance to read it.
@@ -597,7 +637,7 @@ with dag:
         trigger_rule="all_done",
     )
 
-    ingestion_tasks >> dbt_transformations
+    ingestion_tasks >> dbt_transformations >> dbt_metadata
     ingestion_tasks >> trigger_spark
     ingestion_tasks >> data_quality_metrics
 
