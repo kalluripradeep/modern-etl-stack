@@ -67,6 +67,26 @@ export async function measureStores(): Promise<StoreVerdict[]> {
     return cached.verdicts;
   }
 
+  try {
+    return await takeReadings(now);
+  } catch {
+    // Health checking must never be the thing that breaks the endpoint. An
+    // unexpected failure here degrades to "nothing could be measured", which
+    // the policy already treats as unusable -- the conservative answer, and
+    // the same one a dead store gets.
+    return assess(
+      STORE_NAMES.map((store) => ({
+        store,
+        slaSeconds: STORES[store].slaFreshnessSeconds,
+        freshnessSeconds: null,
+        quality: null,
+      })),
+      ROUTING_POLICY,
+    );
+  }
+}
+
+async function takeReadings(now: number): Promise<StoreVerdict[]> {
   const quality = await qualityByTable();
 
   const readings: StoreReading[] = await Promise.all(
