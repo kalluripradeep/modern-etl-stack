@@ -40,8 +40,19 @@
 # genuinely differ between the dialects.
 # ─────────────────────────────────────────────────────────────────────────────
 
+# `sla.freshness_seconds` is the age past which this store should not be used
+# to answer a "what is happening now" question. It is a routing input, not a
+# promise: nothing enforces it yet, and #188 measured the mirror at 84s and
+# #225 found it 24 hours stale behind a connector task that still reported
+# RUNNING. The assistant currently decides which engine to use from the words
+# "seconds fresh" in a system prompt, which is exactly the reading that was
+# wrong on both occasions. See #231.
+
 stores:
   warehouse:
+    # the ingest DAG is @hourly, so one missed run is still within tolerance
+    sla:
+      freshness_seconds: 7200
     label: Pipe 1 · warehouse (PostgreSQL)
     dialect: postgresql
     table: raw.{table}_source
@@ -49,6 +60,9 @@ stores:
     freshness: SELECT EXTRACT(EPOCH FROM (now() - MAX({col}))) FROM {table}
 
   lakehouse:
+    # @hourly as well, but downstream of Pipe 1, so it inherits that lag
+    sla:
+      freshness_seconds: 10800
     label: Pipe 2 · lakehouse (Iceberg via Trino)
     dialect: trino
     table: iceberg.lake.{table}
@@ -59,6 +73,9 @@ stores:
     freshness: SELECT to_unixtime(current_timestamp) - to_unixtime(max({col})) FROM {table}
 
   mirror:
+    # continuous CDC; measured at 1-5s when healthy, and the ladder treats anything above this as the pipeline falling behind
+    sla:
+      freshness_seconds: 30
     label: Pipe 3 · mirror (ClickHouse)
     dialect: clickhouse
     # _current, not the base table: the mirror is ReplacingMergeTree, so the
@@ -70,8 +87,27 @@ stores:
 source_schema: public
 topic_prefix: cdc
 
+# `owner` and `classification` are the data contract. Every column must appear
+# exactly once under classification -- scripts/ci/test_data_contract.py fails
+# the build otherwise, which is what stops a new column arriving with nobody
+# having said what it is. `email` sat here as `unique_columns` for the whole
+# life of the repo with nothing recording that it identifies a person.
+#
+# public    publishable as-is (catalogue data)
+# internal  business data, not personally identifying
+# pii       identifies a person
+# phi       health information; none in this schema, listed so the vocabulary
+#           does not have to change when there is
+#
+# One owner across all four because they come from one source system. In a
+# real deployment these differ per domain, and that is the point of the field.
+
 tables:
   customers:
+    owner: data-platform
+    classification:
+      internal: [customer_id, created_at, updated_at]
+      pii: [first_name, last_name, email, address, city, state, zip_code]
     primary_key: customer_id
     cursor_column: updated_at        # incremental extract high-water mark
     partition_column: created_at     # immutable — see note at the bottom
@@ -90,6 +126,10 @@ tables:
     unique_columns: [email]
 
   products:
+    owner: data-platform
+    classification:
+      public: [name, description, price, category]
+      internal: [product_id, stock_quantity, created_at, updated_at]
     primary_key: product_id
     cursor_column: updated_at
     partition_column: created_at     # immutable — see note at the bottom
@@ -106,6 +146,9 @@ tables:
     low_cardinality: [category]
 
   orders:
+    owner: data-platform
+    classification:
+      internal: [order_id, customer_id, order_date, total_amount, status, created_at, updated_at]
     primary_key: order_id
     cursor_column: updated_at
     partition_column: created_at     # immutable — see note at the bottom
@@ -121,6 +164,9 @@ tables:
     low_cardinality: [status]
 
   order_items:
+    owner: data-platform
+    classification:
+      internal: [item_id, order_id, product_id, quantity, unit_price, created_at, updated_at]
     primary_key: item_id
     cursor_column: updated_at
     partition_column: created_at     # immutable — see note at the bottom

@@ -129,6 +129,7 @@ def gen_stores_ts(manifest):
         '  dialect: string;',
         '  tables: Record<string, string>;',
         '  dateTrunc: string;',
+        '  slaFreshnessSeconds: number;',
         '}',
         '',
         'export const STORES: Record<string, StoreDef> = {',
@@ -144,12 +145,49 @@ def gen_stores_ts(manifest):
             "    dialect: '%s'," % store['dialect'],
             '    tables: { %s },' % tables,
             "    dateTrunc: '%s'," % store['date_trunc'],
+            '    slaFreshnessSeconds: %d,' % store['sla']['freshness_seconds'],
             '  },',
         ]
     lines += [
         '};',
         '',
         'export const STORE_NAMES = Object.keys(STORES);',
+        '',
+    ]
+    for tname, tdef in manifest['tables'].items():
+        cols = {}
+        for cls, names in (tdef.get('classification') or {}).items():
+            for col in names:
+                cols[col] = cls
+        pairs = ', '.join("%s: '%s'" % (c, cols[c]) for c in tdef['columns'] if c in cols)
+        if tname == next(iter(manifest['tables'])):
+            lines += [
+                '// The data contract, per table. Emitted here rather than read',
+                '// from YAML at runtime for the same reason the table names are:',
+                '// this is the one consumer written in another language, and so',
+                '// the one place a hand-kept copy drifts.',
+                "export type Classification = 'public' | 'internal' | 'pii' | 'phi';",
+                '',
+                'export interface TableContract {',
+                '  owner: string;',
+                '  columns: Record<string, Classification>;',
+                '}',
+                '',
+                'export const CONTRACT: Record<string, TableContract> = {',
+            ]
+        lines += [
+            '  %s: {' % tname,
+            "    owner: '%s'," % tdef['owner'],
+            '    columns: { %s },' % pairs,
+            '  },',
+        ]
+    lines += [
+        '};',
+        '',
+        '// Columns that must not be shown without authorisation. Nothing',
+        '// enforces this yet -- see #231 phase 4. Exported now so the list',
+        '// has one definition when something does.',
+        "export const SENSITIVE: Classification[] = ['pii', 'phi'];",
         '',
     ]
     return '\n'.join(lines)

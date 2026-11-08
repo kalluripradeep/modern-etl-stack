@@ -7,6 +7,7 @@ export interface StoreDef {
   dialect: string;
   tables: Record<string, string>;
   dateTrunc: string;
+  slaFreshnessSeconds: number;
 }
 
 export const STORES: Record<string, StoreDef> = {
@@ -15,19 +16,57 @@ export const STORES: Record<string, StoreDef> = {
     dialect: 'postgresql',
     tables: { customers: 'raw.customers_source', products: 'raw.products_source', orders: 'raw.orders_source', order_items: 'raw.order_items_source' },
     dateTrunc: 'date({})',
+    slaFreshnessSeconds: 7200,
   },
   lakehouse: {
     label: 'Pipe 2 · lakehouse (Iceberg via Trino)',
     dialect: 'trino',
     tables: { customers: 'iceberg.lake.customers', products: 'iceberg.lake.products', orders: 'iceberg.lake.orders', order_items: 'iceberg.lake.order_items' },
     dateTrunc: 'cast({} as date)',
+    slaFreshnessSeconds: 10800,
   },
   mirror: {
     label: 'Pipe 3 · mirror (ClickHouse)',
     dialect: 'clickhouse',
     tables: { customers: 'mirror.customers_current', products: 'mirror.products_current', orders: 'mirror.orders_current', order_items: 'mirror.order_items_current' },
     dateTrunc: 'toDate({})',
+    slaFreshnessSeconds: 30,
   },
 };
 
 export const STORE_NAMES = Object.keys(STORES);
+
+// The data contract, per table. Emitted here rather than read
+// from YAML at runtime for the same reason the table names are:
+// this is the one consumer written in another language, and so
+// the one place a hand-kept copy drifts.
+export type Classification = 'public' | 'internal' | 'pii' | 'phi';
+
+export interface TableContract {
+  owner: string;
+  columns: Record<string, Classification>;
+}
+
+export const CONTRACT: Record<string, TableContract> = {
+  customers: {
+    owner: 'data-platform',
+    columns: { customer_id: 'internal', first_name: 'pii', last_name: 'pii', email: 'pii', address: 'pii', city: 'pii', state: 'pii', zip_code: 'pii', created_at: 'internal', updated_at: 'internal' },
+  },
+  products: {
+    owner: 'data-platform',
+    columns: { product_id: 'internal', name: 'public', description: 'public', price: 'public', category: 'public', stock_quantity: 'internal', created_at: 'internal', updated_at: 'internal' },
+  },
+  orders: {
+    owner: 'data-platform',
+    columns: { order_id: 'internal', customer_id: 'internal', order_date: 'internal', total_amount: 'internal', status: 'internal', created_at: 'internal', updated_at: 'internal' },
+  },
+  order_items: {
+    owner: 'data-platform',
+    columns: { item_id: 'internal', order_id: 'internal', product_id: 'internal', quantity: 'internal', unit_price: 'internal', created_at: 'internal', updated_at: 'internal' },
+  },
+};
+
+// Columns that must not be shown without authorisation. Nothing
+// enforces this yet -- see #231 phase 4. Exported now so the list
+// has one definition when something does.
+export const SENSITIVE: Classification[] = ['pii', 'phi'];
