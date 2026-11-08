@@ -8,7 +8,18 @@ import {
   resultToMarkdown,
 } from '@/lib/datastores';
 import { STORES } from '@/lib/stores.generated';
-import { measureStores, describeStores, provenance } from '@/lib/store-health';
+import {
+  measureStores,
+  describeStores,
+  contractByPhysicalTable,
+} from '@/lib/store-health';
+import {
+  newTraceId,
+  exposedColumns,
+  summarise,
+  type QueryRecord,
+  type ProvenanceRecord,
+} from '@/lib/provenance';
 
 const MAX_TOOL_ITERATIONS = 8;
 
@@ -130,25 +141,100 @@ const TOOLS: Anthropic.Tool[] = [
   },
 ];
 
-async function executeTool(name: string, input: unknown): Promise<string> {
+const TOOL_STORES: Record<string, string> = {
+  query_warehouse: 'warehouse',
+  query_lakehouse: 'lakehouse',
+  query_mirror: 'mirror',
+};
+
+/**
+ * Runs one tool call and appends what it did to `log`.
+ *
+ * The record is taken here, from the call that executed, rather than from the
+ * model's closing sentence about which store it used. The latter is generated
+ * text about the query; this is the query (#231 phase 3).
+ */
+async function executeTool(
+  name: string,
+  input: unknown,
+  log: QueryRecord[],
+): Promise<string> {
   const sql = (input as { sql?: string })?.sql ?? '';
+  const store = TOOL_STORES[name];
+  const started = Date.now();
+
   try {
+    if (name === 'get_schema') return await getSchemaOverview();
+
+    let result;
     switch (name) {
-      case 'get_schema':
-        return await getSchemaOverview();
-      case 'query_warehouse':
-        return resultToMarkdown(await queryWarehouse(sql));
-      case 'query_lakehouse':
-        return resultToMarkdown(await queryLakehouse(sql));
-      case 'query_mirror':
-        return resultToMarkdown(await queryMirror(sql));
-      default:
-        return `Unknown tool: ${name}`;
+      case 'query_warehouse': result = await queryWarehouse(sql); break;
+      case 'query_lakehouse': result = await queryLakehouse(sql); break;
+      case 'query_mirror': result = await queryMirror(sql); break;
+      default: return `Unknown tool: ${name}`;
     }
+    log.push({ store, sql, rows: result.rowCount, ms: Date.now() - started });
+    return resultToMarkdown(result);
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // A rejected query is part of the record. An audit trail that keeps only
+    // the successes describes a different session than the one that happened.
+    if (store) {
+      // Capped: a database can return a multi-kilobyte error (ClickHouse
+      // returns its whole JSON envelope), and an audit line that can grow
+      // without bound is a logging problem wearing an audit trail's clothes.
+      log.push({
+        store,
+        sql,
+        rows: null,
+        ms: Date.now() - started,
+        error: message.length > 500 ? `${message.slice(0, 500)}...` : message,
+      });
+    }
     // Surface the error to the model so it can correct the query
-    throw new Error(err instanceof Error ? err.message : String(err));
+    throw new Error(message);
   }
+}
+
+
+/**
+ * Assemble the record, write it where it will outlive the process, and hand
+ * back what the reply should carry.
+ *
+ * Deliberately not written to the warehouse. That connection is read-only by
+ * design, and an audit trail the audited component can rewrite is not an
+ * audit trail. One structured line on stdout is what a cluster's log pipeline
+ * already collects, and it leaves the assistant unable to edit its own
+ * history.
+ */
+function recordProvenance(
+  traceId: string,
+  question: string,
+  queryLog: QueryRecord[],
+  verdicts: { store: string; freshnessSeconds: number | null; eligible: boolean; reason: string }[],
+  answered: boolean,
+): ProvenanceRecord {
+  const record: ProvenanceRecord = {
+    traceId,
+    at: new Date().toISOString(),
+    question,
+    storesQueried: [...new Set(queryLog.map((q) => q.store))].sort(),
+    queries: queryLog,
+    storeHealth: verdicts.map((v) => ({
+      store: v.store,
+      freshnessSeconds: v.freshnessSeconds,
+      eligible: v.eligible,
+      reason: v.reason,
+    })),
+    // Over-reports rather than under-reports: a table named inside a string
+    // literal counts. For "did this answer touch personal data" that is the
+    // safe direction, and it is why this does not drive masking.
+    exposed: exposedColumns(queryLog, contractByPhysicalTable(), ['pii', 'phi']),
+    answered,
+  };
+
+  console.log(JSON.stringify({ event: 'ai_answer', ...record }));
+  return record;
 }
 
 export async function POST(request: Request) {
@@ -167,6 +253,8 @@ export async function POST(request: Request) {
   // above. #188 measured the mirror at 84s against a 30s SLA and #225 found
   // it a day behind; both would have read as "seconds fresh".
   const verdicts = await measureStores();
+  const traceId = newTraceId();
+  const queryLog: QueryRecord[] = [];
   const system = `${SYSTEM_PROMPT}
 
 STORE HEALTH
@@ -193,7 +281,7 @@ ${describeStores(verdicts)}`;
             return {
               type: 'tool_result' as const,
               tool_use_id: tu.id,
-              content: await executeTool(tu.name, tu.input),
+              content: await executeTool(tu.name, tu.input, queryLog),
             };
           } catch (err) {
             return {
@@ -217,6 +305,7 @@ ${describeStores(verdicts)}`;
     }
 
     if (response.stop_reason === 'refusal') {
+      recordProvenance(traceId, query, queryLog, verdicts, false);
       return NextResponse.json({
         role: 'assistant',
         content: 'I can\'t help with that request.',
@@ -229,15 +318,18 @@ ${describeStores(verdicts)}`;
       .join('\n')
       .trim();
 
+    const record = recordProvenance(traceId, query, queryLog, verdicts, Boolean(text));
     return NextResponse.json({
       role: 'assistant',
       content: text || 'I ran out of steps while researching that — try a more specific question.',
-      // The measurement the routing rested on, travelling with the answer.
-      // Phase 3 turns this into a full provenance record.
-      storeHealth: provenance(verdicts),
+      provenance: record,
+      provenanceSummary: summarise(record),
     });
   } catch (err) {
     console.error(err);
+    // A failed answer is still a thing that happened, and the queries that
+    // ran before it failed still ran.
+    recordProvenance(traceId, query, queryLog, verdicts, false);
     const message = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json({ role: 'assistant', content: `⚠️ **AI Brain Error:** ${message}` });
   }

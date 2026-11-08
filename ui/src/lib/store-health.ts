@@ -10,6 +10,7 @@ import {
   STORES,
   STORE_NAMES,
   ROUTING_POLICY,
+  CONTRACT,
 } from './stores.generated.ts';
 import { queryWarehouse, queryLakehouse, queryMirror } from './datastores.ts';
 import { assess, describe, type StoreReading, type StoreVerdict } from './routing.ts';
@@ -132,4 +133,23 @@ export function provenance(verdicts: StoreVerdict[]): string {
       return `${v.store}=${age}${v.eligible ? '' : ' (excluded)'}`;
     })
     .join(' · ');
+}
+
+/**
+ * The data contract keyed by the names that appear in SQL (#231 phase 3).
+ *
+ * Phase 0 classifies columns per logical table -- `customers`. A query names
+ * the physical one -- `mirror.customers_current`, `raw.customers_source` --
+ * and which of those it is depends on the store. Both halves are generated
+ * from the manifest, so this is a join rather than a second list to maintain.
+ */
+export function contractByPhysicalTable(): Record<string, Record<string, string>> {
+  const byTable: Record<string, Record<string, string>> = {};
+  for (const store of STORE_NAMES) {
+    for (const [logical, physical] of Object.entries(STORES[store].tables)) {
+      const contract = CONTRACT[logical];
+      if (contract) byTable[physical] = contract.columns;
+    }
+  }
+  return byTable;
 }
