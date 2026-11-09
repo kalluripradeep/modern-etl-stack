@@ -53,12 +53,6 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Everything except Next.js internals, static assets, and /api/metrics.
-  //
-  // The metrics route is exempt because a Prometheus scrape job cannot hold
-  // a password without that password living in a ConfigMap next to the
-  // scrape config. The exemption is only safe because of what that route
-  // emits -- store names, table names and counts, never SQL, column values
-  // or question text -- which scripts/ci/test_metrics_safety.py enforces.
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|api/metrics).*)'],
+  // Everything except Next.js internals and static assets
+  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
 };

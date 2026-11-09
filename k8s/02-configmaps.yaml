@@ -26,15 +26,6 @@ data:
         static_configs:
           - targets: ['node-exporter.etl.svc.cluster.local:9100']
 
-      # Governance signals from the dashboard: which store answered,
-      # whether it was inside its SLA, dbt quality per table, queries the
-      # access policy refused (#231 phase 5). /api/metrics is exempt from
-      # the dashboard's basic auth so this job needs no credential.
-      - job_name: 'etl-governance'
-        metrics_path: /api/metrics
-        static_configs:
-          - targets: ['data-dashboard.etl.svc.cluster.local:3000']
-
       - job_name: 'kafka-exporter'
         static_configs:
           - targets: ['kafka-exporter.etl.svc.cluster.local:9308']

@@ -153,14 +153,6 @@ DSN = os.environ.get(
 
 @pytest.fixture()
 def conn():
-    """A clean meta schema, which means **dropping it**.
-
-    Worth knowing before pointing META_TEST_DSN at anything you care about:
-    running this suite against a live stack removes meta.dbt_quality and
-    meta.dbt_lineage, so the dashboard's /api/metrics loses its quality
-    gauges until the ingest DAG runs again. That is fine for derived data on
-    a dev database and would not be fine anywhere else.
-    """
     psycopg2 = pytest.importorskip('psycopg2')
     try:
         connection = psycopg2.connect(DSN, connect_timeout=3)

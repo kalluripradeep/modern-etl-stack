@@ -14,13 +14,6 @@ import {
   contractByPhysicalTable,
 } from '@/lib/store-health';
 import {
-  recordAnswer,
-  recordQuery,
-  recordRefusal,
-  recordSlaBlock,
-  classifyError,
-} from '@/lib/metrics';
-import {
   newTraceId,
   exposedColumns,
   summarise,
@@ -181,7 +174,6 @@ async function executeTool(
       default: return `Unknown tool: ${name}`;
     }
     log.push({ store, sql, rows: result.rowCount, ms: Date.now() - started });
-    if (store) recordQuery(store, 'ok');
     return resultToMarkdown(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -198,9 +190,6 @@ async function executeTool(
         ms: Date.now() - started,
         error: message.length > 500 ? `${message.slice(0, 500)}...` : message,
       });
-      // denied is the access policy working. Counting it as a failure would
-      // make a correctly governed platform look broken (#231 phase 5).
-      recordQuery(store, classifyError(message));
     }
     // Surface the error to the model so it can correct the query
     throw new Error(message);
@@ -264,7 +253,6 @@ export async function POST(request: Request) {
   // above. #188 measured the mirror at 84s against a 30s SLA and #225 found
   // it a day behind; both would have read as "seconds fresh".
   const verdicts = await measureStores();
-  for (const v of verdicts) if (!v.eligible) recordSlaBlock(v.store);
   const traceId = newTraceId();
   const queryLog: QueryRecord[] = [];
   const system = `${SYSTEM_PROMPT}
@@ -318,7 +306,6 @@ ${describeStores(verdicts)}`;
 
     if (response.stop_reason === 'refusal') {
       recordProvenance(traceId, query, queryLog, verdicts, false);
-      recordRefusal();
       return NextResponse.json({
         role: 'assistant',
         content: 'I can\'t help with that request.',
@@ -332,8 +319,6 @@ ${describeStores(verdicts)}`;
       .trim();
 
     const record = recordProvenance(traceId, query, queryLog, verdicts, Boolean(text));
-    if (text) recordAnswer(record.storesQueried);
-    else recordRefusal();
     return NextResponse.json({
       role: 'assistant',
       content: text || 'I ran out of steps while researching that — try a more specific question.',
