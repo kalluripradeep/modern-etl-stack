@@ -22,6 +22,9 @@ Worth stating first, because the difference is the whole point.
 Only the first two are enforcement. The rest are signals: useful, and
 defeatable by anything that does not go through the assistant.
 
+All of them are visible over time on the **Governance and Trust** Grafana
+dashboard, which is the subject of the last section.
+
 ## The contract
 
 `airflow/dags/config/pipelines.yml` carries, per table, an `owner` and a
@@ -157,3 +160,46 @@ over-reports, which is the safe direction for *"did this answer touch
 personal data"* and the wrong direction for an access decision — which is why
 the grants above are derived from the contract and the catalogue, and never
 from this.
+
+## Watching it over time
+
+Every signal above is produced one answer at a time, which is the wrong shape
+for noticing that a store has been stale all week or that denials started
+last Tuesday. The dashboard exposes them at `/api/metrics` and Prometheus
+scrapes it as the `etl-governance` job, in both Compose and Kubernetes.
+
+| Metric | What it answers |
+|---|---|
+| `etl_store_freshness_seconds` / `etl_store_sla_seconds` | How close each store is to its limit. The ratio is the panel worth watching |
+| `etl_store_eligible` | How many stores are usable right now |
+| `etl_store_probe_failed` | A store that cannot report its own freshness, excluded rather than assumed healthy |
+| `etl_store_sla_blocks_total` | How often staleness withheld a store from the model |
+| `etl_answers_total` | Which store is actually answering |
+| `etl_queries_total{outcome}` | `ok`, `error`, and **`denied` separately** |
+| `etl_answer_refusals_total` | Answers the platform declined to give |
+| `etl_dbt_quality_score` | Pass rate per table |
+| `etl_dbt_untested_tables` | Tables nobody has tested |
+
+`denied` is deliberately not an error. A permission error is the access
+policy working, and counting it as a failure would make a correctly governed
+platform look broken — and would hide a real error rate behind it.
+
+A table with no tests is **absent** from `etl_dbt_quality_score` rather than
+reported as 0 or 1. A gauge cannot say "nobody looked", so the count of such
+tables is its own metric, and that is the one to alert on.
+
+### Why the endpoint is unauthenticated
+
+`/api/metrics` is exempt from the dashboard's basic auth, because a
+Prometheus scrape job cannot hold a password without that password living in
+a ConfigMap next to the scrape config.
+
+The exemption is only defensible because of what the route emits: store
+names, table names and counts. **No SQL, no column values, no question
+text.** `scripts/ci/test_metrics_safety.py` holds both halves of that — the
+exemption stays narrow, and the route stays incapable of carrying anything
+else, checked against a live scrape when one is reachable.
+
+Counters live in the dashboard process and reset when it restarts.
+Prometheus handles counter resets, and a second replica reports its own —
+fine for a signal, and not a basis for anything that needs to be exact.
