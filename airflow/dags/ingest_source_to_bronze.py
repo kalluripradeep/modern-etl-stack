@@ -583,12 +583,26 @@ def persist_dbt_metadata(**kwargs):
                 "--target-path", str(target),
             ],
             capture_output=True, text=True, timeout=1800, check=False,
+            # dbt writes logs/dbt.log inside --project-dir unless told
+            # otherwise, and on Kubernetes that directory is a read-only
+            # git-sync checkout. It fails before its own logger exists, so the
+            # failure arrives as exit 2 with nothing on stdout or stderr --
+            # see #225. Cosmos never hits this because it copies the project
+            # into a temp dir first; this task runs dbt in place, so it has to
+            # redirect the log path itself. dbt/logs/ is gitignored, so the
+            # directory is not even present on the cluster to be written to.
+            env={**os.environ, "DBT_LOG_PATH": str(target)},
         )
         # 1 is "some tests failed", which is data. Anything else means dbt did
         # not get far enough to write artifacts worth reading.
         if result.returncode not in (0, 1):
-            log.error("dbt test could not run (exit %s): %s",
-                      result.returncode, (result.stderr or result.stdout)[-800:])
+            detail = (result.stderr or result.stdout or "").strip()[-800:]
+            log.error(
+                "dbt test could not run (exit %s): %s", result.returncode,
+                detail or "no output on either stream, which usually means dbt "
+                          "died before logging started -- check that it can "
+                          f"write to {target} and read {DBT_PROJECT_PATH}",
+            )
             raise AirflowException(
                 f"dbt test exited {result.returncode}; no metadata captured"
             )
