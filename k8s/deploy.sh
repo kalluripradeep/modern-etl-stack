@@ -375,6 +375,12 @@ kubectl create configmap clickhouse-init -n $NAMESPACE \
 # attached. Same file compose mounts, so both environments behave identically.
 kubectl create configmap clickhouse-config -n $NAMESPACE \
   --from-file="$REPO_ROOT/docker/clickhouse/config.d" --dry-run=client -o yaml | kubectl apply -f -
+# Lets chuser manage SQL grants, which is how the column grants generated
+# into 01_mirror_schema.sql reach the mirror (#231 phase 4). An XML-defined
+# user cannot be given column-level grants, so without this the mirror
+# cannot withhold a classified column at all.
+kubectl create configmap clickhouse-users -n $NAMESPACE \
+  --from-file="$REPO_ROOT/docker/clickhouse/users.d" --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -f "$TMP_K8S/clickhouse/"
 kubectl rollout status statefulset/clickhouse -n $NAMESPACE --timeout=300s
 
@@ -421,6 +427,16 @@ for _ in $(seq 1 30); do
   fi
   sleep 5
 done
+
+# The role has to exist before the grants in the schema file name it. Its
+# password comes from the secret rather than the generated SQL, because a
+# credential does not belong in a committed file (#231 phase 4).
+info "Creating the restricted dashboard role on the mirror..."
+kubectl exec -i clickhouse-0 -n $NAMESPACE -- clickhouse-client \
+  --user "$(secret_val CLICKHOUSE_USER)" \
+  --password "$(secret_val CLICKHOUSE_PASSWORD)" \
+  -q "CREATE USER IF NOT EXISTS $(secret_val DASHBOARD_CH_USER) IDENTIFIED WITH plaintext_password BY '$(secret_val DASHBOARD_CH_PASSWORD)'" \
+  || warn "Could not create the dashboard role; the mirror grants below will fail"
 
 info "Applying the mirror schema (idempotent, so existing volumes converge)..."
 if kubectl exec -i clickhouse-0 -n $NAMESPACE -- clickhouse-client \

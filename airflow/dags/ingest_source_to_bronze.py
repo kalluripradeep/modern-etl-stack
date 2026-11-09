@@ -33,6 +33,7 @@ from pipeline_config import (  # noqa: E402
     raw_ddl,
     drop_legacy_unique_ddl,
 )
+import access_policy  # noqa: E402
 import dbt_artifacts  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -614,6 +615,42 @@ def persist_dbt_metadata(**kwargs):
                     ", ".join(summary["untested"]))
 
 
+
+def apply_access_policy(**kwargs):
+    """Re-derive the dashboard role's column grants from the data contract.
+
+    Runs after dbt because dbt creates the tables being granted on. A model
+    added this run has to be covered this run, and the role holds no default
+    privileges precisely so that a new table is unreadable until something
+    decides what it may expose.
+
+    Enforcement is in the database rather than the API on purpose. The
+    assistant writes its own SQL, so an application-side check runs against
+    generated SQL, where an alias, an expression or a view defeats matching
+    on column names. A column grant holds however the query is written.
+    """
+    hook = PostgresHook(postgres_conn_id="dest_postgres")
+    conn = hook.get_conn()
+    try:
+        summary = access_policy.apply(
+            conn, MANIFEST, os.environ.get("DASHBOARD_DB_USER", "dashboard_ro")
+        )
+    finally:
+        conn.close()
+
+    log.info(
+        "access policy: %d tables, %d views, %d statements; withholding %s",
+        summary["tables"], summary["views"], summary["statements"],
+        ", ".join(summary["denied_columns"]),
+    )
+    if summary["views_withheld"]:
+        # A view is all or nothing: it runs with its owner's privileges unless
+        # it was declared security_invoker, so column grants underneath do not
+        # protect it.
+        log.warning("Views withheld entirely because they read a classified column: %s",
+                    ", ".join(summary["views_withheld"]))
+
+
 with dag:
     # Dynamically generate tasks for each configured table
     ingestion_tasks = []
@@ -657,6 +694,15 @@ with dag:
         trigger_rule="all_done",
     )
 
+    # The data contract, enforced by the database (#231 phase 4).
+    access_policy_task = PythonOperator(
+        task_id="apply_access_policy",
+        python_callable=apply_access_policy,
+        # Same reasoning as the metadata capture: a failing dbt test must not
+        # leave the grants un-applied, or a failed run quietly widens access.
+        trigger_rule="all_done",
+    )
+
     # Drop Bronze partitions past their retention window. Runs after the
     # Spark trigger so the current extract is never removed before the
     # lakehouse has had the chance to read it.
@@ -684,6 +730,7 @@ with dag:
     )
 
     ingestion_tasks >> dbt_transformations >> dbt_metadata
+    dbt_transformations >> access_policy_task
     ingestion_tasks >> trigger_spark
     ingestion_tasks >> data_quality_metrics
 

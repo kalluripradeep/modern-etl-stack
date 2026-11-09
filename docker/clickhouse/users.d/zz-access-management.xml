@@ -1,0 +1,29 @@
+<clickhouse>
+  <!--
+    Lets chuser manage SQL users and grants, which is how the column grants in
+    airflow/dags/access_policy.py reach the mirror (#231 phase 4).
+
+    An XML-defined user cannot be given column-level grants: the XML format
+    covers databases, dictionaries and row policies, not columns. So without
+    SQL access control there is no way to withhold `email` from the dashboard
+    on this store at all.
+
+    This is a mounted file rather than the image's CLICKHOUSE_ACCESS_MANAGEMENT
+    environment variable, because that variable is only read when the server
+    initialises a fresh data directory. On a volume that already exists it is
+    silently ignored, which is a setting that appears to be applied and is not.
+
+    The filename has to sort after default-user.xml. Files in users.d are
+    merged in alphabetical order and the image writes access_management=0
+    there, so an 01 prefix loses and a zz prefix wins.
+
+    chuser is hardcoded because it is fixed in both k8s/generate-secrets.sh
+    and k8s/01-secrets.yaml, where only the password is generated. A guard in
+    scripts/ci/test_access_policy.py fails the build if that stops being true.
+  -->
+  <users>
+    <chuser>
+      <access_management>1</access_management>
+    </chuser>
+  </users>
+</clickhouse>

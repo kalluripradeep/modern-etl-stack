@@ -306,6 +306,10 @@ services:
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-chuser}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-chpass}
       CLICKHOUSE_DB: mirror
+      # Read by docker/clickhouse/initdb/00-dashboard-role.sh, which creates
+      # the restricted role the dashboard connects as (#231 phase 4).
+      DASHBOARD_CH_USER: ${DASHBOARD_CH_USER:-dashboard_ro}
+      DASHBOARD_CH_PASSWORD: ${DASHBOARD_CH_PASSWORD:-dashboard_ro}
     ulimits:
       nofile:
         soft: 262144
@@ -316,6 +320,8 @@ services:
       # Single file, not the directory: mounting the directory would mask the
       # image's docker_related_config.xml and the server would bind loopback only
       - ./docker/clickhouse/config.d/kafka.xml:/etc/clickhouse-server/config.d/kafka.xml:ro
+      # Must sort after the image default-user.xml; see the file.
+      - ./docker/clickhouse/users.d/zz-access-management.xml:/etc/clickhouse-server/users.d/zz-access-management.xml:ro
       # Bounds ClickHouse's own internal logging (trace_log, metric_log, ...).
       # Unbounded, these grew to 34G on one node and took it past the
       # kubelet's eviction threshold -- see #144.
@@ -608,8 +614,11 @@ services:
       DEST_DB_PASSWORD: ${DASHBOARD_DB_PASSWORD:-dashboard_ro}
       TRINO_URL: http://trino:8080
       CLICKHOUSE_URL: http://clickhouse:8123
-      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-chuser}
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-chpass}
+      # The restricted role, not chuser. Columns classified pii or phi in the
+      # manifest are withheld from it by the grants in 01_mirror_schema.sql,
+      # and ClickHouse refuses them however the query is written (#231 phase 4).
+      CLICKHOUSE_USER: ${DASHBOARD_CH_USER:-dashboard_ro}
+      CLICKHOUSE_PASSWORD: ${DASHBOARD_CH_PASSWORD:-dashboard_ro}
       # Set both to require a login. Left unset the dashboard is open, which
       # is fine on a laptop and not on anything shared.
       DASHBOARD_AUTH_USER: ${DASHBOARD_AUTH_USER:-}

@@ -53,6 +53,10 @@ stringData:
   DASHBOARD_AUTH_PASSWORD: $(rand)
   CLICKHOUSE_USER: chuser
   CLICKHOUSE_PASSWORD: $(rand)
+  # The restricted role the dashboard connects as. Columns classified
+  # pii or phi in the data contract are withheld from it (#231 phase 4).
+  DASHBOARD_CH_USER: dashboard_ro
+  DASHBOARD_CH_PASSWORD: $(rand)
 EOF
 
 chmod 600 "$OUT"
