@@ -67,9 +67,18 @@ stores:
     dialect: trino
     table: iceberg.lake.{table}
     date_trunc: cast({} as date)
-    # to_unixtime rather than date_diff: current_timestamp is a timestamp with
-    # time zone and the Iceberg column is not, and Trino refuses to unify those
-    # two types inside date_diff. Subtracting epoch seconds sidesteps it.
+    # to_unixtime rather than date_diff, but not for the reason this comment
+    # used to give. It claimed the Iceberg column was a timestamp without a
+    # zone and that Trino would refuse to unify the two types inside
+    # date_diff. Neither holds: Spark writes updated_at as
+    # `timestamp(6) with time zone`, and on Trino 474 date_diff returns the
+    # same figure as this expression. It may have been true of an older
+    # Trino; it is not true of the one in docker-compose.yml.
+    #
+    # The expression stays because to_unixtime accepts a timestamp with or
+    # without a zone and gives the same answer either way, so this keeps
+    # working if the column's type ever changes -- which is the property
+    # worth having in a probe that nothing else exercises.
     freshness: SELECT to_unixtime(current_timestamp) - to_unixtime(max({col})) FROM {table}
 
   mirror:
