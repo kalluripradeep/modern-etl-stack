@@ -76,6 +76,26 @@ def grants_for_views(view_sources, denied, role):
     return statements
 
 
+def schema_usage(role, schemas):
+    """USAGE on every schema the policy covers.
+
+    Without it a column grant is unreachable: the role is allowed to read the
+    table and not allowed to enter the schema holding it. `meta` is the case
+    that bites, because phase 1 creates it long after the role script granted
+    USAGE on the five schemas it knew about -- so the assistant was granted
+    SELECT on meta.dbt_quality and still could not read it, which made phase
+    1's whole output invisible to the thing it was built for.
+
+    Granting USAGE here rather than in the role script keeps it tied to
+    whatever the policy actually covers, so the next schema does not repeat
+    this.
+    """
+    return [
+        f'GRANT USAGE ON SCHEMA "{schema}" TO {role};'
+        for schema in sorted(schemas)
+    ]
+
+
 def revocations(role, schemas):
     """Start from nothing, every time.
 
@@ -100,6 +120,7 @@ def plan(table_columns, view_sources, denied, role, schemas=None):
         schemas = {s for (s, _) in table_columns} | {s for (s, _) in view_sources}
     return (
         revocations(role, schemas)
+        + schema_usage(role, schemas)
         + grants_for_tables(table_columns, denied, role)
         + grants_for_views(view_sources, denied, role)
     )

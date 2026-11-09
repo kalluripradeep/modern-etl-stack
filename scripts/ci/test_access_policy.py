@@ -219,3 +219,19 @@ def test_the_dashboard_does_not_fall_back_to_the_admin_account():
     assert block, 'the dashboard no longer uses the restricted ClickHouse role'
     assert 'optional' not in block.group(0), \
         'an optional reference silently falls back to the admin account'
+
+
+def test_the_policy_grants_usage_on_every_schema_it_covers():
+    """A column grant is unreachable without USAGE on the schema holding it.
+
+    `meta` is the case that bit: phase 1 creates it long after the role
+    script granted USAGE on the five schemas it knew about, so the assistant
+    was granted SELECT on meta.dbt_quality and still could not read it --
+    phase 1's whole output was invisible to the thing it was built for, and
+    nothing failed.
+    """
+    plan = ap.plan({('meta', 'dbt_quality'): ['table_name']}, {}, set(), 'r', {'meta'})
+    assert 'GRANT USAGE ON SCHEMA "meta" TO r;' in plan
+    assert plan.index('GRANT USAGE ON SCHEMA "meta" TO r;') < next(
+        i for i, s in enumerate(plan) if s.startswith('GRANT SELECT')
+    ), 'USAGE must be granted before the table grants that depend on it'
