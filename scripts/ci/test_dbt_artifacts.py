@@ -267,6 +267,20 @@ def test_the_task_does_not_read_the_projects_target_directory():
         'the task no longer directs dbt to a target path it controls'
 
 
+def test_the_task_does_not_write_logs_into_the_project_directory():
+    """#225: dbt writes logs/dbt.log into --project-dir unless redirected.
+
+    On Kubernetes the project is a read-only git-sync checkout, so dbt dies
+    before its own logger exists: exit 2, nothing on stdout, nothing on
+    stderr. Directing --target-path elsewhere is not enough, because the log
+    path is separate and defaults into the project.
+    """
+    assert 'DBT_LOG_PATH' in DAG_SOURCE, (
+        'persist_dbt_metadata no longer redirects the dbt log path; on a '
+        'read-only project directory dbt exits 2 with no output at all'
+    )
+
+
 def test_failing_tests_do_not_fail_the_capture():
     """A failing test is the finding. Exit 1 must be accepted."""
     assert 'returncode not in (0, 1)' in DAG_SOURCE, \
