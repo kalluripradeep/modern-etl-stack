@@ -54,16 +54,19 @@ spec:
           value: "http://trino.etl.svc.cluster.local:8080"
         - name: CLICKHOUSE_URL
           value: "http://clickhouse.etl.svc.cluster.local:8123"
+        # The restricted role, not chuser. Columns classified pii or phi
+        # in the manifest are withheld from it by generated grants, and
+        # ClickHouse refuses them however the query is written (phase 4).
         - name: CLICKHOUSE_USER
           valueFrom:
             secretKeyRef:
               name: etl-secrets
-              key: CLICKHOUSE_USER
+              key: DASHBOARD_CH_USER
         - name: CLICKHOUSE_PASSWORD
           valueFrom:
             secretKeyRef:
               name: etl-secrets
-              key: CLICKHOUSE_PASSWORD
+              key: DASHBOARD_CH_PASSWORD
         # Optional: set ANTHROPIC_API_KEY in etl-secrets to enable the real AI
         # assistant. Without it the dashboard runs in demo mode.
         - name: ANTHROPIC_API_KEY

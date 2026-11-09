@@ -103,7 +103,66 @@ WHERE length(raw) > 0 AND rec NOT IN ('', 'null');
 CREATE OR REPLACE VIEW mirror.{name}_current AS
 SELECT * EXCEPT (ver, is_deleted) FROM mirror.{name} FINAL WHERE is_deleted = 0;
 ''')  # nosec B608 - code generator emitting SQL from the manifest, not runtime queries
+
+    out.append(_clickhouse_grants(manifest))
     return '\n'.join(out)
+
+
+
+def _clickhouse_grants(manifest):
+    """Column grants for the dashboard role (#231 phase 4).
+
+    Generated beside the schema rather than applied from Airflow, because this
+    generator owns the mirror's shape: it knows the business columns and it
+    knows it adds ver and is_deleted. Airflow holds no ClickHouse credentials
+    at all, and giving it some to re-derive what is already known here would
+    be more moving parts for the same answer.
+
+    Granted by exclusion rather than by listing what is allowed. ver is what
+    FINAL uses to collapse a ReplacingMergeTree, so a <t>_current view cannot
+    be read without it, and ver is not in the manifest -- an allow-list built
+    from the contract silently breaks every clean read view. Excluding the
+    classified columns instead means a new physical column is readable by
+    default and a newly classified one is not, which is the right way round.
+
+    The Kafka engine tables are deliberately absent: selecting from one
+    consumes the topic, so a read-only role must not be able to touch them.
+    """
+    denied = set()
+    for table in manifest['tables'].values():
+        for classification, columns in (table.get('classification') or {}).items():
+            if classification in ('pii', 'phi'):
+                denied.update(columns)
+
+    role = 'dashboard_ro'
+    out = ["""--
+-- Access policy (#231 phase 4)
+--
+-- The data contract decides who may read what. Columns classified pii or phi
+-- in airflow/dags/config/pipelines.yml are withheld from the dashboard role
+-- and ClickHouse enforces it, rather than the application, which only ever
+-- sees SQL the model wrote and cannot tell what an alias or an expression is
+-- hiding.
+--
+-- <t>_current views are granted whole. A ClickHouse view runs with the
+-- caller's privileges, so the column grants underneath still apply: reading a
+-- withheld column through a view is refused exactly as it is on the table.
+--
+-- The role itself is created by docker/clickhouse/initdb/00-dashboard-role.sh,
+-- which takes its password from the environment. No credential belongs in a
+-- generated file that is committed.
+REVOKE ALL ON mirror.* FROM %s;
+""" % role]
+
+    for name, table in manifest['tables'].items():
+        allowed = [c for c in table['columns'] if c not in denied] + ['ver', 'is_deleted']
+        withheld = [c for c in table['columns'] if c in denied]
+        note = '  -- withholding %s' % ', '.join(withheld) if withheld else ''
+        out.append('GRANT SELECT(%s) ON mirror.%s TO %s;%s'
+                   % (', '.join(allowed), name, role, note))
+        out.append('GRANT SELECT ON mirror.%s_current TO %s;' % (name, role))
+    out.append('')
+    return chr(10).join(out)
 
 
 TS_HEADER = (

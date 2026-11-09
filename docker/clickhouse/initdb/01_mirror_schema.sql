@@ -233,3 +233,30 @@ WHERE length(raw) > 0 AND rec NOT IN ('', 'null');
 
 CREATE OR REPLACE VIEW mirror.order_items_current AS
 SELECT * EXCEPT (ver, is_deleted) FROM mirror.order_items FINAL WHERE is_deleted = 0;
+
+--
+-- Access policy (#231 phase 4)
+--
+-- The data contract decides who may read what. Columns classified pii or phi
+-- in airflow/dags/config/pipelines.yml are withheld from the dashboard role
+-- and ClickHouse enforces it, rather than the application, which only ever
+-- sees SQL the model wrote and cannot tell what an alias or an expression is
+-- hiding.
+--
+-- <t>_current views are granted whole. A ClickHouse view runs with the
+-- caller's privileges, so the column grants underneath still apply: reading a
+-- withheld column through a view is refused exactly as it is on the table.
+--
+-- The role itself is created by docker/clickhouse/initdb/00-dashboard-role.sh,
+-- which takes its password from the environment. No credential belongs in a
+-- generated file that is committed.
+REVOKE ALL ON mirror.* FROM dashboard_ro;
+
+GRANT SELECT(customer_id, created_at, updated_at, ver, is_deleted) ON mirror.customers TO dashboard_ro;  -- withholding first_name, last_name, email, address, city, state, zip_code
+GRANT SELECT ON mirror.customers_current TO dashboard_ro;
+GRANT SELECT(product_id, name, description, price, category, stock_quantity, created_at, updated_at, ver, is_deleted) ON mirror.products TO dashboard_ro;
+GRANT SELECT ON mirror.products_current TO dashboard_ro;
+GRANT SELECT(order_id, customer_id, order_date, total_amount, status, created_at, updated_at, ver, is_deleted) ON mirror.orders TO dashboard_ro;
+GRANT SELECT ON mirror.orders_current TO dashboard_ro;
+GRANT SELECT(item_id, order_id, product_id, quantity, unit_price, created_at, updated_at, ver, is_deleted) ON mirror.order_items TO dashboard_ro;
+GRANT SELECT ON mirror.order_items_current TO dashboard_ro;

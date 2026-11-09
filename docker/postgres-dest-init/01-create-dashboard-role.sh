@@ -22,24 +22,26 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
     GRANT CONNECT ON DATABASE ${POSTGRES_DB} TO ${DASHBOARD_DB_USER};
 
     -- The dashboard queries the dbt layers (raw/int/prs), not just public.
-    -- Create the schemas up front so the grants apply on a fresh volume;
-    -- dbt reuses them. Default privileges cover tables created later.
+    -- Create the schemas up front so USAGE can be granted on a fresh volume;
+    -- dbt reuses them.
     CREATE SCHEMA IF NOT EXISTS raw;
     CREATE SCHEMA IF NOT EXISTS int;
     CREATE SCHEMA IF NOT EXISTS prs;
     CREATE SCHEMA IF NOT EXISTS gold;
     GRANT USAGE ON SCHEMA public, raw, int, prs, gold TO ${DASHBOARD_DB_USER};
-    GRANT SELECT ON ALL TABLES IN SCHEMA public, raw, int, prs, gold TO ${DASHBOARD_DB_USER};
-    ALTER DEFAULT PRIVILEGES FOR ROLE ${POSTGRES_USER} IN SCHEMA public
-        GRANT SELECT ON TABLES TO ${DASHBOARD_DB_USER};
-    ALTER DEFAULT PRIVILEGES FOR ROLE ${POSTGRES_USER} IN SCHEMA raw
-        GRANT SELECT ON TABLES TO ${DASHBOARD_DB_USER};
-    ALTER DEFAULT PRIVILEGES FOR ROLE ${POSTGRES_USER} IN SCHEMA int
-        GRANT SELECT ON TABLES TO ${DASHBOARD_DB_USER};
-    ALTER DEFAULT PRIVILEGES FOR ROLE ${POSTGRES_USER} IN SCHEMA prs
-        GRANT SELECT ON TABLES TO ${DASHBOARD_DB_USER};
-    ALTER DEFAULT PRIVILEGES FOR ROLE ${POSTGRES_USER} IN SCHEMA gold
-        GRANT SELECT ON TABLES TO ${DASHBOARD_DB_USER};
+
+    -- No table grants here, and deliberately no ALTER DEFAULT PRIVILEGES.
+    --
+    -- This used to GRANT SELECT ON ALL TABLES and set default privileges so
+    -- that everything dbt created later was readable too. That is what made
+    -- the data contract decorative: `email` was as readable as `order_id`,
+    -- and narrowing the grants would have been undone by the next dbt run.
+    --
+    -- Which columns this role may read is decided by the classifications in
+    -- airflow/dags/config/pipelines.yml and applied by the
+    -- apply_access_policy task at the end of every ingest run (#231 phase 4).
+    -- Until that has run once the role can read nothing, which is the right
+    -- way for this to fail and is also before there is anything to read.
 EOSQL
 
 echo "Read-only dashboard role '${DASHBOARD_DB_USER}' is ready."
