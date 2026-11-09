@@ -9,8 +9,15 @@ row shipped querying airflow_ti_successes_total: statsd-exporter emits
 airflow_ti_successes, with no _total suffix, under both the plain-text and
 the OpenMetrics negotiation Prometheus uses.
 
-Only airflow_*/etl_* names are checked — those are the ones the mapping owns.
+Only airflow_*/etl_* names are checked — those are the ones this repo owns.
 kafka_*, SeaweedFS_* and node_* come from their own exporters.
+
+Two things emit those names, not one. Airflow's metrics arrive through statsd
+and the exporter mapping; the governance metrics (#231 phase 5) are served
+directly by the dashboard's own /api/metrics and scraped as the etl-governance
+job, never touching statsd. A name is valid if either side emits it, so both
+are read here. Checking only the mapping rejects every governance panel, and
+exempting etl_* would throw away the typo protection that is the point.
 
 Run: python scripts/check_dashboard_metrics.py
 """
@@ -28,6 +35,14 @@ MAPPING = os.path.join(ROOT, 'monitoring', 'statsd_mapping.yml')
 # dashboards go blank on the cluster only — the parity failure this repo keeps
 # hitting — so compare them rather than trusting one file.
 HELM_VALUES = os.path.join(ROOT, 'k8s', 'airflow', 'helm-values.yaml')
+
+# The dashboard declares its own metric names as `name: 'etl_...'` sample
+# fields. Reading them from the source keeps a renamed or mistyped governance
+# metric a build failure rather than a panel that silently never draws.
+APP_METRICS = (
+    os.path.join(ROOT, 'ui', 'src', 'lib', 'metrics.ts'),
+    os.path.join(ROOT, 'ui', 'src', 'app', 'api', 'metrics', 'route.ts'),
+)
 
 # Suffixes statsd-exporter genuinely appends when a mapping produces a
 # summary/histogram (Airflow's timers), so alert rules may legitimately use
@@ -50,7 +65,19 @@ def mapping_pairs(path, after=None):
 
 def emitted_names():
     with open(MAPPING, encoding='utf-8') as fh:
-        return set(re.findall(r'^\s*name:\s*["\']?([A-Za-z0-9_]+)', fh.read(), re.M))
+        names = set(re.findall(r'^\s*name:\s*["\']?([A-Za-z0-9_]+)', fh.read(), re.M))
+    return names | app_names()
+
+
+def app_names():
+    """Metric names the dashboard serves itself on /api/metrics."""
+    found = set()
+    for path in APP_METRICS:
+        if not os.path.exists(path):
+            continue
+        with open(path, encoding='utf-8') as fh:
+            found |= set(re.findall(r"name:\s*'(etl_[a-z0-9_]+)'", fh.read()))
+    return found
 
 
 def mapping_drift():
@@ -103,7 +130,8 @@ def main():
 
     bad = sorted({(m, src) for m, src in queried() if not resolves(m, names)})
     if bad:
-        print("Metrics queried but never emitted by statsd_mapping.yml:\n")
+        print("Metrics queried but emitted by neither statsd_mapping.yml nor"
+              " the dashboard's own /api/metrics:\n")
         for metric, src in bad:
             print(f"  {metric}\n      queried in {src}")
             stem = metric
@@ -112,7 +140,8 @@ def main():
                     print(f"      did you mean {stem[:-len(suffix)]}?")
                     break
         print("\nstatsd-exporter emits mapping names verbatim; it does not add"
-              " a _total suffix to counters.")
+              " a _total suffix to counters. Governance metrics come instead"
+              " from ui/src/lib/metrics.ts and the /api/metrics route.")
         sys.exit(1)
 
     only_compose, only_k8s = mapping_drift()
@@ -125,8 +154,10 @@ def main():
             print(f"  only in k8s/airflow/helm-values.yaml:  {match} -> {name}")
         sys.exit(1)
 
+    served = app_names()
     print(f"OK - every airflow_*/etl_* metric queried resolves "
-          f"({len(names)} mappings, compose and k8s agree).")
+          f"({len(names) - len(served)} statsd mappings + {len(served)} served"
+          f" by the dashboard; compose and k8s agree).")
 
 
 def _self_check():
@@ -135,6 +166,13 @@ def _self_check():
     assert resolves('airflow_dagrun_duration_failed_count', names)  # timer
     assert not resolves('airflow_ti_successes_total', names)        # the bug
     assert not resolves('airflow_nope', names)
+    # A governance counter is emitted by the dashboard verbatim, _total and
+    # all, so it must resolve without being mistaken for the suffix bug above.
+    served = app_names()
+    if served:  # absent in a checkout without the ui/ tree
+        assert 'etl_answers_total' in served, served
+        assert resolves('etl_answers_total', served)
+        assert not resolves('etl_answers', served)
 
 
 if __name__ == '__main__':
