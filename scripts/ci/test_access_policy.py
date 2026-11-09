@@ -183,3 +183,39 @@ def test_the_plan_names_every_reachable_table(conn):
     for schema in ('raw',):
         assert f'"{schema}"' in granted, f'{schema} is not covered by the policy'
     assert 'email' not in granted, 'a classified column appears in a grant'
+
+
+# ── Deploying onto a cluster that predates this change ───────────────────────
+#
+# k8s/01-secrets.generated.yaml is written once and gitignored, so a cluster
+# set up before DASHBOARD_CH_USER existed will not have it. Two things break
+# in that case, and neither is visible from a manifest that validates:
+# secret_val returns empty, so the role is never created and the grants that
+# name it abort the schema apply; and the dashboard reads the key by
+# secretKeyRef with no `optional`, so its pod never starts.
+
+DEPLOY = (REPO / 'k8s' / 'deploy.sh').read_text(encoding='utf-8')
+UI_DEPLOYMENT = (REPO / 'k8s' / 'ui' / 'deployment.yaml').read_text(encoding='utf-8')
+
+
+def test_the_deploy_tolerates_a_secret_without_the_new_keys():
+    assert 'DASH_CH_USER=dashboard_ro' in DEPLOY, \
+        'a cluster whose secret predates this key gets an empty role name'
+
+
+def test_the_deploy_writes_the_keys_back_into_the_secret():
+    """Otherwise the dashboard pod sticks in CreateContainerConfigError."""
+    assert 'kubectl patch secret etl-secrets' in DEPLOY
+    assert 'DASHBOARD_CH_USER' in DEPLOY and 'DASHBOARD_CH_PASSWORD' in DEPLOY
+
+
+def test_the_dashboard_does_not_fall_back_to_the_admin_account():
+    """Marking the reference optional would be the easy fix and the wrong one.
+
+    datastores.ts defaults CLICKHOUSE_USER to chuser, so an unset variable
+    connects as the admin and the policy is defeated without a trace.
+    """
+    block = re.search(r'name: CLICKHOUSE_USER.*?key: DASHBOARD_CH_USER', UI_DEPLOYMENT, re.S)
+    assert block, 'the dashboard no longer uses the restricted ClickHouse role'
+    assert 'optional' not in block.group(0), \
+        'an optional reference silently falls back to the admin account'

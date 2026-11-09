@@ -432,10 +432,30 @@ done
 # password comes from the secret rather than the generated SQL, because a
 # credential does not belong in a committed file (#231 phase 4).
 info "Creating the restricted dashboard role on the mirror..."
+DASH_CH_USER="$(secret_val DASHBOARD_CH_USER)"
+DASH_CH_PASS="$(secret_val DASHBOARD_CH_PASSWORD)"
+if [ -z "$DASH_CH_USER" ]; then
+  # k8s/01-secrets.generated.yaml is written once and gitignored, so a
+  # cluster set up before this key existed will not have it. Falling back
+  # keeps the deploy working; without this the grants below name a role
+  # that was never created and the whole schema apply aborts.
+  DASH_CH_USER=dashboard_ro
+  DASH_CH_PASS="${DASH_CH_PASS:-dashboard_ro}"
+  warn "DASHBOARD_CH_USER is not in etl-secrets; using the default role and password."
+  warn "Re-run k8s/generate-secrets.sh to get a generated one."
+fi
+# The dashboard reads these two by secretKeyRef with no `optional`, so a
+# cluster whose secret predates them would leave the pod stuck in
+# CreateContainerConfigError. Writing them back is also why the fallback
+# above is not simply marking the reference optional: an unset
+# CLICKHOUSE_USER makes the dashboard fall back to the admin account in
+# datastores.ts, which would defeat the whole policy silently.
+kubectl patch secret etl-secrets -n $NAMESPACE --type=merge \
+  -p "{\"stringData\":{\"DASHBOARD_CH_USER\":\"$DASH_CH_USER\",\"DASHBOARD_CH_PASSWORD\":\"$DASH_CH_PASS\"}}" >/dev/null
 kubectl exec -i clickhouse-0 -n $NAMESPACE -- clickhouse-client \
   --user "$(secret_val CLICKHOUSE_USER)" \
   --password "$(secret_val CLICKHOUSE_PASSWORD)" \
-  -q "CREATE USER IF NOT EXISTS $(secret_val DASHBOARD_CH_USER) IDENTIFIED WITH plaintext_password BY '$(secret_val DASHBOARD_CH_PASSWORD)'" \
+  -q "CREATE USER IF NOT EXISTS $DASH_CH_USER IDENTIFIED WITH plaintext_password BY '$DASH_CH_PASS'" \
   || warn "Could not create the dashboard role; the mirror grants below will fail"
 
 info "Applying the mirror schema (idempotent, so existing volumes converge)..."
