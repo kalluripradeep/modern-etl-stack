@@ -1,6 +1,8 @@
 """
 Spark SQL Orchestration: Bronze -> Silver (Elite Scalability)
-Parallelized transformation tasks with NEW Weekly Iceberg Maintenance.
+
+Parallelized transformation tasks. Iceberg maintenance used to be the last
+task here; it now has its own daily DAG (iceberg_maintenance_dag.py, #225).
 """
 
 import os
@@ -10,23 +12,9 @@ from airflow.exceptions import AirflowException
 from airflow.providers.standard.operators.bash import BashOperator
 from airflow.providers.standard.operators.python import PythonOperator
 
-# Fetch cluster-specific configurations from environment (set via Docker or Helm)
-SPARK_MASTER_URL = os.getenv('SPARK_MASTER_URL', 'spark://spark-master:7077')
-SEAWEEDFS_ENDPOINT = os.getenv('SEAWEEDFS_ENDPOINT', 'http://seaweedfs:9000')
-SEAWEEDFS_USER = os.getenv('SEAWEEDFS_ROOT_USER', 'seaweedadmin')
-SEAWEEDFS_PASSWORD = os.getenv('SEAWEEDFS_ROOT_PASSWORD', 'seaweedadmin')
-
-# Iceberg JDBC catalog lives in postgres-dest (schema iceberg_catalog) so
-# Trino can query the same tables Spark writes.
-DEST_DB_HOST = os.getenv('DEST_DB_HOST', 'postgres-dest')
-DEST_DB_PORT = os.getenv('DEST_DB_PORT', '5432')
-DEST_DB_NAME = os.getenv('DEST_DB_NAME', 'destdb')
-DEST_DB_USER = os.getenv('DEST_DB_USER', 'destuser')
-DEST_DB_PASSWORD = os.getenv('DEST_DB_PASSWORD', 'destpass')
-ICEBERG_CATALOG_URI = (
-    f"jdbc:postgresql://{DEST_DB_HOST}:{DEST_DB_PORT}/{DEST_DB_NAME}"
-    "?currentSchema=iceberg_catalog"
-)
+# The Spark configuration lives in spark_submit.py because the maintenance
+# DAG runs against the same Iceberg catalogue and must not drift from it.
+from spark_submit import SPARK_SECRET_ENV, get_spark_submit_command  # noqa: E402
 
 default_args = {
     'owner': 'data_engineering',
@@ -63,100 +51,21 @@ with DAG(
     tags=['spark', 'iceberg', 'silver', 'scalability', 'compaction'],
 ) as dag:
 
-    # The maintenance gate below falls back to "now" when the run has no
-    # interval. The four transform tasks used to take a date too, and no
-    # longer do: the Spark jobs read every retained Bronze partition rather
-    # than one day's, so a day they missed is merged on the next run instead
-    # of being pruned away unmerged (see spark/jobs/bronze.py).
+    # No task here templates a date any more. The transform tasks used to take
+    # one and no longer do -- the Spark jobs read every retained Bronze
+    # partition rather than one day's, so a day they missed is merged on the
+    # next run instead of being pruned away unmerged (see spark/jobs/bronze.py)
+    # -- and the maintenance gate that needed data_interval_end has moved to
+    # the iceberg_maintenance DAG, which runs on a schedule and needs no gate.
     #
-    # In Airflow 3 a manually triggered run has logical_date=None unless one is
-    # passed explicitly, and the whole family of macros derived from it --
-    # ds_nodash, ts, and data_interval_end alike -- is then simply absent from
-    # the template context. Rendering fails before the task starts:
-    #   UndefinedError: 'ds_nodash' is undefined
-    # so the DAG could not be triggered from the UI or from `airflow dags
-    # trigger` at all. Only the scheduler and the TriggerDagRunOperator in
-    # ingest_source_to_bronze supplied one, which is why it went unnoticed:
-    # the automated paths always worked.
-    #
-    # The `| default(...)` filter is what makes it safe, because it tolerates
-    # an undefined name rather than a null one. Today's date is the right
-    # fallback anyway -- the Spark jobs already default to it when no argument
-    # is passed (see transform_orders.py), so this only makes the DAG agree
-    # with the jobs it calls.
+    # That matters because in Airflow 3 a manually triggered run has
+    # logical_date=None unless one is passed, and every macro derived from it
+    # is then absent from the template context rather than null. Rendering
+    # fails before the task starts -- UndefinedError: 'ds_nodash' is undefined
+    # -- so the DAG could not be triggered from the UI at all, while the
+    # scheduler and TriggerDagRunOperator paths kept working and hid it.
+    # Templating no dates is the cheapest way to stay out of that.
 
-    # Secrets are passed to the task's environment, never interpolated into the
-    # command string. Airflow stores every bash_command it renders and shows it
-    # under "Rendered Template" in the UI, so a password written into the
-    # command is a password in the metadata database, in the task log, and on
-    # any screen showing that page. Referencing $SEAWEEDFS_ROOT_PASSWORD instead
-    # keeps the literal name in all three places and lets the shell substitute
-    # the value at exec time.
-    #
-    # This does not hide the value from `ps` inside the task container -- Spark
-    # takes these as --conf arguments, so they land in the process's argv
-    # either way. Closing that too means a Spark properties file mounted from a
-    # secret, which is a larger change than this one.
-    SPARK_SECRET_ENV = {
-        'SEAWEEDFS_ROOT_USER': SEAWEEDFS_USER,
-        'SEAWEEDFS_ROOT_PASSWORD': SEAWEEDFS_PASSWORD,
-        'DEST_DB_USER': DEST_DB_USER,
-        'DEST_DB_PASSWORD': DEST_DB_PASSWORD,
-    }
-
-    # Helper function to generate standardized spark-submit commands
-    def get_spark_submit_command(job_name, script_path, additional_args=""):
-        # spark.driver.host: advertise the driver's IP, not its hostname.
-        #
-        # These run in client mode, so the driver lives in whatever container
-        # Airflow gave the task and every executor has to open a connection
-        # back to it. Left unset, Spark advertises the local hostname. Under
-        # docker-compose that is the container name and Docker's DNS resolves
-        # it, so this works and hides the problem. Under KubernetesExecutor it
-        # is the task pod's name -- and a bare pod has no Service, so nothing
-        # in the cluster can resolve it. Executors then launch with
-        #   --driver-url spark://CoarseGrainedScheduler@<task-pod-name>:<port>
-        # fail to reach it, and die with "Command exited with code 1". The
-        # master immediately grants a replacement, which dies the same way:
-        # one cluster reached executor ID 45962 before anyone noticed, while
-        # the driver sat logging "Initial job has not accepted any resources"
-        # and the workers looked idle because they were, between deaths.
-        #
-        # The pod IP is routable, so pin to it. bindAddress stays 0.0.0.0 so
-        # the driver still listens on all interfaces inside the container.
-        #
-        # --jars, not --conf spark.jars.packages: the JARs are baked into the
-        # image (see docker/airflow/Dockerfile) instead of resolved from Maven
-        # Central on every run. That download was ~1GB per task -- slow, the
-        # thing that filled the node's ephemeral storage before #127, and a
-        # hard failure whenever the cluster cannot reach repo1.maven.org:
-        #   :: UNRESOLVED DEPENDENCIES ::
-        #   module not found: org.apache.iceberg#iceberg-spark-runtime...
-        # Only these two are listed because the Spark workers already ship
-        # hadoop-aws and the AWS SDK; the driver serves these to the executors.
-        return f"""
-    spark-submit \
-        --master {SPARK_MASTER_URL} \
-        --conf spark.driver.host=$(hostname -i | cut -d' ' -f1) \
-        --conf spark.driver.bindAddress=0.0.0.0 \
-        --conf spark.executor.memory=2g \
-        --conf spark.executor.cores=2 \
-        --conf spark.sql.adaptive.enabled=true \
-        --conf spark.hadoop.fs.s3a.endpoint={SEAWEEDFS_ENDPOINT} \
-        --conf spark.hadoop.fs.s3a.access.key=$SEAWEEDFS_ROOT_USER \
-        --conf spark.hadoop.fs.s3a.secret.key=$SEAWEEDFS_ROOT_PASSWORD \
-        --conf spark.hadoop.fs.s3a.path.style.access=true \
-        --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
-        --jars /opt/spark-jars/iceberg-spark-runtime-3.5_2.12-1.4.2.jar,/opt/spark-jars/postgresql-42.7.4.jar \
-        --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions \
-        --conf spark.sql.catalog.silver=org.apache.iceberg.spark.SparkCatalog \
-        --conf spark.sql.catalog.silver.catalog-impl=org.apache.iceberg.jdbc.JdbcCatalog \
-        --conf spark.sql.catalog.silver.uri={ICEBERG_CATALOG_URI} \
-        --conf spark.sql.catalog.silver.jdbc.user=$DEST_DB_USER \
-        --conf spark.sql.catalog.silver.jdbc.password=$DEST_DB_PASSWORD \
-        --conf spark.sql.catalog.silver.warehouse=s3a://silver/ \
-        --name {job_name} {script_path} {additional_args}
-    """
 
     def _ensure_silver_bucket(**_):
         """Create the Iceberg warehouse bucket if it is not there yet.
@@ -221,33 +130,6 @@ with DAG(
         trigger_rule='all_done',
     )
 
-    # Weekly Maintenance: Compaction & Z-Ordering (Essential for 1 Billion+ records)
-    maintenance_task = BashOperator(
-        task_id='iceberg_maintenance',
-        bash_command=(
-            # Gate on the hour only (%H == "00"), so this runs once a day
-            # rather than once an hour. It used to be gated to Sunday as well,
-            # but the job now expires Iceberg snapshots on every run and only
-            # compacts on Sundays -- expiry is what releases disk, and waiting
-            # a week to release disk is how a cluster fills up. The job decides
-            # which mode it is in; this only decides how often it is invoked.
-            # -u pins the comparison to UTC so it cannot drift with container TZ.
-            'if [ "$(date -u -d \'{{ data_interval_end | default(macros.datetime.utcnow()) }}\' +%H)" = "00" ]; then '
-            # .strip() matters: the builder's f-string ends with a newline and
-            # indent, so without it the "; else" lands on its own line starting
-            # with a semicolon -- a bash syntax error that exits 2 before the
-            # gate is ever evaluated. The other tasks pass the string through
-            # as a whole command, where the stray whitespace is harmless, so
-            # only this composed one breaks.
-            + get_spark_submit_command('Iceberg-Maintenance', '/opt/spark-jobs/iceberg_maintenance.py').strip()
-            + '; else echo "Skipping Iceberg maintenance — runs once daily at 00:00 UTC"; fi'
-        ),
-        env=SPARK_SECRET_ENV,
-        append_env=True,
-        # Run only on Sundays to optimize storage after weekly activity
-        execution_timeout=timedelta(hours=2),
-        trigger_rule='all_done',
-    )
 
     # Still sequential, but no longer all-or-nothing.
     #
@@ -265,8 +147,9 @@ with DAG(
     # table. #151 made that worse rather than better: it turned Bronze-missing
     # from a silent skip into a real failure, which is correct in itself, but
     # under all_success it would have taken three healthy tables down with the
-    # one broken one. Maintenance runs too, because expiring snapshots is what
-    # releases disk and a failed transform is no reason to stop reclaiming it.
+    # one broken one. The same reasoning is why iceberg_maintenance is now a
+    # DAG of its own rather than the last link here: expiring snapshots is what
+    # releases disk, and a failed transform is no reason to stop reclaiming it.
     def _surface_transform_failure(**_):
         """Fail the run when any transform failed.
 
@@ -293,10 +176,9 @@ with DAG(
         trigger_rule='one_failed',
     )
 
-    ensure_buckets >> transform_orders >> transform_customers >> transform_products >> transform_order_items >> maintenance_task
+    ensure_buckets >> transform_orders >> transform_customers >> transform_products >> transform_order_items
     [transform_orders, transform_customers, transform_products,
-     transform_order_items, maintenance_task] >> surface_failure
+     transform_order_items] >> surface_failure
 
-    # Maintenance is logically downstream, but you can schedule it separately.
-    # Here, we trigger it once a week, but the task exists in the same DAG for visibility.
-    # In a true 1bn row system, you might trigger this on a separate weekly DAG.
+    # Iceberg maintenance is no longer part of this chain. It is its own daily
+    # DAG -- see airflow/dags/iceberg_maintenance_dag.py and #225.
