@@ -91,6 +91,15 @@ jobs:
         # a Spark stack trace.
         run: python scripts/ci/test_reseed_and_buckets.py
 
+      - name: Verify Iceberg maintenance stays its own ungated DAG
+        # #225: maintenance was the last task of spark_transform_silver, gated
+        # on the hour of data_interval_end. The gate worked and still hid
+        # itself three ways -- a triggered run gets the interval containing
+        # it, the comparison is UTC while the UI is local, and 23 skips a day
+        # each exited 0. A cluster hit DiskPressure while we read the wrong
+        # row. This fails the build if the work goes back behind a condition.
+        run: python scripts/ci/test_iceberg_maintenance.py
+
       - name: Verify the store registry
         # The three pipelines land the same tables under different names, and
         # that convention used to be restated in four files. These checks keep
