@@ -61,13 +61,34 @@ def run_maintenance(spark, table_name, z_order_col=None, compact=True):
     # smaller. A cluster running this pipeline hourly filled its node disk
     # and started evicting pods.
     #
-    # Seven days keeps time-travel useful while bounding what is retained.
-    print(f"Expiring snapshots older than 7 days on {table_name}...")
+    # The window is the floor on disk usage, not a preference. The transforms
+    # use MERGE INTO, and Iceberg's default copy-on-write rewrites every data
+    # file holding a matched row -- on a small dimension that is the whole
+    # table, every run. So each run leaves a complete generation behind and
+    # the window decides how many are kept: hourly against seven days is
+    # about 168 of them. #225 measured that directly, expiring 2208 data
+    # files from a fifty-row `customers` table in one catch-up run.
+    #
+    # Two days is 48 restore points at an hourly cadence -- enough to recover
+    # from a bad run noticed the next morning -- and a quarter of the disk
+    # floor seven days implied. retain_last is the safety net underneath it:
+    # a table that stopped being written keeps five snapshots however old,
+    # so a quiet table never expires down to nothing.
+    #
+    # Raise ICEBERG_RETENTION_DAYS where disk is cheap and longer time travel
+    # is worth more -- the same knob BRONZE_RETENTION_DAYS gives bronze. The
+    # alternative to a shorter window is merge-on-read, which writes delete
+    # files instead of rewriting data files: that trades disk for read
+    # latency and is a larger change than this one.
+    retention_days = int(os.environ.get('ICEBERG_RETENTION_DAYS', '2'))
+    print(f"Expiring snapshots older than {retention_days} days "
+          f"on {table_name}...")
     spark.sql(f"""
         CALL silver.system.expire_snapshots(
             table => '{table_name}',
             older_than => TIMESTAMP '{
-                (datetime.utcnow() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+                (datetime.utcnow() - timedelta(days=retention_days))
+                .strftime('%Y-%m-%d %H:%M:%S')
             }',
             retain_last => 5
         )
