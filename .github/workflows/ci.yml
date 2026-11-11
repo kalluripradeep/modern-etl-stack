@@ -100,6 +100,15 @@ jobs:
         # row. This fails the build if the work goes back behind a condition.
         run: python scripts/ci/test_iceberg_maintenance.py
 
+      - name: Verify the Iceberg snapshot retention window stays a budget
+        # #225: the transforms MERGE INTO, and copy-on-write rewrites every
+        # data file holding a matched row -- on a small dimension that is the
+        # whole table, hourly. The expiry window decides how many generations
+        # are kept, so it is a disk budget: at 7 days one catch-up run expired
+        # 2208 data files from a 50-row table, and the node evicted pods
+        # twice. Widening it back should be a decision someone defends.
+        run: python scripts/ci/test_iceberg_retention.py
+
       - name: Verify the store registry
         # The three pipelines land the same tables under different names, and
         # that convention used to be restated in four files. These checks keep
