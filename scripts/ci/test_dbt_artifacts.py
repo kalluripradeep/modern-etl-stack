@@ -281,6 +281,38 @@ def test_the_task_does_not_write_logs_into_the_project_directory():
     )
 
 
+def test_dbt_runs_against_a_copy_and_installs_packages():
+    """#225, the third read-only symptom and the one that settled the shape.
+
+    Redirecting each write as it was found did not converge: logs/ needed
+    DBT_LOG_PATH, target/ needed --target-path, and then dbt_packages/ could
+    not be redirected at all -- it is gitignored, so the cluster has no
+    packages, `dbt deps` cannot create the directory in a read-only checkout,
+    and `dbt test` refuses to compile without them.
+
+    Copying the project first is what Cosmos does, which is why its task
+    group ran on the same cluster where this task failed. deps must run
+    before test, or the copy buys nothing.
+    """
+    assert 'shutil.copytree' in DAG_SOURCE, (
+        'persist_dbt_metadata runs dbt against the project in place again; '
+        'on Kubernetes that is a read-only git-sync checkout'
+    )
+    assert '"--project-dir", str(DBT_PROJECT_PATH)' not in DAG_SOURCE, \
+        'dbt is pointed at the checkout rather than at the writable copy'
+
+    deps_at = DAG_SOURCE.find('DBT_EXECUTABLE, "deps"')
+    test_at = DAG_SOURCE.find('DBT_EXECUTABLE, "test"')
+    assert deps_at != -1, 'dbt deps is gone; no packages means no compile'
+    assert deps_at < test_at, 'dbt deps must run before dbt test'
+
+    # copytree preserves modes, so a mode-read-only source yields a
+    # mode-read-only copy and deps fails with PermissionError: 'dbt_packages'
+    # having just copied the project to avoid exactly that.
+    assert '0o200' in DAG_SOURCE, \
+        'the copied project is no longer forced writable'
+
+
 def test_failing_tests_do_not_fail_the_capture():
     """A failing test is the finding. Exit 1 must be accepted."""
     assert 'returncode not in (0, 1)' in DAG_SOURCE, \

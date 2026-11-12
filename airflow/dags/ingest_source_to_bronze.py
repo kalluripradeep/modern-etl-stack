@@ -574,23 +574,76 @@ def persist_dbt_metadata(**kwargs):
     """
     target = Path(tempfile.mkdtemp(prefix="dbt-metadata-"))
     try:
+        # Work on a copy, because on Kubernetes DBT_PROJECT_PATH is the
+        # git-sync checkout and that is mounted read-only.
+        #
+        # Redirecting each write as it was discovered did not converge. dbt
+        # writes logs/ (fixed with DBT_LOG_PATH), target/ (fixed with
+        # --target-path) and dbt_packages/ -- and it was the third that made
+        # the point: dbt/dbt_packages/ is gitignored, so the cluster has no
+        # packages, `dbt deps` cannot install them into a read-only directory,
+        # and `dbt test` refuses to compile without them:
+        #
+        #   dbt expects 2 package(s) based on packages specified in
+        #   packages.yml, but found only 0 package(s) installed in
+        #   dbt_packages. Run "dbt deps" to install package dependencies.
+        #
+        # Copying first is what Cosmos does, which is why its task group runs
+        # on the same cluster where this one failed. The project is models and
+        # YAML, so the copy costs milliseconds.
+        project = target / "project"
+        shutil.copytree(
+            DBT_PROJECT_PATH, project,
+            # target/ and logs/ are this task's to produce, and .git would be
+            # the whole repository on a git-sync checkout.
+            ignore=shutil.ignore_patterns("target", "logs", ".git"),
+        )
+
+        # copytree preserves permissions, so a source that is read-only by
+        # file mode produces a copy that is read-only too -- and `dbt deps`
+        # then fails with PermissionError: 'dbt_packages' having copied the
+        # project for exactly that reason. A read-only *mount* copies out
+        # fine, so whether this matters depends on how the checkout was made;
+        # asserting it is cheaper than depending on it.
+        for directory, _, names in os.walk(project):
+            for name in (directory, *(os.path.join(directory, n) for n in names)):
+                os.chmod(name, os.stat(name).st_mode | 0o200)  # owner write
+
+        # package-lock.yml is committed and pins both packages by hash, so
+        # this resolves to the same versions every run rather than whatever
+        # the hub serves today. It is a no-op when dbt_packages came along in
+        # the copy, which is the case on Compose.
+        deps = subprocess.run(
+            [
+                DBT_EXECUTABLE, "deps",
+                "--project-dir", str(project),
+                "--profiles-dir", str(project),
+            ],
+            capture_output=True, text=True, timeout=600, check=False,
+            env={**os.environ, "DBT_LOG_PATH": str(target)},
+        )
+        if deps.returncode != 0:
+            detail = (deps.stderr or deps.stdout or "").strip()[-800:]
+            log.error("dbt deps failed (exit %s): %s", deps.returncode,
+                      detail or "no output on either stream")
+            raise AirflowException(
+                f"dbt deps exited {deps.returncode}; packages are needed "
+                "before any test can compile. This step reaches the dbt "
+                "package hub, so a cluster without egress will fail here."
+            )
+
         # Fixed argv, no shell: nothing here comes from a user or a table.
         result = subprocess.run(
             [
                 DBT_EXECUTABLE, "test",
-                "--project-dir", str(DBT_PROJECT_PATH),
-                "--profiles-dir", str(DBT_PROJECT_PATH),
+                "--project-dir", str(project),
+                "--profiles-dir", str(project),
                 "--target-path", str(target),
             ],
             capture_output=True, text=True, timeout=1800, check=False,
-            # dbt writes logs/dbt.log inside --project-dir unless told
-            # otherwise, and on Kubernetes that directory is a read-only
-            # git-sync checkout. It fails before its own logger exists, so the
-            # failure arrives as exit 2 with nothing on stdout or stderr --
-            # see #225. Cosmos never hits this because it copies the project
-            # into a temp dir first; this task runs dbt in place, so it has to
-            # redirect the log path itself. dbt/logs/ is gitignored, so the
-            # directory is not even present on the cluster to be written to.
+            # Kept even though the copy is writable: it puts dbt.log beside
+            # the artifacts this task collects rather than inside the copy
+            # that is about to be deleted.
             env={**os.environ, "DBT_LOG_PATH": str(target)},
         )
         # 1 is "some tests failed", which is data. Anything else means dbt did
