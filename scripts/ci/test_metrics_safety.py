@@ -92,6 +92,24 @@ def test_an_sla_block_is_recorded():
         'stores withheld for staleness are no longer counted'
 
 
+def test_a_store_that_never_answered_is_not_counted_as_a_stale_one():
+    """The counter feeds a panel titled "Stores withheld for staleness".
+
+    A store whose freshness probe did not answer is excluded too, for a
+    different reason, and already has its own `etl_store_probe_failed`.
+    Counting it here made a dead store indistinguishable from a stale one --
+    observed with Trino and ClickHouse stopped: both reported an SLA block
+    having never reported a freshness at all.
+    """
+    calls = [
+        line for line in _code_only(CHAT).split('\n')
+        if 'recordSlaBlock(' in line
+    ]
+    assert calls, 'recordSlaBlock is no longer called'
+    assert any('freshnessSeconds !== null' in line for line in calls), \
+        'a store with no freshness reading is counted as an SLA block'
+
+
 # ── Against a running dashboard ──────────────────────────────────────────────
 
 URL = os.environ.get('METRICS_URL')

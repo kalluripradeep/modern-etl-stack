@@ -264,7 +264,13 @@ export async function POST(request: Request) {
   // above. #188 measured the mirror at 84s against a 30s SLA and #225 found
   // it a day behind; both would have read as "seconds fresh".
   const verdicts = await measureStores();
-  for (const v of verdicts) if (!v.eligible) recordSlaBlock(v.store);
+  // Staleness only. A store excluded because its probe never answered is a
+  // different event with its own metric (etl_store_probe_failed), and folding
+  // it in here makes a dead store look like a stale one on a panel titled
+  // "withheld for staleness".
+  for (const v of verdicts) {
+    if (!v.eligible && v.freshnessSeconds !== null) recordSlaBlock(v.store);
+  }
   const traceId = newTraceId();
   const queryLog: QueryRecord[] = [];
   const system = `${SYSTEM_PROMPT}
