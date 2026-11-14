@@ -796,8 +796,13 @@ with dag:
         trigger_rule="all_done",
     )
 
-    ingestion_tasks >> dbt_transformations >> dbt_metadata
-    dbt_transformations >> access_policy_task
+    # The grants are derived by introspection, so they can only cover schemas
+    # that exist when apply_access_policy runs -- and persist_dbt_metadata is
+    # what creates `meta`. Run in parallel, the first run after `meta` appears
+    # was a coin flip: lose it and the dashboard holds SELECT on nothing in
+    # that schema until the next run. Both tasks are all_done, so ordering
+    # them costs nothing -- the grants still apply when the capture fails.
+    ingestion_tasks >> dbt_transformations >> dbt_metadata >> access_policy_task
     ingestion_tasks >> trigger_spark
     ingestion_tasks >> data_quality_metrics
 
