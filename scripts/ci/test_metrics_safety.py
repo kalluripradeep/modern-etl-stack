@@ -36,6 +36,13 @@ def test_only_the_metrics_route_is_exempt_from_auth():
     for route in ('api/chat', 'api/'):
         assert f'|{route})' not in exempt, f'{route} is exempt from auth'
 
+    # /api/catalog serves table names and the lineage graph (#231 phase 1).
+    # The metrics exemption is defensible because Prometheus cannot hold a
+    # password and because that route emits only counts; neither is true here,
+    # and "it is also read-only" is not the same argument.
+    assert 'api/catalog' not in exempt, \
+        'the catalog endpoint is exempt from auth; it is not a scrape target'
+
 
 def test_the_metrics_route_cannot_emit_a_query_or_a_question():
     """It records counts, never the thing that was counted."""
