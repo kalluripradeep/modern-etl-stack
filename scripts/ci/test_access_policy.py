@@ -99,7 +99,7 @@ def test_the_policy_is_applied_after_dbt_and_regardless_of_its_outcome():
     assert block, 'the DAG no longer applies the access policy'
     assert 'trigger_rule="all_done"' in block.group(0), \
         'a failed dbt run would leave the grants un-applied, quietly widening access'
-    assert 'dbt_transformations >> access_policy_task' in DAG_SOURCE, \
+    assert 'dbt_transformations >> dbt_metadata >> access_policy_task' in DAG_SOURCE, \
         'the policy must be applied after dbt creates the tables it grants on'
 
 
@@ -235,3 +235,25 @@ def test_the_policy_grants_usage_on_every_schema_it_covers():
     assert plan.index('GRANT USAGE ON SCHEMA "meta" TO r;') < next(
         i for i, s in enumerate(plan) if s.startswith('GRANT SELECT')
     ), 'USAGE must be granted before the table grants that depend on it'
+
+
+def test_the_grants_run_after_the_schema_they_have_to_cover_is_created():
+    """Same failure as above, one layer out.
+
+    The grants are derived by introspecting what exists, so a schema created
+    later in the same run is covered only if the task that creates it has
+    already run. `meta` is created by persist_dbt_metadata. With both tasks
+    hanging off dbt_transformations in parallel, the first run after `meta`
+    appeared was a coin flip, and losing it leaves /api/catalog returning 503
+    until the next run.
+    """
+    dag = (REPO / 'airflow' / 'dags' / 'ingest_source_to_bronze.py').read_text(
+        encoding='utf-8')
+    edges = '\n'.join(
+        line for line in dag.split('\n')
+        if '>>' in line and not line.strip().startswith('#')
+    )
+    assert 'dbt_metadata >> access_policy_task' in edges, \
+        'the access policy no longer runs after the task that creates meta'
+    assert not re.search(r'dbt_transformations\s*>>\s*access_policy_task', edges), \
+        'the access policy runs in parallel with the task that creates meta'
