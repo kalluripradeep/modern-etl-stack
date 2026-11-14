@@ -107,7 +107,7 @@ It splits Pipe 3 in half and says which side is slow:
 
 | During an arm | Meaning |
 |---|---|
-| `lag` climbing | Rows are reaching Kafka faster than ClickHouse drains them. **ClickHouse is the slow side** — the topic has one partition and `kafka_num_consumers` is unset, so one consumer does all of it |
+| `lag` climbing | Rows are reaching Kafka faster than ClickHouse drains them. **The consumer side is behind** — but do not assume that means partitions or `kafka_num_consumers`. One consumer on one partition has been measured at 36,747 msg/s on this cluster, three times what the source can offer, so a climbing lag is far more likely to be the node than the topology. Run `drain.sh` before changing either |
 | `lag` near zero, but `fresh_med_s` still growing | Rows are not reaching Kafka fast enough to queue. **Debezium is the slow side**, and partitions change nothing — the Postgres connector is one task by design, reading one replication slot |
 
 Both are plausible and the fix for one does nothing for the other, so sample
@@ -445,19 +445,52 @@ out of space.
 
 What is left is the node rather than the configuration — most plausibly its
 disk, which `pg_test_fsync` put at 207 `fdatasync`/sec earlier in #188, and
-which was full enough to hold the node in `DiskPressure`.
+which was full enough to hold the node in `DiskPressure`. The next section
+settles that: it was.
 
-### The measurement that would settle it
+### What the cluster measured
 
-Run `drain.sh` on the cluster once the disk is healthy. Same script, same
-schema, same limits, so the only variable left is the node:
+`drain.sh` was run on kangra once the disk was healthy — same script, same
+schema, same limits, so the only variable left was the node:
 
-- **~32,000 msg/s** — ClickHouse is fine and the earlier reading was the node
-  being out of disk.
-- **~1,750 msg/s again** — something on kangra is specific to it, and
-  `system.kafka_consumers` is the next place to look. It carries
-  `num_rebalance_assignments` and `exceptions` per consumer, which is where a
-  consumer that keeps being kicked out of its group shows up:
+```text
+target: k8s (namespace etl)   build: 90s at 64 clients
+  source produced 5933.192703 tps
+  backlog settled at 734955 messages
+drained 734955 messages in 20s = 36747 msg/s
+```
+
+**36,747 msg/s**, against 1,750 before. The node was the whole story, and the
+configuration never had anything to do with it. Nothing about ClickHouse
+changed between those two numbers; what changed was #225 — Kafka retention
+bounded, Iceberg snapshots expiring, and the node out of `DiskPressure`.
+
+That is a 21x swing from fixing storage, on a component that looked for a
+fortnight like it needed more partitions and more CPU.
+
+The headroom is worth stating plainly, because it decides what is worth
+tuning next. `orders.sql` writes two messages per transaction, so a source at
+5,933 tps offers about 11,900 msg/s and the consumer handles three times
+that. Saturating the mirror would need roughly **18,000 tps** from the source,
+which is about three times its measured ceiling on 16 cores. **The mirror is
+not the constraint at any rate this source can reach.**
+
+Two details from the same run are worth keeping, because both look like
+findings and are not:
+
+- `num_rebalance_assignments: 2` on `kafka_orders`, against 1 everywhere else.
+  That is `drain.sh` itself: it drops `mirror.orders_mv` and recreates it, and
+  rejoining the group is the second assignment. A consumer being kicked out
+  repeatedly would keep climbing past 2.
+- `kafka_orders` read 1,067,252 messages and `kafka_order_items` 533,626 —
+  exactly 2:1. That is the INSERT-plus-UPDATE per transaction confirming
+  itself, and it is the ratio to use when converting a tps figure into the
+  message rate the consumer actually sees.
+
+If a future run comes back near 1,750 again, `system.kafka_consumers` is the
+next place to look — it carries `num_rebalance_assignments` and `exceptions`
+per consumer, which is where a consumer that keeps being kicked out of its
+group shows up:
 
 ```bash
 kubectl exec -n etl clickhouse-0 -- clickhouse-client --user chuser --password "$(kubectl get secret etl-secrets -n etl -o jsonpath='{.data.CLICKHOUSE_PASSWORD}' | base64 -d)" -q "SELECT table, num_messages_read, num_rebalance_assignments, length(exceptions) FROM system.kafka_consumers FORMAT Vertical"
@@ -550,6 +583,8 @@ anything differs in each case.
 - **A component that looks starved may not be.** ClickHouse held the pipeline
   to 1,750 msg/s on the cluster, and had every appearance of a config problem:
   one partition, one consumer, two CPUs, a view that parses the same JSON
-  eleven times. The same configuration drains 32,000 msg/s on a laptop.
-  Reproduce a bottleneck somewhere else before changing the thing it points
-  at — `scripts/bench/drain.sh` exists for that.
+  eleven times. The same configuration drains 32,000 msg/s on a laptop, and
+  36,747 msg/s on that same cluster once its disk was healthy — unchanged, so
+  every one of those explanations was wrong. Reproduce a bottleneck somewhere
+  else before changing the thing it points at — `scripts/bench/drain.sh`
+  exists for that.
