@@ -125,6 +125,13 @@ untested table a perfect score, which reads as *verified* and means *nobody
 looked*. Five of sixteen models have no tests at all; the schema keeps
 "untested" and "clean" apart, including in the column type.
 
+Quality is readable from outside as Prometheus gauges on `/api/metrics`
+(`etl_dbt_quality_score`, `etl_dbt_tests_total`, `etl_dbt_untested_tables`).
+**Lineage is not.** It is written, and the assistant reads it to annotate an
+answer, but nothing serves `meta.dbt_lineage` over HTTP. #231 asked for both
+behind one read-only endpoint; only the quality half exists, and anything
+wanting the graph has to query the table directly.
+
 ## Freshness and routing
 
 The assistant used to choose a store from adjectives in its prompt —
@@ -136,6 +143,34 @@ Freshness is now measured per request using the `freshness` expression each
 store declares, and a store outside its SLA is not offered. When none is
 usable the model is told to say so rather than fall back to the least stale
 one. See `docs/BENCHMARKING.md` for the measurement side.
+
+### What the routing decision does not consider
+
+The proposal in #231 named five inputs for this decision. Three are
+implemented — freshness, quality and the SLA the question needs. The other two
+are not, and it is worth saying which rather than leaving the gap to be
+discovered:
+
+**Cost is deliberately absent.** The proposal required it to be measured —
+rows or bytes scanned, wall time — or left out entirely, on the grounds that a
+routing decision justified by an invented dollar figure is worse than one that
+never mentions cost. Nothing in the stack measures per-query cost today, so it
+is left out. Adding it means capturing it from each engine first, not
+estimating it.
+
+**Complexity is still prompt-side.** "A question needing the star schema
+favours the warehouse regardless of freshness" is the rule, and it lives in
+the system prompt in `ui/src/app/api/chat/route.ts` as English, which is the
+thing the rest of this layer exists to replace. It stayed there because it
+depends on classifying the question before a store is chosen, and nothing in
+the request path does that yet.
+
+So the honest summary of the routing policy is: **a store too stale to trust
+is withheld, and a store with poor or unknown test coverage is flagged.**
+Choosing between two eligible stores on the shape of the question is still the
+model's judgement, informed by prose. That is a narrower claim than #231 set
+out to make, and narrower than "policy-driven engine routing" suggests on its
+own.
 
 ## Provenance
 
