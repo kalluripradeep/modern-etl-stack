@@ -43,7 +43,11 @@ Debezium captures every insert/update/delete from the source WAL into Kafka, and
 
 ### AI Data Assistant
 
-A Next.js dashboard with an agentic analyst: it introspects the schemas of all three stores, decides which engine fits the question (warehouse, lakehouse via Trino, or the ClickHouse mirror), runs read-only SQL with automatic error-retry, and answers in plain language. Runs in demo mode without an API key; add an Anthropic API key to enable it, and set `DASHBOARD_AUTH_PASSWORD` to require a login.
+A Next.js dashboard with an agentic analyst: it introspects the schemas of all three stores, runs read-only SQL with automatic error-retry, and answers in plain language. Runs in demo mode without an API key; add an Anthropic API key to enable it, and set `DASHBOARD_AUTH_PASSWORD` to require a login.
+
+Which engine answers is not the model's guess. Each store's freshness is measured per request against the SLA it declares, and one outside its SLA is withheld rather than offered — the assistant used to pick from adjectives in its prompt, and #188 and #225 both caught that being confidently wrong. Columns classified `pii` or `phi` in the data contract are refused by the database itself, not filtered in the application, and every answer emits a provenance line taken from the queries that ran.
+
+**[docs/GOVERNANCE.md](docs/GOVERNANCE.md)** is the full account — what is enforced, what is only recorded, and where it does not reach. `GET /api/catalog` serves the dbt test results and the lineage graph as JSON, behind the dashboard's auth.
 
 ### dbt MCP Server
 
@@ -118,7 +122,9 @@ Two more things to know:
 
 ## Observability
 
-Prometheus scrapes Airflow (via statsd), Kafka consumer lag (kafka-exporter), SeaweedFS, and node metrics. A provisioned Grafana dashboard ("Data Platform Health") shows pipeline runs, CDC lag, source freshness, and a daily-revenue anomaly z-score. Alertmanager routes five alert rules (DAG failures, import errors, CDC lag, stale sources, revenue anomalies) — add a Slack/email receiver in `monitoring/alertmanager.yml` to deliver them.
+Prometheus scrapes Airflow (via statsd), Kafka consumer lag (kafka-exporter), SeaweedFS, node metrics, and the dashboard's own `/api/metrics` as the `etl-governance` job. Two Grafana dashboards are provisioned: **Data Platform Health** (pipeline runs, CDC lag, source freshness, a daily-revenue anomaly z-score) and **Governance and Trust** (store freshness against SLA, stores withheld, queries by outcome with `denied` kept separate from `error`, dbt pass rate per table). Alertmanager routes five alert rules (DAG failures, import errors, CDC lag, stale sources, revenue anomalies) — add a Slack/email receiver in `monitoring/alertmanager.yml` to deliver them.
+
+`docs/BENCHMARKING.md` records what the platform was actually measured at, on the cluster rather than on a laptop, and which theories the measurements refuted.
 
 | Service | Local URL |
 |---|---|
