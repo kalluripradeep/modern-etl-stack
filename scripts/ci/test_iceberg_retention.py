@@ -94,6 +94,21 @@ check(re.fullmatch(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}', stamp) is not None,
 check("'%Y-%m-%d %H:%M:%S'" in code,
       'the expiry timestamp format changed; Spark parses this as a TIMESTAMP')
 
+# The window is documented in README's "What else is bounded" table, which is
+# where someone looks to answer "how long do we keep snapshots". It said 7 days
+# for a day after the code said 2 -- a stale number there is worse than none,
+# because it reads as an answer.
+if default:
+    readme = (REPO / 'README.md').read_text(encoding='utf-8')
+    row = next((ln for ln in readme.split('\n')
+                if 'Iceberg snapshots' in ln and '|' in ln), None)
+    check(row is not None,
+          'README no longer documents the Iceberg snapshot retention')
+    if row:
+        check(f'{default.group(1)} days' in row,
+              f'README says {row.strip()!r} but the code default is '
+              f'{default.group(1)} days')
+
 if failures:
     print('Iceberg retention guards failed:\n')
     for f in failures:

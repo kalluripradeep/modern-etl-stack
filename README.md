@@ -225,7 +225,11 @@ Kubernetes: `bash k8s/generate-secrets.sh && bash k8s/deploy.sh` (see [DEPLOY_GU
 2. **`dbt_transformations`** *(Cosmos task group)*
    - Cleans `raw` into `int`, builds `prs` views, runs all dbt tests.
 3. **`spark_transform_silver`** *(The Lakehouse Engine)*
-   - Spark MERGEs bronze parquet into Iceberg tables (`iceberg.lake.*`), plus weekly compaction/maintenance.
+   - Spark MERGEs bronze parquet into Iceberg tables (`iceberg.lake.*`).
+4. **`iceberg_maintenance`** *(Storage reclamation)*
+   - Daily at 00:00 UTC, on its own schedule rather than inside the silver DAG.
+   - Expires snapshots and removes orphan files every run; compacts on Sundays.
+   - Separate so that "did maintenance run today" is one DAG run with a state — it used to be a task gated on the hour, which skipped 23 times a day and logged success each time.
 
 ### Querying the lakehouse
 
@@ -277,15 +281,23 @@ Two procedures actually release space, and both are in
 
 Because expiry is cheap and compaction is expensive, they run on different
 cadences: **expiry every day, compaction on Sundays**. The job picks its mode
-from the day of the week; the DAG only decides how often it is invoked.
-Waiting a week to release disk is enough to fill a modest node.
+from the day of the week; the `iceberg_maintenance` DAG only decides how often
+it is invoked. Waiting a week to release disk is enough to fill a modest node.
+
+The retention window is a disk budget rather than a preference. The transforms
+use `MERGE INTO`, and Iceberg's default copy-on-write rewrites every data file
+holding a matched row — on a small dimension that is the whole table, every
+run. So each run leaves a complete generation behind and the window decides how
+many are kept: hourly against seven days is roughly 168 of them. One catch-up
+run expired 2208 data files from a fifty-row table before the window was cut to
+two days.
 
 ### What else is bounded, and where
 
 | Data | Bound | Set in |
 |---|---|---|
 | Bronze parquet | 7 days, `BRONZE_RETENTION_DAYS` | `prune_bronze` task in the ingest DAG |
-| Iceberg snapshots | 7 days, keep last 5 | `iceberg_maintenance.py` |
+| Iceberg snapshots | 2 days, `ICEBERG_RETENTION_DAYS`, keep last 5 | `iceberg_maintenance.py` |
 | Prometheus TSDB | 2GB, whichever of size/time hits first | `k8s/monitoring/prometheus.yaml` |
 | Spark worker dirs | 24h TTL, swept every 30 min | `SPARK_WORKER_OPTS` in the worker manifest |
 | Docker build layers | pruned after each build | `k8s/deploy.sh` |
