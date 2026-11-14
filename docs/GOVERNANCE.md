@@ -125,12 +125,18 @@ untested table a perfect score, which reads as *verified* and means *nobody
 looked*. Five of sixteen models have no tests at all; the schema keeps
 "untested" and "clean" apart, including in the column type.
 
-Quality is readable from outside as Prometheus gauges on `/api/metrics`
-(`etl_dbt_quality_score`, `etl_dbt_tests_total`, `etl_dbt_untested_tables`).
-**Lineage is not.** It is written, and the assistant reads it to annotate an
-answer, but nothing serves `meta.dbt_lineage` over HTTP. #231 asked for both
-behind one read-only endpoint; only the quality half exists, and anything
-wanting the graph has to query the table directly.
+Both are readable from outside. Quality appears as Prometheus gauges on
+`/api/metrics` (`etl_dbt_quality_score`, `etl_dbt_tests_total`,
+`etl_dbt_untested_tables`), which suits alerting and suits nothing else — a
+gauge cannot carry an edge. `GET /api/catalog` serves both as JSON: per-table
+test results, and the lineage graph as `{child, parent}` pairs.
+
+`/api/catalog` sits behind the dashboard's basic auth. `/api/metrics` is
+exempt because Prometheus cannot hold a password and because it emits only
+counts; neither applies here.
+
+A table with no tests comes back with `score: null`, not `0` and not `1`, for
+the same reason it is NULL in the column.
 
 ## Freshness and routing
 
