@@ -29,14 +29,32 @@ from airflow.providers.standard.operators.bash import BashOperator
 
 from spark_submit import SPARK_SECRET_ENV, get_spark_submit_command
 
+# One retry only: the job is idempotent, but a second full compaction on a
+# disk that is already short of space is not obviously an improvement.
+RETRIES = 1
+RETRY_DELAY = timedelta(minutes=10)
+ATTEMPT_TIMEOUT = timedelta(hours=2)
+
+# The DagRun has to outlast the budget its own task is allowed to spend, or
+# the retry is decoration: attempt one may run for ATTEMPT_TIMEOUT, wait
+# RETRY_DELAY, and attempt two needs ATTEMPT_TIMEOUT again -- 4h10m against
+# the 3h this used to be, so the second attempt could never finish. Derived
+# rather than written down, because the two numbers drifted apart silently
+# the first time and the symptom is a task killed mid-flight with SIGTERM,
+# which reads as an infrastructure problem rather than an arithmetic one.
+# The slack covers queueing between attempts.
+DAGRUN_TIMEOUT = (
+    (RETRIES + 1) * ATTEMPT_TIMEOUT
+    + RETRIES * RETRY_DELAY
+    + timedelta(minutes=20)
+)
+
 default_args = {
     'owner': 'data_engineering',
     'depends_on_past': False,
     'start_date': datetime(2026, 2, 8),
-    # One retry only: the job is idempotent, but a second full compaction on
-    # a disk that is already short of space is not obviously an improvement.
-    'retries': 1,
-    'retry_delay': timedelta(minutes=10),
+    'retries': RETRIES,
+    'retry_delay': RETRY_DELAY,
 }
 
 with DAG(
@@ -50,7 +68,7 @@ with DAG(
     # that matters is that the most recent one ran.
     catchup=False,
     max_active_runs=1,
-    dagrun_timeout=timedelta(hours=3),
+    dagrun_timeout=DAGRUN_TIMEOUT,
     tags=['iceberg', 'maintenance', 'storage'],
 ) as dag:
 
@@ -61,5 +79,5 @@ with DAG(
         ).strip(),
         env=SPARK_SECRET_ENV,
         append_env=True,
-        execution_timeout=timedelta(hours=2),
+        execution_timeout=ATTEMPT_TIMEOUT,
     )

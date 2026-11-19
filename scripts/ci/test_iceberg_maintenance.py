@@ -89,6 +89,26 @@ check(
     len(re.findall(r'def get_spark_submit_command', SUBMIT)) == 1,
     'the spark-submit builder is defined more than once',
 )
+# A DagRun shorter than the budget its own task may spend makes the retry
+# unreachable, and the symptom is a task killed mid-flight with SIGTERM --
+# which reads as eviction or OOM rather than arithmetic. Derived, so the two
+# numbers cannot drift apart again.
+code = _code_only(MAINTENANCE)
+check(
+    'dagrun_timeout=DAGRUN_TIMEOUT' in code,
+    'dagrun_timeout is written down rather than derived from the attempt '
+    'budget; it can drift below retries * execution_timeout again',
+)
+check(
+    'execution_timeout=ATTEMPT_TIMEOUT' in code,
+    'the task timeout no longer shares the constant the DagRun budget uses',
+)
+for name in ('RETRIES', 'RETRY_DELAY', 'ATTEMPT_TIMEOUT'):
+    check(
+        re.search(rf'DAGRUN_TIMEOUT = \(.*?{name}.*?\)', code, re.S) is not None,
+        f'the DagRun budget no longer accounts for {name}',
+    )
+
 check(
     'DAG(' not in SUBMIT,
     'spark_submit.py defines a DAG; it is imported by two and must not',
