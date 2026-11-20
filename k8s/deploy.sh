@@ -129,6 +129,13 @@ info "Checking prerequisites..."
 command -v kubectl >/dev/null || error "kubectl not found"
 command -v helm    >/dev/null || error "helm not found"
 command -v docker  >/dev/null || error "docker not found"
+# Not fatal: the legacy builder still produces the same images -- neither
+# Dockerfile uses BuildKit-only syntax -- but Docker prints a deprecation
+# notice mid-build and will remove it (#251). Said here rather than left to
+# surface halfway through a 5GB build. Snap's docker ships no buildx plugin,
+# which is the usual reason to see this.
+docker buildx version >/dev/null 2>&1 || warn \
+  "docker buildx not installed — falling back to the legacy builder, which Docker will remove. Install the buildx plugin into ~/.docker/cli-plugins/ before then."
 ok "All prerequisites found"
 
 # ─── Step 1: Build and push Airflow image ─────────────────────────────────────
