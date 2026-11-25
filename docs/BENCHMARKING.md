@@ -46,8 +46,23 @@ Each is a single line — `\` continuations get mangled by some terminals.
 kubectl exec -n etl clickhouse-0 -- clickhouse-client --user chuser --password "$(kubectl get secret etl-secrets -n etl -o jsonpath='{.data.CLICKHOUSE_PASSWORD}' | base64 -d)" -q "SELECT dateDiff('second', max(updated_at), now()) FROM mirror.orders"
 ```
 
-A few seconds is settled. Twenty or more means the mirror is still draining
-something, and the run will report that drain as its own freshness. Wait.
+A few seconds is settled. A larger number means one of two things, and they
+want opposite responses — so **take two readings, thirty seconds apart**,
+before doing anything:
+
+- **The number falls.** The mirror is draining a backlog, and a run started
+  now would report that drain as its own freshness. Wait for it.
+- **The number grows by the seconds that elapsed between the readings.**
+  Nothing is writing to the source. `max(updated_at)` is frozen, so this
+  measures how long the stack has been idle, not how far behind Pipe 3 is.
+  Waiting makes it worse. There is nothing to fix.
+
+One reading can never tell those apart: an idle stack and a stalled pipeline
+produce the same growing number. `ladder.sh` does not ask this question at
+all — it commits a row and watches whether the mirror moves, which is the
+only form of it that answers on an idle source. If you are about to run the
+ladder anyway, just run it: it checks liveness itself and aborts with the
+connector command if the pipeline is genuinely down.
 
 ### 2. What is the CPU limit actually set to?
 
