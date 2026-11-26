@@ -70,6 +70,8 @@ spec:
           mountPath: /var/lib/postgresql/data
         - name: init-scripts
           mountPath: /docker-entrypoint-initdb.d
+        - name: dshm
+          mountPath: /dev/shm
         readinessProbe:
           exec:
             command: ["pg_isready", "-U", "destuser"]
@@ -85,6 +87,29 @@ spec:
         configMap:
           name: postgres-dest-init
           defaultMode: 0755
+      # Parallel query workers exchange rows through POSIX shared memory, which
+      # postgres allocates under /dev/shm. Containers get 64MB there by default
+      # and nothing in the pod spec changes it, so the ceiling is the runtime's
+      # rather than ours -- and work_mem=64MB above sizes each worker's hash
+      # table against a budget the workers cannot actually reach.
+      #
+      # The three-table join in scripts/benchmark.py is the query that asks for
+      # the most of it, and it is the one that failed (#258):
+      #
+      #     could not resize shared memory segment "/PostgreSQL.627441648"
+      #     to 16777216 bytes
+      #
+      # Reported as a failed benchmark cell, but the limit was ours, the same
+      # way max_connections was in #188.
+      #
+      # A Memory emptyDir is tmpfs and counts against the container's memory
+      # limit, so this is not free: 256Mi out of the 2Gi limit, which leaves
+      # the workers room without letting a runaway query reach the limit
+      # before postgres itself does.
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 256Mi
   volumeClaimTemplates:
   - metadata:
       name: postgres-dest-data

@@ -75,6 +75,13 @@ services:
   postgres-dest:
     image: postgres:15
     container_name: postgres-dest
+    # Same 64MB container default for /dev/shm that starved the parallel
+    # workers on the cluster (#258). It bites later here -- this side runs
+    # postgres with no `command:`, so work_mem is the 4MB default rather than
+    # the 64MB the statefulset sets -- but the same join at a larger --scale
+    # reaches the same wall, and a limit set on one deployment only is the
+    # shape of bug #192 was.
+    shm_size: 256mb
     environment:
       POSTGRES_USER: ${DEST_DB_USER:-destuser}
       POSTGRES_PASSWORD: ${DEST_DB_PASSWORD:-destpass}
