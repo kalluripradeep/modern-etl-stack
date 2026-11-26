@@ -32,7 +32,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 STATEFULSET = ROOT / "k8s" / "postgres-dest" / "statefulset.yaml"
 COMPOSE = ROOT / "docker-compose.yml"
 
-MOUNT = "/dev/shm"
+# nosec B108 -- a container mount path we assert on, not a tmp file we write.
+MOUNT = "/dev/shm"  # nosec B108
 # Bigger than the container default it exists to replace, or it buys nothing.
 DEFAULT_SHM = 64 * 1024**2
 
